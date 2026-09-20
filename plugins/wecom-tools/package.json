@@ -1,0 +1,47 @@
+{
+  "name": "@shamcleren/dsh-wecom-tools",
+  "version": "0.2.0",
+  "description": "Pinned WeCom Unified Skill bundle for DeepSeek Harness",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**/*.js",
+    "lib/**/*.d.ts",
+    "skills/**/*",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "LICENSE.wecom-unified",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-skill": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-skill-filesystem": "0.1.5-rc.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-skill": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-skill-filesystem": "0.1.5-rc.1"
+  }
+}

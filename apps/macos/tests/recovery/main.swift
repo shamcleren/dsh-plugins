@@ -1,0 +1,15 @@
+import Foundation
+
+var recovery = HostRecovery()
+assert(recovery.delayAfterExit(wasReady: false, now: 0) == nil, "An invalid startup must remain visible")
+assert(recovery.delayAfterExit(wasReady: true, now: 1) == 1)
+assert(recovery.delayAfterExit(wasReady: true, now: 2) == 2)
+assert(recovery.delayAfterExit(wasReady: true, now: 3) == 4)
+assert(recovery.delayAfterExit(wasReady: true, now: 4) == nil, "Repeated ready/exit cycles must not loop forever")
+assert(recovery.delayAfterExit(wasReady: true, now: 60) == nil)
+assert(recovery.delayAfterExit(wasReady: true, now: 61) == 4, "Only attempts outside the window expire")
+assert(recovery.delayAfterExit(wasReady: false, now: 120) == nil)
+assert(recovery.delayAfterExit(wasReady: true, now: 122) == 1, "A stable Host gets a fresh recovery budget")
+recovery = HostRecovery()
+assert(recovery.delayAfterExit(wasReady: true, now: 123) == 1, "An explicit restart resets recovery")
+print("Bounded Host recovery verified")

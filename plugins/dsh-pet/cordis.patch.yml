@@ -1,0 +1,13 @@
+# Register the desktop-pet host plugin with its static defaults. The plugin
+# reduces session events into a pet state and drives a bundled native Helper
+# (transparent always-on-top window) over a stdio JSON protocol. Runtime pet
+# selection / size / dragged position persist under DSH_HOME/desktop-pet/state.json.
+- insert:
+    - id: desktop-pet
+      name: '@shamcleren/dsh-pet'
+      config:
+        enabled: true
+        sourceDir: ~/.codex/pets
+        petId: ''
+        petSize: 112
+        startQuadrant: bottom-end

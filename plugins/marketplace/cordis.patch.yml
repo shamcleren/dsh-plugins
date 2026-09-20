@@ -1,0 +1,3 @@
+- insert:
+    - id: trusted-marketplace
+      name: '@shamcleren/dsh-plugin-marketplace'

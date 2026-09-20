@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "plugins": [
+    {
+      "id": "wecom-tools",
+      "package": "@shamcleren/dsh-wecom-tools",
+      "name": "WeCom Tools",
+      "description": "独立的企业微信文档、日程、待办等办公 Skill 能力",
+      "version": "0.2.0",
+      "dshVersion": "0.1.5-rc.1",
+      "placement": "after-web-app",
+      "artifact": {
+        "path": "artifacts/shamcleren-dsh-wecom-tools-0.2.0.tgz",
+        "sha256": "ac874648b2d52baf2700b12a16f4ea55fb5840df0e5af7c9898031f64bd07ace",
+        "size": 293547
+      }
+    },
+    {
+      "id": "wecom-aibot",
+      "package": "@shamcleren/dsh-wecom-aibot",
+      "name": "WeCom AI Bot",
+      "description": "企业微信单聊与群聊 Channel",
+      "version": "0.6.5",
+      "dshVersion": "0.1.5-rc.1",
+      "placement": "before-web-app",
+      "artifact": {
+        "path": "artifacts/shamcleren-dsh-wecom-aibot-0.6.5.tgz",
+        "sha256": "0b69cf637d0df4479b8c57be0af681f234aa9ab54ce3c30203dd5eeb1ba4b478",
+        "size": 80141
+      }
+    },
+    {
+      "id": "wechat",
+      "package": "@shamcleren/dsh-wechat",
+      "name": "WeChat",
+      "description": "扫码绑定、加载即接收；聊天无需 ID 白名单，管理身份自动识别",
+      "version": "0.5.2",
+      "dshVersion": "0.1.5-rc.1",
+      "placement": "before-web-app",
+      "artifact": {
+        "path": "artifacts/shamcleren-dsh-wechat-0.5.2.tgz",
+        "sha256": "f9ddb14d5f6a90eab6c5c6b4264c8262c406861e39b16e5e9c9c21890969e6ed",
+        "size": 208829
+      }
+    },
+    {
+      "id": "trusted-marketplace",
+      "package": "@shamcleren/dsh-plugin-marketplace",
+      "name": "Gongfeng Marketplace",
+      "description": "独立的工蜂私有插件市场与管理界面",
+      "version": "0.4.1",
+      "placement": "after-web-app",
+      "artifact": {
+        "path": "artifacts/shamcleren-dsh-plugin-marketplace-0.4.1.tgz",
+        "sha256": "6e13086c8d4d7b4d39dcca00b26bd50658038053368de4b985027f076ade816e",
+        "size": 76394
+      },
+      "dshVersion": "0.1.5-rc.1"
+    },
+    {
+      "id": "codex-controller",
+      "package": "@shamcleren/dsh-codex-controller",
+      "name": "Codex Controller",
+      "description": "通过官方 codex app-server 委派独立开发任务",
+      "version": "0.3.1",
+      "placement": "after-web-app",
+      "artifact": {
+        "path": "artifacts/shamcleren-dsh-codex-controller-0.3.1.tgz",
+        "sha256": "5cd6e0258fdd34bdfe2950dfaaae3bea074fecfe27e303ddb599b1d13c4bc3fd",
+        "size": 35610
+      },
+      "dshVersion": "0.1.5-rc.1"
+    },
+    {
+      "id": "security-scan",
+      "package": "@shamcleren/dsh-security-scan",
+      "name": "Code Security Scan",
+      "description": "原生 DSH 审计、Git 忽略规则、依赖漏洞分组与可定位源码的最终报告",
+      "version": "0.11.1",
+      "dshVersion": "0.1.5-rc.1",
+      "placement": "after-web-app",
+      "artifact": {
+        "path": "artifacts/shamcleren-dsh-security-scan-0.11.1.tgz",
+        "sha256": "fe442aa20ea9d7d4dc3d7a9373644d29d0fa448019510bdc50a452cfc5ca8ceb",
+        "size": 229537
+      }
+    },
+    {
+      "id": "desktop-share",
+      "package": "@shamcleren/dsh-desktop-share",
+      "name": "Desktop Share",
+      "description": "接收 macOS 分享与微信转发文件，确认后加入当前会话草稿",
+      "version": "0.1.3",
+      "dshVersion": "0.1.5-rc.1",
+      "placement": "after-web-app",
+      "artifact": {
+        "path": "artifacts/shamcleren-dsh-desktop-share-0.1.3.tgz",
+        "sha256": "b4ffc562c45b95bea9f14172b34382aedd9264ddd128b91be7430e103a46a273",
+        "size": 22595
+      }
+    },
+    {
+      "id": "dsh-pet",
+      "package": "@shamcleren/dsh-pet",
+      "name": "Desktop Pet",
+      "description": "macOS 桌面悬浮宠物、并发任务状态卡与会话跳转",
+      "version": "0.2.1",
+      "dshVersion": "0.1.5-rc.1",
+      "placement": "after-web-app",
+      "artifact": {
+        "path": "artifacts/shamcleren-dsh-pet-0.2.1.tgz",
+        "sha256": "188bdb8c3ad0d1188adf815e588263f07e206341f721aae6c055d49c8812b2e2",
+        "size": 8049567
+      }
+    },
+    {
+      "id": "web-search",
+      "package": "@shamcleren/dsh-web-search",
+      "name": "Free Web Search",
+      "description": "免 API Key 的 Exa 网页搜索与正文读取，复用官方 MCP 客户端",
+      "version": "0.1.0",
+      "dshVersion": "0.1.5-rc.1",
+      "placement": "after-web-app",
+      "artifact": {
+        "path": "artifacts/shamcleren-dsh-web-search-0.1.0.tgz",
+        "sha256": "bf1b66afbc5cd67ef02d7216958118ec09810d312c405161d92b08b01f298b5e",
+        "size": 4118
+      }
+    }
+  ]
+}

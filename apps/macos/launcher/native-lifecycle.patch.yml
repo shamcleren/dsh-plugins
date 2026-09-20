@@ -1,0 +1,3 @@
+- insert:
+    - id: dsh-native-lifecycle-policy
+      name: ./native-lifecycle.mjs

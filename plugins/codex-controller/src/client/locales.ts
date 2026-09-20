@@ -1,0 +1,41 @@
+export const zh = {
+  badge: 'Codex',
+  context: '上下文',
+  quota: '使用情况',
+  remaining: '剩余',
+  resets: '重置',
+  thread: '线程',
+  running: '进行中',
+  idle: '空闲',
+  failed: '失败',
+  plan: '计划',
+  command: '命令',
+  diff: '文件变更',
+  tool: '工具',
+  usage: '用量',
+  warning: '警告',
+  unknown: '未识别事件',
+  approval: '审批',
+} as const
+
+export const en: Record<keyof typeof zh, string> = {
+  badge: 'Codex',
+  context: 'Context',
+  quota: 'Usage',
+  remaining: 'Remaining',
+  resets: 'Resets',
+  thread: 'Thread',
+  running: 'Running',
+  idle: 'Idle',
+  failed: 'Failed',
+  plan: 'Plan',
+  command: 'Command',
+  diff: 'File changes',
+  tool: 'Tool',
+  usage: 'Usage',
+  warning: 'Warning',
+  unknown: 'Unrecognized event',
+  approval: 'Approval',
+}
+
+export type LocaleKey = keyof typeof zh

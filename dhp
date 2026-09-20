@@ -1,0 +1,19 @@
+#!/bin/sh
+# User command after `make init`; from a checkout you can still run ./dhp.
+set -eu
+repository=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+installation=${DSH_PLUGIN_DIR:-"$repository/dist"}
+if [ "${1:-}" = --dir ]; then
+  [ -n "${2:-}" ] || { printf '%s\n' '--dir requires a directory' >&2; exit 1; }
+  installation=$2
+fi
+unset NODE_OPTIONS NODE_PATH
+if [ -x "$installation/node/bin/node" ]; then
+  node="$installation/node/bin/node"
+elif command -v node >/dev/null 2>&1; then
+  node=$(command -v node)
+else
+  printf '%s\n' 'Initialize DSH first: make init (then retry ./dhp). No Node.js is available for this command.' >&2
+  exit 1
+fi
+exec "$node" "$repository/scripts/dhp.mjs" "$@"

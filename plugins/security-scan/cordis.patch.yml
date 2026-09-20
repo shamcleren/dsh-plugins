@@ -1,0 +1,3 @@
+- insert:
+    - id: security-scan
+      name: '@shamcleren/dsh-security-scan'

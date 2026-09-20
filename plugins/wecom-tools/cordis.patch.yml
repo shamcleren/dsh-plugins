@@ -1,0 +1,4 @@
+- op: append
+  value:
+    id: wecom-tools
+    name: '@shamcleren/dsh-wecom-tools'

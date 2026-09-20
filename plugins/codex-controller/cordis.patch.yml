@@ -1,0 +1,4 @@
+# One controller owns the Codex provider, visible sessions, and the compatible tool name.
+- insert:
+    - id: codex-controller
+      name: '@shamcleren/dsh-codex-controller'

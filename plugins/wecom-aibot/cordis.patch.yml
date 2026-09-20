@@ -1,0 +1,12 @@
+- insert:
+    - id: wecom-aibot
+      name: '@shamcleren/dsh-wecom-aibot'
+      config:
+        botIdEnv: WECOM_BOT_ID
+        secretEnv: WECOM_BOT_SECRET
+        allowedUsers: []
+        adminUsers: []
+        workspaceName: 企业微信机器人
+        preventIdleSleep: false
+        thinkingText: 正在思考…
+        turnTimeoutMs: 300000

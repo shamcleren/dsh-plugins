@@ -1,0 +1,24 @@
+{
+  "name": "@shamcleren/dsh-plugins",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "build": "pnpm --recursive run build",
+    "test": "node --test scripts/tests/*.test.mjs && pnpm --recursive run test",
+    "test:bootstrap": "node --test scripts/tests/*.test.mjs",
+    "setup": "node scripts/bootstrap.mjs",
+    "build:macos": "node apps/macos/build.mjs",
+    "test:macos": "node --test apps/macos/tests/*.test.mjs",
+    "typecheck": "pnpm --recursive run typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  }
+}

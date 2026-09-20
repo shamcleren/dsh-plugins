@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>__BUNDLE_IDENTIFIER__.share</string>
+  <key>CFBundleExecutable</key><string>DSHShare</string>
+  <key>CFBundleName</key><string>Send to DSH</string>
+  <key>CFBundleDisplayName</key><string>Send to DSH</string>
+  <key>CFBundlePackageType</key><string>XPC!</string>
+  <key>CFBundleShortVersionString</key><string>__APP_VERSION__</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>LSMinimumSystemVersion</key><string>13.5</string>
+  <key>DSHShareGroup</key><string>__SHARE_GROUP__</string>
+  <key>NSExtension</key><dict>
+    <key>NSExtensionPointIdentifier</key><string>com.apple.share-services</string>
+    <key>NSExtensionPrincipalClass</key><string>DSHShareViewController</string>
+    <key>NSExtensionAttributes</key><dict>
+      <key>NSExtensionActivationRule</key><dict>
+        <key>NSExtensionActivationSupportsFileWithMaxCount</key><integer>20</integer>
+        <key>NSExtensionActivationSupportsImageWithMaxCount</key><integer>20</integer>
+        <key>NSExtensionActivationSupportsMovieWithMaxCount</key><integer>20</integer>
+      </dict>
+    </dict>
+  </dict>
+</dict></plist>

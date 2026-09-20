@@ -1,0 +1,127 @@
+{
+  "name": "@shamcleren/dsh-security-scan",
+  "version": "0.11.1",
+  "description": "Local Python, Go and JavaScript security scanning with a DSH evidence-based review workflow",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./scanner": "./lib/scanner.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./cli": "./lib/cli.js",
+    "./workflow": "./lib/workflow.js",
+    "./report": "./lib/report.js",
+    "./client": "./lib/client.js",
+    "./preset": "./lib/preset.js"
+  },
+  "files": [
+    "lib/**/*.js",
+    "lib/**/*.d.ts",
+    "skills/**/*",
+    "rules/**/*",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "toolchains/*",
+    "agent-presets/**/*"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsdown --config tsdown.client.config.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-agent": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-agent-default-model": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-agent-presets": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-api-session-controller": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-connection": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-locale": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-layout": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-sidebar": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-command-compact": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-compaction-basic": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-compaction-tool-result-pruner": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-host-webserver": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-llm": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-session": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-settings": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-skill": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-skill-filesystem": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-bash": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-fs": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-fs-search": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-jobs": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-pwsh": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-skill": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-workspace": "0.1.5-rc.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-agent": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-agent-default-model": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-agent-loop": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-agent-presets": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-api-session-controller": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-connection": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-locale": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-layout": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-sidebar": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-command-compact": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-compaction-basic": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-compaction-tool-result-pruner": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-host-webserver": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-llm": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-session": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-session-persistence": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-session-projection": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-settings": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-skill": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-skill-filesystem": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-bash": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-fs": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-fs-search": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-jobs": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-pwsh": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-skill": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-workspace": "0.1.5-rc.1",
+    "@types/react": "~18.3.1",
+    "react": "^18.3.1",
+    "tsdown": "^0.22.14",
+    "react-dom": "^18.3.1"
+  },
+  "bin": {
+    "dsh-security": "lib/cli.js"
+  }
+}

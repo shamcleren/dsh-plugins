@@ -1,0 +1,8 @@
+{
+  "id": "maltese",
+  "displayName": "maltese",
+  "description": "A Maltese pet assembled from the provided source material folders, with each folder mapped to one Codex pet state.",
+  "kind": "animal",
+  "spriteVersionNumber": 2,
+  "spritesheetPath": "spritesheet.webp"
+}

@@ -1,0 +1,3 @@
+name: Codex
+description: 持久 Codex 会话。普通新建会话后选择此模式；模型和推理档位用输入框里的选择器切换。
+order: 40

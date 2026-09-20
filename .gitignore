@@ -1,0 +1,13 @@
+node_modules/
+lib/
+coverage/
+.pnpm-store/
+*.tgz
+!artifacts/*.tgz
+*.tsbuildinfo
+.DS_Store
+.env
+apps/macos/dist/
+apps/macos/.cache/
+
+/dist/

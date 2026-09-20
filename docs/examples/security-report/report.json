@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "pluginVersion": "0.2.0",
+  "id": "e58fda14-bf5d-4e9b-89f8-5118b58de9d8",
+  "createdAt": "2026-09-10T02:47:31.734Z",
+  "source": {
+    "identity": "3c7a80e050d080b022bf90ae4aaddfcfa371526ada67352616cb8c299a6c4f23",
+    "label": "示例工程 · Python / Go / JavaScript",
+    "revision": "working-tree",
+    "scope": "diff",
+    "commit": "ef8bb8a8e817350f32a22308478ea4ba3c415a14",
+    "baseCommit": "ef8bb8a8e817350f32a22308478ea4ba3c415a14",
+    "digest": "8db2462fd11e04a3fa233f32da92ac2e19701b51ad90b245946ce867ca44fb54",
+    "files": {
+      ".env": "669856fc787ab71635e5aee0732faddbd469ac092a833750b106c89b5f9018b0",
+      "app.go": "4b9429a724f1a834c183d78605d7f52c89819d778e3c27979480b601011f64d5",
+      "app.js": "97a9a1bbb60f5a7816a60a6a98fb5c23893676201f05c60dc8c49e44901ff9b7",
+      "app.py": "0a64d116db34343007f3d6db62ced347a32e7fdb5b261f23f768de1a1e2e6a6a",
+      "requirements.txt": "922813535c003b54a13291f08a247a0d90baa65758d4f1297e3b75d3de1ca49a"
+    },
+    "changed": [
+      "app.py"
+    ],
+    "skipped": 1
+  },
+  "policy": {
+    "engine": "auto",
+    "rulesDigest": "487a6a3e38d00feb1bfa4c9c659d762424c9ce8d422d37e3205f921bb5bb38f5",
+    "dependencies": false,
+    "secrets": false,
+    "view": "all",
+    "failOn": "none"
+  },
+  "engines": [
+    {
+      "name": "semgrep",
+      "version": "1.176.1",
+      "status": "completed",
+      "detail": "Python / Go / JS / TS：12 类包内基础规则。状态：completed；{\"excluded\":1,\"symlink\":0,\"oversized\":0,\"unsupported\":0,\"changed\":0}"
+    },
+    {
+      "name": "gitleaks",
+      "version": "",
+      "status": "skipped",
+      "detail": "未启用密钥扫描。"
+    },
+    {
+      "name": "osv",
+      "version": "",
+      "status": "skipped",
+      "detail": "未启用依赖数据库查询；没有发送依赖名称或版本。"
+    }
+  ],
+  "coverage": {
+    "files": 1,
+    "scannedFiles": 1,
+    "omittedFindings": 0,
+    "detail": "源码扫描限于支持的语言和所选范围；依赖与密钥引擎启用时检查整份受限快照。规则命中需要复核；未检出不等于没有漏洞。"
+  },
+  "findings": [
+    {
+      "id": "22e7e4fc6520c1826e0eec0e",
+      "fingerprint": "ac7eb3158d96f39d0122860a0d809870d69e99204d459543eb47b7edb4c4320d",
+      "engine": "semgrep",
+      "rule": "dsh-security.python-shell",
+      "file": "app.py",
+      "line": 4,
+      "title": "Shell execution: verify untrusted input cannot reach the command.",
+      "cwe": "CWE-78",
+      "severity": "medium",
+      "status": "needs-review",
+      "change": "existing",
+      "evidence": "规则命中位于此文件行；尚未证明攻击者可控输入和可达调用链。",
+      "recommendation": "避免将外部输入拼接为 shell 命令；使用固定可执行文件和参数数组，并约束可选参数。补充恶意参数回归测试。",
+      "verification": "待 DSH security-review 源码复核；未执行项目或漏洞载荷。"
+    },
+    {
+      "id": "bdca4bc4ecdc31addf462555",
+      "fingerprint": "af3732e60ca62750792db2115d40d942ab63da4afa36df1c6e98f4a8f5353329",
+      "engine": "semgrep",
+      "rule": "dsh-security.python-eval",
+      "file": "app.py",
+      "line": 5,
+      "title": "Dynamic Python execution: trace the source of the executed value.",
+      "cwe": "CWE-95",
+      "severity": "medium",
+      "status": "needs-review",
+      "change": "new",
+      "evidence": "规则命中位于此文件行；尚未证明攻击者可控输入和可达调用链。",
+      "recommendation": "追踪输入来源和调用者，移除动态代码执行或改为受限的数据解析；补充越权和恶意输入测试。",
+      "verification": "待 DSH security-review 源码复核；未执行项目或漏洞载荷。"
+    }
+  ],
+  "baseline": {
+    "id": "git:ef8bb8a8e817350f32a22308478ea4ba3c415a14",
+    "comparable": true,
+    "reason": "使用相同规则和引擎比较基线。历史问题不重复计为新增；未检出问题不自动认定已修复。",
+    "notObserved": []
+  },
+  "reviews": [],
+  "notes": [
+    "这是合成测试仓库产生的展示示例，不代表对任何真实业务仓库的审计结论。",
+    "报告只保存位置、元数据和复核结论，不保存扫描器输出的源码或密钥。",
+    "LLM 复核尚未执行；使用 security-review 并保存复核结果后会生成新报告版本。",
+    "文件名变化仅在内容完全相同时自动识别；重命名并修改的候选需人工确认是否历史问题。",
+    "未启用项目自带脚本、Git hooks、忽略规则、子模块或依赖安装。"
+  ]
+}
