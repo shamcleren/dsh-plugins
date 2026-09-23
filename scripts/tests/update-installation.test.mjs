@@ -154,3 +154,25 @@ test('recovery restores a marker lost between renames and rejects paths outside 
   await writeFile(join(f.directory, '.update-transaction.json'), JSON.stringify(journal))
   await assert.rejects(recoverInstallation(f.directory), /Invalid update journal/)
 })
+
+test('same-runtime updates install changed catalog plugins and then become a no-op', async t => {
+  const f = await fixture(t)
+  const profile = join(f.dshHome, 'profiles/web')
+  const entry = (await json(join(f.repo, 'marketplace.json'))).plugins.find(item => item.id === 'trusted-marketplace')
+  const manifest = await json(join(profile, 'package.json'))
+  manifest.dependencies[entry.package] = '0.0.1'
+  manifest.dsh = { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', entry.package] } }
+  await writeFile(join(profile, 'package.json'), JSON.stringify(manifest))
+  await mkdir(join(profile, 'node_modules', entry.package), { recursive: true })
+  await writeFile(join(profile, 'node_modules', entry.package, 'package.json'), JSON.stringify({ name: entry.package, version: '0.0.1' }))
+  const before = await json(join(f.directory, 'bootstrap-state.json'))
+  assert.equal((await bootstrap(f.options)).updated, true)
+  const after = await json(join(f.directory, 'bootstrap-state.json'))
+  assert.equal(after.runtimeDigest, before.runtimeDigest)
+  assert.ok(after.profileUpdateId)
+  assert.equal((await json(join(profile, 'node_modules', entry.package, 'package.json'))).version, entry.version)
+  assert.equal(f.calls.some(call => call.command === 'npm' || call.args.includes('--output-dir')), false)
+  f.calls.length = 0
+  assert.equal((await bootstrap(f.options)).reused, true)
+  assert.equal(f.calls.length, 1)
+})

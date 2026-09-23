@@ -1,4 +1,4 @@
-import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { UiWorkspace } from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { createElement, useSyncExternalStore } from 'react'
 import { Workbench } from './Workbench.js'
@@ -6,14 +6,14 @@ import { en, zh, type LocaleKey } from './locales.js'
 import { css } from './styles.js'
 import { SECURITY_CHANNEL, ModelCatalogSchema, UiStateSchema, type UiRemote } from '../ui-contract.js'
 interface ClientContext {
-  sessions?: Pick<ISessions, 'open'>
+  uiWorkspace?: Pick<UiWorkspace, 'openSession'>
   effect(callback: () => unknown, label?: string): void
   locale: { register(namespace: string, dictionaries: { zh: Record<string, string>; en: Record<string, string> }): unknown; bind(namespace: string): (key: LocaleKey) => string }
   connection: { rpc: { call<T>(channel: string, endpoint: string, payload: unknown): Promise<{ ok: true; value: T } | { ok: false; error: { message: string } }> } }
   slots: { inject(slot: string, register: () => unknown): void; register(meta: Record<string, unknown>, component: (props: { wide?: boolean }) => unknown): unknown }
 }
 export const name = '@shamcleren/dsh-security-scan'
-export const inject = ['slots', 'locale', 'connection', 'sessions']
+export const inject = ['slots', 'locale', 'connection', 'uiWorkspace']
 const namespace = 'security.workspace'
 export function reportLinkId(href: string, current: string): string | undefined {
   try {
@@ -65,7 +65,7 @@ export function apply(ctx: ClientContext): void {
       createElement('svg', { width: wide ? 16 : 18, height: wide ? 16 : 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, 'aria-hidden': true }, createElement('path', { d: 'M12 3 4 6v6c0 4 4 7 8 9 4-2 8-5 8-9V6L12 3Z' }), createElement('path', { d: 'm8 12 3 3 5-6' })), wide ? t('entry') : null))))
   function Surface() {
     const visible = useSyncExternalStore(subscribe, () => opened)
-    return visible ? createElement(Workbench, { remote, t, ...(requestedReport ? { requestedReport } : {}), close: () => { requestedReport = undefined; setOpen(false) }, openSession: (id: string) => { if (!ctx.sessions) throw new Error('scan-session-unavailable'); ctx.sessions.open(id as SessionId); setOpen(false) } }) : null
+    return visible ? createElement(Workbench, { remote, t, ...(requestedReport ? { requestedReport } : {}), close: () => { requestedReport = undefined; setOpen(false) }, openSession: (id: string) => { if (!ctx.uiWorkspace) throw new Error('scan-session-unavailable'); ctx.uiWorkspace.openSession(id as SessionId); setOpen(false) } }) : null
   }
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({ name: 'shell.overlay', id: 'security-scan-workspace', order: 50, locale: namespace }, Surface))
 }

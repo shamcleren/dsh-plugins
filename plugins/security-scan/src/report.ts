@@ -26,9 +26,9 @@ export const FindingSchema = z.object({
     summary: text, references: z.array(z.string().max(2000)).max(30), metadataAvailable: z.boolean(), locationExact: z.boolean(),
   }).strict().optional(),
 }).strict()
-export const PLUGIN_VERSION = '0.11.1' as const
+export const PLUGIN_VERSION = '0.11.2' as const
 export const ReportSchema = z.object({
-  schemaVersion: z.literal(1), pluginVersion: z.enum(['0.2.0', '0.3.0', '0.4.0', '0.5.0', '0.6.0', '0.7.0', '0.8.0', '0.8.1', '0.8.2', '0.9.0', '0.9.1', '0.10.0', '0.10.1', '0.10.2', '0.10.3', PLUGIN_VERSION]), id: z.string().uuid(), createdAt: z.string().datetime(),
+  schemaVersion: z.literal(1), pluginVersion: z.enum(['0.2.0', '0.3.0', '0.4.0', '0.5.0', '0.6.0', '0.7.0', '0.8.0', '0.8.1', '0.8.2', '0.9.0', '0.9.1', '0.10.0', '0.10.1', '0.10.2', '0.10.3', '0.11.1', PLUGIN_VERSION]), id: z.string().uuid(), createdAt: z.string().datetime(),
   source: z.object({ identity: z.string(), label: text, revision: z.enum(['working-tree', 'index', 'commit']), scope: z.enum(['full', 'diff', 'staged']), commit: z.string().optional(), baseCommit: z.string().optional(), digest: z.string(), files: z.record(path, z.string()), changed: z.array(path).max(10000), skipped: z.number().int().nonnegative() }).strict(),
   policy: z.object({ engine: z.string(), rulesDigest: z.string(), dependencies: z.boolean(), secrets: z.boolean(), view: z.enum(['all', 'new']), failOn: z.enum(['none', 'high', 'medium']) }).strict(),
   engines: z.array(z.object({ name: z.string(), version: z.string(), status: z.enum(['completed', 'partial', 'unavailable', 'failed', 'skipped']), detail: text }).strict()).max(10),

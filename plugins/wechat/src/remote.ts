@@ -54,13 +54,13 @@ const loginViewSchema = z.discriminatedUnion('status', [
 const loginViewCodec = {
   mode: 'strict' as const,
   typeSymbol: '@shamcleren/dsh-wechat#WeChatLoginView',
-  schema: loginViewSchema,
+  create: () => loginViewSchema,
 }
 
 const verificationCodeCodec = {
   mode: 'strict' as const,
   typeSymbol: '@shamcleren/dsh-wechat#VerificationCode',
-  schema: z.string(),
+  create: () => z.string(),
 }
 
 /** Client contribution for the WeChat login Remote namespace. */

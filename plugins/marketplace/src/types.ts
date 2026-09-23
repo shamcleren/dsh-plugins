@@ -40,6 +40,7 @@ export interface MarketplaceState {
   readonly repository: string
   readonly ref: string
   readonly repositoryUrl: string
+  readonly host: 'gongfeng' | 'github'
   readonly oauthConfigured: boolean
   readonly nativeRestartAvailable: boolean
   readonly installed: readonly InstalledMarketplacePlugin[]

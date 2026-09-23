@@ -4,7 +4,7 @@ import { requestNativeOpen, requestNativeRestart } from './native.ts'
 import type { LocaleKey } from './locales.ts'
 import type { CatalogView, MarketplaceRemote, MarketplaceState } from './types.ts'
 import { connectSource } from './connect.ts'
-import { DEFAULT_REPOSITORY_URL } from '../source.ts'
+import { DEFAULT_REPOSITORY_URL, repositoryHost } from '../source.ts'
 import css from './MarketplacePanel.module.css'
 
 interface Props {
@@ -39,7 +39,7 @@ export function MarketplacePanel({ remote, t }: Props): ReactNode {
     const nextState = await remote.state()
     setState(nextState)
     setRepositoryUrl(nextState.repositoryUrl)
-    if (nextState.oauthConfigured) setCatalog(await (refreshCatalog ? remote.refreshCatalog() : remote.catalog()))
+    if (nextState.host === 'github' || nextState.oauthConfigured) setCatalog(await (refreshCatalog ? remote.refreshCatalog() : remote.catalog()))
     else setCatalog(undefined)
   }, [remote])
 
@@ -49,6 +49,8 @@ export function MarketplacePanel({ remote, t }: Props): ReactNode {
 
   useEffect(() => () => { connecting.current?.abort() }, [])
 
+  const ready = state?.host === 'github' || state?.oauthConfigured === true
+  const enteredHost = repositoryHost(repositoryUrl)
   const rows = useMemo(() => pluginRows(catalog?.plugins ?? [], state?.installed ?? []), [catalog, state])
   const updates = useMemo(() => rows.filter(row => row.updateAvailable), [rows])
   const visible = useMemo(() => visibleRows(rows, query, filter), [filter, query, rows])
@@ -143,21 +145,21 @@ export function MarketplacePanel({ remote, t }: Props): ReactNode {
       <div>
         <div className={css.eyebrow}>{t('source')}</div>
         <strong>{state?.repositoryUrl ?? repositoryUrl}</strong>
-        <div className={css.muted}>{state?.oauthConfigured === true ? t('connected') : t('disconnected')} · {t('sourceSummary')}</div>
+        <div className={css.muted}>{ready ? t('connected') : t('disconnected')} · {t('sourceSummary')}</div>
       </div>
       <div className={css.actions}>
         <button type="button" disabled={busy !== undefined} onClick={() => { setEditing(!editing) }}>{t('configure')}</button>
-        <button type="button" disabled={busy !== undefined || state?.oauthConfigured !== true} onClick={() => { void refreshRemoteCatalog() }}>{busy === 'refresh' ? t('working') : t('refresh')}</button>
+        <button type="button" disabled={busy !== undefined || !ready} onClick={() => { void refreshRemoteCatalog() }}>{busy === 'refresh' ? t('working') : t('refresh')}</button>
       </div>
     </header>
 
-    {state?.oauthConfigured === false ? <p className={css.notice}>{t('optionalSource')}</p> : null}
+    {ready ? null : <p className={css.notice}>{t('optionalSource')}</p>}
 
     {editing ? <div className={css.sourceForm}>
       <label>{t('repositoryUrl')}<input type="url" value={repositoryUrl} placeholder={DEFAULT_REPOSITORY_URL} disabled={busy !== undefined} onChange={event => { setRepositoryUrl(event.currentTarget.value) }} /></label>
       <p className={css.muted}>{t('sourceHint')}</p>
-      <button type="button" disabled={busy !== undefined || repositoryUrl.trim() === ''} onClick={() => { void connect(state?.oauthConfigured !== true) }}>{busy === 'source' ? t('working') : state?.oauthConfigured === true ? t('save') : t('oauthLogin')}</button>
-      {state?.oauthConfigured === true ? <button type="button" disabled={busy !== undefined} onClick={() => { void connect(true) }}>{t('oauthRelogin')}</button> : null}
+      <button type="button" disabled={busy !== undefined || repositoryUrl.trim() === ''} onClick={() => { void connect(enteredHost !== 'github' && state?.oauthConfigured !== true) }}>{busy === 'source' ? t('working') : enteredHost === 'github' || state?.oauthConfigured === true ? t('save') : t('oauthLogin')}</button>
+      {state?.host === 'gongfeng' && state.oauthConfigured ? <button type="button" disabled={busy !== undefined} onClick={() => { void connect(true) }}>{t('oauthRelogin')}</button> : null}
       {authorizationUrl ? <a href={authorizationUrl} target="_blank" rel="noopener noreferrer">{t('openAuthorization')}</a> : null}
     </div> : null}
 

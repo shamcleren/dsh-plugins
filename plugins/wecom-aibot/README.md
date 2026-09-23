@@ -68,3 +68,5 @@ pnpm test
 pnpm typecheck
 pnpm build
 ```
+
+The configuration card is available under **Plugins → this installed bundle** in DSH 0.1.6.

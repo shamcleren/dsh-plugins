@@ -25,7 +25,7 @@ async function fixture(t, id = 'wechat', legacy = false) {
   for (const path of [profile, join(directory, 'bin'), join(directory, 'runtime/node_modules/@deepseek-ai/dsh'),
     join(directory, 'runtime/node_modules/.bin'), join(repo, 'artifacts'), join(repo, 'plugins', folder)]) await mkdir(path, { recursive: true })
   await writeFile(join(directory, 'bootstrap-state.json'), JSON.stringify({ owner: 'shamcleren/dsh-plugin/bootstrap-v1', schemaVersion: legacy ? 1 : 2, status: 'ready', dshHome }))
-  await writeFile(join(directory, 'runtime/node_modules/@deepseek-ai/dsh/package.json'), JSON.stringify({ version: '0.1.5-rc.1' }))
+  await writeFile(join(directory, 'runtime/node_modules/@deepseek-ai/dsh/package.json'), JSON.stringify({ version: entry.dshVersion }))
   await writeFile(join(directory, 'bin/dsh'), '#!/bin/sh\nexit 0\n', { mode: 0o700 })
   await cp(join(repository, 'marketplace.json'), join(repo, 'marketplace.json'))
   await cp(join(repository, entry.artifact.path), join(repo, entry.artifact.path))
@@ -171,7 +171,7 @@ test('listing includes every catalog plugin and resolves installed release and l
   assert.equal(f.calls.length, 0)
   const output = f.logs.join('\n')
   assert.match(output, new RegExp(String.raw`^wechat\s+已安装\s+0\.1\.0 / ${localVersion('wechat')}$`, 'm'))
-  assert.match(output, new RegExp(String.raw`^wecom-tools\s+已安装\s+0\.2\.0 / ${localVersion('wecom-tools')}$`, 'm'))
+  assert.match(output, new RegExp(String.raw`^wecom-tools\s+已安装\s+${localVersion('wecom-tools')} / ${localVersion('wecom-tools')}$`, 'm'))
   assert.match(output, new RegExp(String.raw`^web-search\s+安装不完整\s+- / ${localVersion('web-search')}$`, 'm'))
   assert.match(output, new RegExp(String.raw`^marketplace\s+未安装\s+- / ${localVersion('trusted-marketplace')}$`, 'm'))
   assert.match(output, new RegExp(String.raw`^codex-controller\s+未安装\s+- / ${localVersion('codex-controller')}$`, 'm'))

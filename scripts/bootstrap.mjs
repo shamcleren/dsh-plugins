@@ -134,7 +134,7 @@ export async function bootstrap({ directory, resume = false, desktop = process.p
     if (await exists(join(root, '.update-transaction.json'))) await (assertIdle ?? assertInstallationIdle)(root)
     await recoverInstallation(root)
     state = JSON.parse(await readFile(join(root, markerName), 'utf8'))
-    await recoverHomeProfile({ root, home: expected.dshHome, runtimeDigest: state.runtimeDigest, ready: state.status === 'ready', log })
+    await recoverHomeProfile({ root, home: expected.dshHome, runtimeDigest: state.runtimeDigest, profileUpdateId: state.profileUpdateId, ready: state.status === 'ready', log })
     if (state.status === 'ready') {
       if (marketplace && state.marketplaceSha256 == null) throw new Error('Use dhp plugin install marketplace to add the market to an existing installation')
       const changed = await updateInstallation({ root, repo, state, release, nodeExecutable, env, desktop, rebuildApp, execute, log,

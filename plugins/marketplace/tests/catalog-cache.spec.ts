@@ -23,7 +23,7 @@ async function request(): Promise<MarketplaceCatalogCacheRequest> {
   return {
     home: await mkdtemp(join(tmpdir(), 'dsh-marketplace-cache-')),
     baseUrl: 'https://git.example/', repository: 'owner/repository', ref: 'main',
-    catalogPath: 'marketplace.json', dshVersion: '0.1.0-rc.8', maxArtifactBytes: 1024, maxCatalogBytes: 4096,
+    catalogPath: 'marketplace.json', profileState: 'profile-v1', dshVersion: '0.1.0-rc.8', maxArtifactBytes: 1024, maxCatalogBytes: 4096,
   }
 }
 
@@ -46,4 +46,12 @@ describe('Marketplace Catalog cache', () => {
     await expect(readMarketplaceCatalogCache(target)).resolves.toBeUndefined()
     expect(await readFile(join(cacheDir, file), 'utf8')).toBe('{broken')
   })
+})
+
+it('invalidates the Catalog after a runtime or installed-profile change', async () => {
+  const target = await request()
+  await writeMarketplaceCatalogCache(target, catalog())
+  await expect(readMarketplaceCatalogCache({ ...target, dshVersion: '0.1.6-alpha.2' })).resolves.toBeUndefined()
+  await expect(readMarketplaceCatalogCache({ ...target, profileState: 'profile-v2' })).resolves.toBeUndefined()
+  await expect(readMarketplaceCatalogCache(target)).resolves.toBeDefined()
 })

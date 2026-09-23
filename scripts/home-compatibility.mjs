@@ -1,8 +1,8 @@
 /** Compatibility checks and recoverable Web-profile upgrades; never rewrite user credentials. */
 import { createHash, randomUUID } from 'node:crypto'
-import { cp, lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, open, readFile, readdir, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { releaseArtifact } from './plugins.mjs'
 
@@ -79,10 +79,78 @@ async function profileFingerprint(profile) {
   for (const entry of (await readdir(profile)).sort()) {
     if (entry === 'node_modules') continue
     const path = join(profile, entry), info = await stat(path)
+    if (['.dsh-module-fallback', '.plugin-manager'].includes(entry) && info.isDirectory() && !info.isSymbolicLink()) {
+      // Official profiles own module links and Plugin Manager metadata here.
+      // Preserve both trees and detect edits without following their links.
+      parts.push(entry, await profileTreeFingerprint(path))
+      continue
+    }
     if (!info.isFile() || info.isSymbolicLink()) throw new Error('Unsupported profile entry; preserve it and use an isolated DSH_HOME: ' + entry)
     parts.push(entry, hash(await readFile(path)))
   }
   return hash(JSON.stringify(parts))
+}
+
+async function profileTreeFingerprint(root, depth = 0) {
+  if (depth > 16) throw new Error('Unsupported profile metadata depth')
+  const parts = []
+  for (const name of (await readdir(root)).sort()) {
+    const path = join(root, name), info = await lstat(path)
+    if (info.isSymbolicLink()) parts.push([name, 'link', await readlink(path)])
+    else if (info.isFile()) parts.push([name, 'file', hash(await readFile(path))])
+    else if (info.isDirectory()) parts.push([name, 'directory', await profileTreeFingerprint(path, depth + 1)])
+    else throw new Error('Unsupported profile metadata entry: ' + name)
+  }
+  return hash(JSON.stringify(parts))
+}
+
+/** Keep pnpm local package locators valid when a staged profile is moved. */
+export async function stabilizeProfileLock(profile, runtime) {
+  const path = join(profile, 'pnpm-lock.yaml'), bytes = await regular(path)
+  if (!bytes) return
+  const { parseDocument, visit } = createRequire(join(runtime, 'package.json'))('yaml')
+  const document = parseDocument(bytes.toString('utf8'))
+  if (document.errors.length) throw new Error('Invalid profile lockfile; refusing to relocate it')
+  const importer = document.toJS()?.importers?.['.'], replacements = new Map()
+  for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+    for (const dependency of Object.values(importer?.[section] ?? {})) {
+      const spec = dependency?.specifier
+      if (typeof spec !== 'string' || !/^(?:file|link):/.test(spec)) continue
+      const colon = spec.indexOf(':'), protocol = spec.slice(0, colon + 1), target = spec.slice(colon + 1)
+      if (!isAbsolute(target)) continue
+      replacements.set(protocol + relative(profile, target), spec)
+    }
+  }
+  if (!replacements.size) return
+  const ordered = [...replacements].sort(([a], [b]) => b.length - a.length)
+  visit(document, { Scalar(_key, node) {
+    if (typeof node.value !== 'string') return
+    for (const [from, to] of ordered) node.value = node.value.replaceAll(from, to)
+  } })
+  await writeFile(path, document.toString())
+}
+
+/** Read-only release comparison, including same-runtime plugin updates. */
+export async function homeProfileNeedsUpdate({ home, repo, release }) {
+  const profile = join(home, 'profiles/web')
+  const bytes = await regular(join(profile, 'package.json'))
+  if (!bytes) return false
+  return (await catalogReplacements(profile, JSON.parse(bytes), repo, release, false)).length > 0
+}
+
+async function catalogReplacements(profile, manifest, repo, release, marketplace) {
+  const catalog = await json(join(repo, 'marketplace.json'))
+  const entries = []
+  for (const entry of catalog.plugins) {
+    const installed = manifest?.dependencies?.[entry.package]
+    if (!installed && !(marketplace && entry.id === 'trusted-marketplace')) continue
+    if (entry.dshVersion !== release.dshVersion) throw new Error('Catalog runtime does not match ' + entry.package)
+    let current
+    if (installed) current = await json(join(profile, 'node_modules', entry.package, 'package.json'))
+    if (current?.version === entry.version) continue
+    entries.push(entry)
+  }
+  return entries
 }
 
 /** Prepare with the official plugin installer, in the same filesystem as the target profile. */
@@ -94,24 +162,16 @@ export async function prepareHomeProfile({ root, home, repo, runtime, release, n
   if (await stat(profile)) await safeDirectory(profile)
   const bytes = await regular(join(profile, 'package.json')), manifest = bytes ? JSON.parse(bytes) : undefined
   if (!manifest && !marketplace) return undefined
-  const catalog = await json(join(repo, 'marketplace.json'))
+  const entries = await catalogReplacements(profile, manifest, repo, release, marketplace)
   const replacements = []
-  for (const entry of catalog.plugins) {
-    const installed = manifest?.dependencies?.[entry.package]
-    if (!installed && !(marketplace && entry.id === 'trusted-marketplace')) continue
-    if (entry.dshVersion !== release.dshVersion) throw new Error('Catalog runtime does not match ' + entry.package)
-    let current
-    if (installed) current = await json(join(profile, 'node_modules', entry.package, 'package.json'))
-    if (current?.version === entry.version) continue
-    const artifact = await releaseArtifact(repo, entry)
-    replacements.push({ entry, artifact })
-  }
+  for (const entry of entries) replacements.push({ entry, artifact: await releaseArtifact(repo, entry) })
   await verifyProfilePeers(profile, runtime, new Set(replacements.map(item => item.entry.package)))
   if (replacements.length === 0) return undefined
   await safeDirectory(profiles)
   const before = await profileFingerprint(profile)
   const stageName = '.dhp-web-' + randomUUID(), stage = join(profiles, stageName)
   const stagingHome = join(stage, 'next'), stagedProfile = join(stagingHome, 'profiles/web')
+  const retainedLinks = []
   await mkdir(stage, { mode: 0o700 })
   try {
     if (manifest) {
@@ -120,6 +180,21 @@ export async function prepareHomeProfile({ root, home, repo, runtime, release, n
       const next = structuredClone(manifest)
       for (const [name, spec] of Object.entries(next.dependencies ?? {})) {
         if (typeof spec === 'string' && /^(file|link):\.{1,2}\//.test(spec)) next.dependencies[name] = spec.slice(0, spec.indexOf(':') + 1) + resolve(profile, spec.slice(spec.indexOf(':') + 1))
+        if (typeof spec === 'string' && spec.startsWith('link:') && !replacements.some(item => item.entry.package === name)) {
+          retainedLinks.push({ name, target: resolve(profile, spec.slice(5)) })
+        }
+        const original = join(profile, 'node_modules', name)
+        if ((await lstat(original)).isSymbolicLink()) {
+          const target = await readlink(original), absolute = resolve(dirname(original), target)
+          const fromProfile = relative(profile, absolute)
+          if (!isAbsolute(target) && (fromProfile === '..' || fromProfile.startsWith('../') || isAbsolute(fromProfile))) {
+            // pnpm's source links are relative even for an absolute link: spec.
+            // Only the staged copy changes; external source directories stay intact.
+            const copied = join(stagedProfile, 'node_modules', name)
+            await rm(copied)
+            await symlink(absolute, copied)
+          }
+        }
       }
       await writeFile(join(stagedProfile, 'package.json'), JSON.stringify(next, null, 2) + '\n')
     }
@@ -135,7 +210,15 @@ export async function prepareHomeProfile({ root, home, repo, runtime, release, n
     log('Preparing compatible plugins: ' + replacements.map(item => item.entry.id).join(', '))
     const buildEnv = { ...env, DSH_HOME: stagingHome, PATH: dirname(nodeExecutable) + ':' + join(runtime, 'node_modules/.bin') + ':' + env.PATH }
     const cli = join(runtime, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
-    await execute(nodeExecutable, [cli, 'plugin', '--profile', 'web', '--config.ignore-scripts=true', 'add', ...artifacts, '--save-exact'], { cwd: runtime, env: buildEnv })
+    await execute(nodeExecutable, [cli, 'plugin', '--profile', 'web', '--config.ignore-scripts=true', 'add', ...artifacts, ...retainedLinks.map(({ name, target }) => name + '@link:' + target), '--save-exact'], { cwd: runtime, env: buildEnv })
+    // Explicit add refreshes pnpm's relative lock entry for staging. Absolute
+    // links remain valid when this staged profile is published at its final path.
+    for (const { name, target } of retainedLinks) {
+      const path = join(stagedProfile, 'node_modules', name)
+      if (!(await lstat(path)).isSymbolicLink()) throw new Error('Expected retained source link: ' + name)
+      await rm(path)
+      await symlink(target, path)
+    }
     await verifyProfilePeers(stagedProfile, runtime)
     const next = await json(join(stagedProfile, 'package.json'))
     const bundles = next.dsh?.profile?.bundles
@@ -148,22 +231,23 @@ export async function prepareHomeProfile({ root, home, repo, runtime, release, n
     }
     await writeFile(join(stagedProfile, 'package.json'), JSON.stringify(next, null, 2) + '\n')
     await execute(nodeExecutable, [cli, '--profile', 'web', '--dump-config'], { cwd: runtime, env: buildEnv, stdio: ['ignore', 'ignore', 'inherit'] })
+    await stabilizeProfileLock(stagedProfile, runtime)
     return { root, home, stageName, runtimeDigest: release.runtimeDigest, existed: !!manifest, before }
   } catch (error) { await rm(stage, { recursive: true, force: true }); throw error }
 }
 
 export async function publishHomeProfile(transaction) {
   if (!transaction) return
-  const { home, stageName, root, runtimeDigest, existed, before } = transaction
+  const { home, stageName, root, runtimeDigest, existed, before, updateId } = transaction
   const profile = join(home, 'profiles/web'), stage = join(home, 'profiles', stageName)
   if (before !== await profileFingerprint(profile)) throw new Error('The Web profile changed during installation. Close DSH and retry; no profile was replaced.')
-  await exclusiveFile(join(home, journalName), JSON.stringify({ owner, root, runtimeDigest, stageName, existed }))
+  await exclusiveFile(join(home, journalName), JSON.stringify({ owner, root, runtimeDigest, stageName, existed, updateId }))
   if (existed) await rename(profile, join(stage, 'previous'))
   await rename(join(stage, 'next/profiles/web'), profile)
 }
 
-/** A matching ready installation proves both runtime and profile commits succeeded. */
-export async function recoverHomeProfile({ root, home, runtimeDigest, ready, log = () => {} }) {
+/** Match the committed profile transaction too: runtime versions can remain unchanged. */
+export async function recoverHomeProfile({ root, home, runtimeDigest, profileUpdateId, ready, log = () => {} }) {
   const bytes = await regular(join(home, journalName))
   if (!bytes) return
   const journal = JSON.parse(bytes)
@@ -177,7 +261,8 @@ export async function recoverHomeProfile({ root, home, runtimeDigest, ready, log
     const info = await stat(path)
     if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error('Unsafe profile upgrade target')
   }
-  const committed = ready && journal.runtimeDigest === runtimeDigest
+  const committed = ready && journal.runtimeDigest === runtimeDigest &&
+    (journal.updateId === undefined || journal.updateId === profileUpdateId)
   if (!committed) {
     if (await stat(backup)) { await rm(profile, { recursive: true, force: true }); await rename(backup, profile) }
     else if (!journal.existed && !(await stat(next))) await rm(profile, { recursive: true, force: true })

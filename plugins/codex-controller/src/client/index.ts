@@ -1,5 +1,4 @@
 /** Codex identity and live activity. A normal new session plus the Codex preset is the entry. */
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { createElement, useEffect, useState } from 'react'
 import { en, zh, type LocaleKey } from './locales.js'
 import { css } from './styles.js'
@@ -7,16 +6,15 @@ import { codexNoticeDefinition, codexViewDefinition } from '../conversation.js'
 import { CODEX_CHANNEL, type CodexState } from '../ui-contract.js'
 
 interface ClientContext {
-  sessions?: { open(id: SessionId): void; list: { getSnapshot(): { current?: string; byId: Record<string, { cwd?: string }> } } }
   uiConversation: { events: { register(definition: ReturnType<typeof codexNoticeDefinition>): () => void }; views: { register(definition: ReturnType<typeof codexViewDefinition>): () => void } }
   effect(callback: () => unknown, label?: string): void
   locale: { register(namespace: string, dictionaries: { zh: Record<string, string>; en: Record<string, string> }): unknown; bind(namespace: string): (key: LocaleKey) => string }
   connection: { rpc: { call<T>(channel: string, endpoint: string, payload: unknown): Promise<{ ok: true; value: T } | { ok: false; error: { message: string } }> } }
-  slots: { inject(slot: string, register: () => unknown): void; register(meta: Record<string, unknown>, component: (props: { wide?: boolean }) => unknown): unknown }
+  slots: { inject(slot: string, register: () => unknown): void; register(meta: Record<string, unknown>, component: (props: { sessionId: string }) => unknown): unknown }
 }
 
 export const name = '@shamcleren/dsh-codex-controller'
-export const inject = ['slots', 'locale', 'connection', 'sessions', 'uiConversation']
+export const inject = ['slots', 'locale', 'connection', 'uiConversation']
 const namespace = 'codex.session'
 
 export function apply(ctx: ClientContext): void {
@@ -32,8 +30,7 @@ export function apply(ctx: ClientContext): void {
     if (!result.ok) throw new Error(result.error.message)
     return result.value
   }
-  const currentId = (): string | undefined => ctx.sessions?.list.getSnapshot().current
-  ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({ name: 'conversation.session.header.actions', id: 'codex-controller-badge', order: 20, locale: namespace }, () => createElement(Badge, { sessionId: currentId(), call, t })))
+  ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({ name: 'conversation.session.header.actions', id: 'codex-controller-badge', order: 20, locale: namespace }, props => createElement(Badge, { sessionId: props.sessionId, call, t })))
 }
 
 export function BadgeView(props: { state: CodexState | undefined; t: (key: LocaleKey) => string }) {

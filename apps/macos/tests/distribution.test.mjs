@@ -10,7 +10,7 @@ const root = new URL('../', import.meta.url)
 
 test('the locked runtime uses the official release without workspace packages', async () => {
   const manifest = JSON.parse(await readFile(new URL('../../runtime/package.json', root), 'utf8'))
-  assert.equal(manifest.dependencies['@deepseek-ai/dsh'], '0.1.5-rc.1')
+  assert.equal(manifest.dependencies['@deepseek-ai/dsh'], '0.1.6-alpha.2')
   const lock = await readFile(new URL('../../runtime/pnpm-lock.yaml', root), 'utf8')
   assert.doesNotMatch(lock, /(?:specifier|version):\s*['"]?(?:workspace|file|link):/)
 })

@@ -7,7 +7,7 @@ import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
+import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import { createElement } from 'react'
 import { WeChatCard } from './Card.js'
 import { WeChatCardController } from './controller.js'
@@ -39,7 +39,7 @@ export async function apply(ctx: ClientContext): Promise<() => Promise<void>> {
     ['slots', 'locale', 'remote', 'remote.wechatLogin', 'remote.agentPresets', 'settingsScope'],
     mountCard,
   )
-  const badgeFiber = ctx.inject(['slots', 'locale', 'sessions'], mountSessionBadge as unknown as (ctx: ClientContext) => void)
+  const badgeFiber = ctx.inject(['slots', 'locale'], mountSessionBadge as unknown as (ctx: ClientContext) => void)
   try {
     await cardFiber
   } catch (error) {
@@ -64,9 +64,9 @@ function mountCard(ctx: ClientContext): () => void {
     () => ctx.locale.register(LOCALE_NAMESPACE, { zh, en }),
     'wechat: browser dictionaries',
   )
-  ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
-      name: 'settings.plugin.item',
-      key: SETTINGS_NAMESPACE,
+  ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
+      name: 'plugins.bundle.config',
+      key: '@shamcleren/dsh-wechat',
       locale: LOCALE_NAMESPACE,
       inject: () => card.inject(),
     }, WeChatCard))
@@ -81,7 +81,7 @@ function mountSessionBadge(ctx: SessionBadgeHost): void {
   const t = ctx.locale.bind(LOCALE_NAMESPACE)
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
     { name: 'conversation.session.header.actions', id: 'wechat-session-badge', order: 20, locale: LOCALE_NAMESPACE },
-    () => createElement(ChannelBadge, { sessionId: currentSessionId(ctx), t }),
+    (props: { sessionId: string }) => createElement(ChannelBadge, { sessionId: props.sessionId, t }),
   ))
 }
 
@@ -90,13 +90,8 @@ interface SessionBadgeHost {
   effect: ClientContext['effect']
   slots: {
     inject(slot: string, register: () => unknown): void
-    register(meta: Record<string, unknown>, component: () => unknown): unknown
+    register(meta: Record<string, unknown>, component: (props: { sessionId: string }) => unknown): unknown
   }
-  sessions?: { list: { getSnapshot(): { current?: string } } }
-}
-
-function currentSessionId(ctx: SessionBadgeHost): string | undefined {
-  return ctx.sessions?.list.getSnapshot().current
 }
 
 /** Header mark for the open personal WeChat Session. */

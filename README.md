@@ -46,15 +46,15 @@ Linux 安装后使用 `./dist/bin/dsh` 启动 Web 版。首次打开 DSH，按�
 | `wecom-aibot` | [企业微信机器人](plugins/wecom-aibot/README.md) |
 | `wecom-tools` | [企业微信办公工具](plugins/wecom-tools/README.md) |
 | `codex-controller` | [持久 Codex 会话](plugins/codex-controller/README.md) |
-| `marketplace` | [工蜂远端插件市场](plugins/marketplace/README.md) |
+| `marketplace` | [Git 仓库市场](plugins/marketplace/README.md) |
 
-### 可选：通过远端市场安装
+### 可选：通过 Git 仓库市场安装
 
 首次安装可用 `make init MARKETPLACE=1`；已有安装执行 `./dhp plugin install marketplace`。
 
-启动后进入 **设置 → 插件 → 远端市场 → 来源设置**，填写仓库地址 `https://gitlab.example.com/shamcleren/dsh-plugin`，点击 **OAuth 登录并连接**，即可在界面安装和更新插件。请保留默认端口 3080，供 OAuth 回调使用。
+启动后进入 **设置 → 插件 → Git 仓库市场 → 来源设置**。工蜂地址点击 **OAuth 登录并连接**（回调端口 3080）；GitHub 公开仓库填写 `https://github.com/owner/repo` 后点击 **保存来源**。
 
-远端市场与 DSH 原生插件管理并存；本地命令安装不需要市场授权。源码安装等用法见 [插件管理指南](docs/plugin-management.md)。
+Git 仓库市场与 DSH 原生插件管理并存；本地命令安装不需要市场授权。源码安装等用法见 [插件管理指南](docs/plugin-management.md)。
 
 ## 开始安全扫描
 
@@ -80,11 +80,11 @@ Linux 安装后使用 `./dist/bin/dsh` 启动 Web 版。首次打开 DSH，按�
 
 ```sh
 git pull --ff-only
-./dhp update                          # 更新仓库锁定的 DSH 与 App
+./dhp update                          # 更新仓库锁定的 DSH、已安装插件与 App
 ./dhp restart
 ```
 
-`make init` 可以重复执行，会复用或更新安装并保留配置；日常更新推荐用 `dhp update`。当前锁定官方 DSH **0.1.5-rc.1**（2026-09-11 核对的 npm `latest`），运行时升级会同步更新本仓库已安装插件。不会自动追踪未经验证的新版本。
+`make init` 可以重复执行，会复用或更新安装并保留配置；日常更新推荐用 `dhp update`。当前锁定官方 DSH **0.1.6-alpha.2**（2026-09-21 核对的官方最新发布版本，npm `alpha`），每次更新都会检查并同步本仓库已安装插件，DSH 版本不变时也会更新插件。不会自动追踪未经验证的新版本。
 
 已有 DSH 可直接升级：新版凭据保持原样，旧平面凭据先备份到 `~/.dsh/.dhp-backups/`，再由官方 DSH 转换。请退出所有使用同一 `~/.dsh` 的旧 App/CLI；升级后不要再用旧运行时读取这份数据。第三方插件不兼容时会在替换前提示，详见 [兼容与恢复](docs/installation.md#已有-dsh-的兼容与恢复)。
 

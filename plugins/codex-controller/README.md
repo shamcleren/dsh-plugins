@@ -1,6 +1,6 @@
 # Codex 会话
 
-`@shamcleren/dsh-codex-controller` 把 Codex 接成 DSH 的一种会话，而不是一次性黑盒。一个 DSH 会话对应一个可恢复的 Codex thread；回复、生成图片和审批都留在这个会话里。官方运行时保持 `0.1.5-rc.1`，未修改上游源码。
+`@shamcleren/dsh-codex-controller` 把 Codex 接成 DSH 的一种会话，而不是一次性黑盒。一个 DSH 会话对应一个可恢复的 Codex thread；回复、生成图片和审批都留在这个会话里。官方运行时保持 `0.1.6-alpha.2`，未修改上游源码。
 
 ## 怎么用
 

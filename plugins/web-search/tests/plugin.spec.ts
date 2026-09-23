@@ -22,7 +22,9 @@ function server(call = async (_params: unknown, _signal?: AbortSignal | null): P
     requests.push(request)
     if (request.id === undefined) return new Response(null, { status: 202 })
     let result: object
-    if (request.method === 'initialize') {
+    if (request.method === 'server/discover') {
+      return Response.json({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: 'Method not found' } })
+    } else if (request.method === 'initialize') {
       result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } }
     } else if (request.method === 'tools/list') {
       result = { tools: ['web_search_exa', 'web_fetch_exa'].map(name => ({

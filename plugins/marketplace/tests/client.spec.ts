@@ -21,6 +21,6 @@ it('keeps the native marketplace registered and adds an optional remote tab with
   expect(tabs.get('marketplace')).toBe(native)
   expect(tabs.get('trusted-marketplace')).toMatchObject({ name: 'settings.plugins.tab' })
   const label = tabs.get('trusted-marketplace')?.label as () => string
-  expect(label()).toBe('远端市场')
+  expect(label()).toBe('Git 仓库市场')
   expect(call).not.toHaveBeenCalled()
 })

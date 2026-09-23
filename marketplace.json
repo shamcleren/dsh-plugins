@@ -6,13 +6,13 @@
       "package": "@shamcleren/dsh-wecom-tools",
       "name": "WeCom Tools",
       "description": "独立的企业微信文档、日程、待办等办公 Skill 能力",
-      "version": "0.2.0",
-      "dshVersion": "0.1.5-rc.1",
+      "version": "0.2.2",
+      "dshVersion": "0.1.6-alpha.2",
       "placement": "after-web-app",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-wecom-tools-0.2.0.tgz",
-        "sha256": "ac874648b2d52baf2700b12a16f4ea55fb5840df0e5af7c9898031f64bd07ace",
-        "size": 293547
+        "path": "artifacts/shamcleren-dsh-wecom-tools-0.2.2.tgz",
+        "sha256": "acfc30dfb2bdeba4c6b1f00ef7abb6f90bdb2d53b28d221753529ed573fd6ce8",
+        "size": 293543
       }
     },
     {
@@ -20,13 +20,13 @@
       "package": "@shamcleren/dsh-wecom-aibot",
       "name": "WeCom AI Bot",
       "description": "企业微信单聊与群聊 Channel",
-      "version": "0.6.5",
-      "dshVersion": "0.1.5-rc.1",
+      "version": "0.6.6",
+      "dshVersion": "0.1.6-alpha.2",
       "placement": "before-web-app",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-wecom-aibot-0.6.5.tgz",
-        "sha256": "0b69cf637d0df4479b8c57be0af681f234aa9ab54ce3c30203dd5eeb1ba4b478",
-        "size": 80141
+        "path": "artifacts/shamcleren-dsh-wecom-aibot-0.6.6.tgz",
+        "sha256": "7caabc9f407a918e48443b7abaad825bb8e8cd1a8011d8954e4adcbedd07d1a1",
+        "size": 79684
       }
     },
     {
@@ -34,55 +34,55 @@
       "package": "@shamcleren/dsh-wechat",
       "name": "WeChat",
       "description": "扫码绑定、加载即接收；聊天无需 ID 白名单，管理身份自动识别",
-      "version": "0.5.2",
-      "dshVersion": "0.1.5-rc.1",
+      "version": "0.5.3",
+      "dshVersion": "0.1.6-alpha.2",
       "placement": "before-web-app",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-wechat-0.5.2.tgz",
-        "sha256": "f9ddb14d5f6a90eab6c5c6b4264c8262c406861e39b16e5e9c9c21890969e6ed",
-        "size": 208829
+        "path": "artifacts/shamcleren-dsh-wechat-0.5.3.tgz",
+        "sha256": "b5b0217a457eba1d30608a889aaac760d891d1ce67f36ab100ad5db051bc98bc",
+        "size": 206661
       }
     },
     {
       "id": "trusted-marketplace",
       "package": "@shamcleren/dsh-plugin-marketplace",
-      "name": "Gongfeng Marketplace",
-      "description": "独立的工蜂私有插件市场与管理界面",
-      "version": "0.4.1",
+      "name": "Git Repository Marketplace",
+      "description": "从 gitlab.example.com 或 GitHub 公开仓库读取插件目录",
+      "version": "0.4.4",
       "placement": "after-web-app",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-plugin-marketplace-0.4.1.tgz",
-        "sha256": "6e13086c8d4d7b4d39dcca00b26bd50658038053368de4b985027f076ade816e",
-        "size": 76394
+        "path": "artifacts/shamcleren-dsh-plugin-marketplace-0.4.4.tgz",
+        "sha256": "befbe0079ac8e15cc02d71ede5ad3202e6b60e340baff77f8c86315b0b316dff",
+        "size": 79234
       },
-      "dshVersion": "0.1.5-rc.1"
+      "dshVersion": "0.1.6-alpha.2"
     },
     {
       "id": "codex-controller",
       "package": "@shamcleren/dsh-codex-controller",
       "name": "Codex Controller",
       "description": "通过官方 codex app-server 委派独立开发任务",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "placement": "after-web-app",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-codex-controller-0.3.1.tgz",
-        "sha256": "5cd6e0258fdd34bdfe2950dfaaae3bea074fecfe27e303ddb599b1d13c4bc3fd",
-        "size": 35610
+        "path": "artifacts/shamcleren-dsh-codex-controller-0.3.2.tgz",
+        "sha256": "4921a8d22e9f5661b2d900c5bcd9c6efe06fb31d874e4c9f656407f43a78d16a",
+        "size": 35533
       },
-      "dshVersion": "0.1.5-rc.1"
+      "dshVersion": "0.1.6-alpha.2"
     },
     {
       "id": "security-scan",
       "package": "@shamcleren/dsh-security-scan",
       "name": "Code Security Scan",
       "description": "原生 DSH 审计、Git 忽略规则、依赖漏洞分组与可定位源码的最终报告",
-      "version": "0.11.1",
-      "dshVersion": "0.1.5-rc.1",
+      "version": "0.11.2",
+      "dshVersion": "0.1.6-alpha.2",
       "placement": "after-web-app",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-security-scan-0.11.1.tgz",
-        "sha256": "fe442aa20ea9d7d4dc3d7a9373644d29d0fa448019510bdc50a452cfc5ca8ceb",
-        "size": 229537
+        "path": "artifacts/shamcleren-dsh-security-scan-0.11.2.tgz",
+        "sha256": "f6f2c6c34dd40b74dc6c8b0499a9d04aa129d4e23881e312d29e7050fdecb5dd",
+        "size": 229689
       }
     },
     {
@@ -90,13 +90,13 @@
       "package": "@shamcleren/dsh-desktop-share",
       "name": "Desktop Share",
       "description": "接收 macOS 分享与微信转发文件，确认后加入当前会话草稿",
-      "version": "0.1.3",
-      "dshVersion": "0.1.5-rc.1",
+      "version": "0.1.4",
+      "dshVersion": "0.1.6-alpha.2",
       "placement": "after-web-app",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-desktop-share-0.1.3.tgz",
-        "sha256": "b4ffc562c45b95bea9f14172b34382aedd9264ddd128b91be7430e103a46a273",
-        "size": 22595
+        "path": "artifacts/shamcleren-dsh-desktop-share-0.1.4.tgz",
+        "sha256": "4575910fb7ed1cc62b56a267e575672f22a1bee8e30b7271358a4e2b2bd3281c",
+        "size": 22711
       }
     },
     {
@@ -104,13 +104,13 @@
       "package": "@shamcleren/dsh-pet",
       "name": "Desktop Pet",
       "description": "macOS 桌面悬浮宠物、并发任务状态卡与会话跳转",
-      "version": "0.2.1",
-      "dshVersion": "0.1.5-rc.1",
+      "version": "0.2.2",
+      "dshVersion": "0.1.6-alpha.2",
       "placement": "after-web-app",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-pet-0.2.1.tgz",
-        "sha256": "188bdb8c3ad0d1188adf815e588263f07e206341f721aae6c055d49c8812b2e2",
-        "size": 8049567
+        "path": "artifacts/shamcleren-dsh-pet-0.2.2.tgz",
+        "sha256": "44f60380527553708e06c0424a461bc083f525c68eb8470f6aed3d4275c18081",
+        "size": 8041333
       }
     },
     {
@@ -118,13 +118,13 @@
       "package": "@shamcleren/dsh-web-search",
       "name": "Free Web Search",
       "description": "免 API Key 的 Exa 网页搜索与正文读取，复用官方 MCP 客户端",
-      "version": "0.1.0",
-      "dshVersion": "0.1.5-rc.1",
+      "version": "0.1.1",
+      "dshVersion": "0.1.6-alpha.2",
       "placement": "after-web-app",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-web-search-0.1.0.tgz",
-        "sha256": "bf1b66afbc5cd67ef02d7216958118ec09810d312c405161d92b08b01f298b5e",
-        "size": 4118
+        "path": "artifacts/shamcleren-dsh-web-search-0.1.1.tgz",
+        "sha256": "c3edf6463d81ae693b4d00fd21eb04bff221a2aadd7deb725b1383f55c98d308",
+        "size": 4120
       }
     }
   ]

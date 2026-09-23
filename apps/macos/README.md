@@ -6,7 +6,7 @@ The default [repository bootstrap](../../README.md) (`make init`, which also han
 
 For a standalone shell build, run `pnpm build:macos` at the repository root. It uses the shared `runtime/` lock and produces `apps/macos/dist/DeepSeek Harness.app`. Node archives are pinned by SHA-256; the final application is signed locally unless `CODESIGN_IDENTITY` selects a distribution identity.
 
-The runtime uses the official rc.8 package as the first migration baseline. Upgrading DSH requires updating the runtime lockfile and verifying every installed plugin against that official version. New installations reuse credentials and plugin data from `~/.dsh`. Existing installed apps keep their originally configured data directory.
+The runtime is pinned to official DSH `0.1.6-alpha.2`; the native shell version is `0.2.13`. Upgrading DSH requires updating the runtime lockfile and verifying every installed plugin against that official version. New installations reuse credentials and plugin data from `~/.dsh`. Existing installed apps keep their originally configured data directory.
 
 Optionally install the trusted Marketplace, WeChat, WeCom Bot, WeCom Tools, Codex Controller and AIDEV as separate profile bundles. The native application provides window/menu behavior, Host startup/restart, and an origin-restricted browser bridge for OAuth handoff. macOS signing and notarization are distribution responsibilities of this repository.
 

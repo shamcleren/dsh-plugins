@@ -43,3 +43,5 @@ pnpm --filter @shamcleren/dsh-wechat test
 pnpm --filter @shamcleren/dsh-wechat typecheck
 pnpm --filter @shamcleren/dsh-wechat build
 ```
+
+The configuration card is available under **Plugins → this installed bundle** in DSH 0.1.6.

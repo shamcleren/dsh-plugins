@@ -37,7 +37,7 @@ describe('WeChatLoginService', () => {
     const codec = WECHAT_LOGIN_REMOTE.descriptors[0]!.result
     expect(codec.mode).toBe('strict')
     if (codec.mode !== 'strict') throw new Error('Expected strict login view codec')
-    expect(codec.schema.parse({ status: 'idle', accounts: [{ accountId: 'account-a', userId: 'owner-a' }] }))
+    expect(codec.create().parse({ status: 'idle', accounts: [{ accountId: 'account-a', userId: 'owner-a' }] }))
       .toEqual({ status: 'idle', accounts: [{ accountId: 'account-a', userId: 'owner-a' }] })
   })
   it('waits for automatic activation before reporting successful login', async () => {

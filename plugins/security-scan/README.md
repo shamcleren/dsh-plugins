@@ -1,6 +1,6 @@
 # 代码安全扫描
 
-面向 Python、Go、JavaScript/TypeScript 的 DSH 插件。扫描、Git hook 和 CLI 共用同一套逻辑；可在工作台按任务启用 Agentic AI，复用 DSH 模型进行证据复核。官方运行时保持 `0.1.5-rc.1`，未修改上游源码。
+面向 Python、Go、JavaScript/TypeScript 的 DSH 插件。扫描、Git hook 和 CLI 共用同一套逻辑；可在工作台按任务启用 Agentic AI，复用 DSH 模型进行证据复核。官方运行时保持 `0.1.6-alpha.2`，未修改上游源码。
 
 ## 安装与首次扫描
 

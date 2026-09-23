@@ -1,14 +1,14 @@
-/** Self-contained desktop-pet settings card contributed through `settings.plugin.item`. */
+/** Self-contained desktop-pet settings card contributed through `plugins.bundle.config`. */
 
 import type { CSSProperties } from 'react'
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
+import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { PetPickerItem } from '../shared/picker.js'
 import type { DesktopPetCardFace } from './controller.js'
 import type { LocaleKey } from './locales.js'
 import { styles } from './styles.js'
 
-export type DesktopPetCardProps = PropsRuntime<'settings.plugin.item'>
+export type DesktopPetCardProps = PropsRuntime<'plugins.bundle.config'>
   & PropsLocale<'settings.desktop-pet'> & InjectFace<DesktopPetCardFace>
 
 /** Fixed thumbnail cell width; height follows the pack's cell aspect. */
@@ -36,7 +36,7 @@ export function DesktopPetCard(props: DesktopPetCardProps) {
     if (event.key === 'Enter') commit()
   }
 
-  return <li style={styles.card}>
+  return <section style={styles.card}>
     <details>
       <summary style={styles.summary}>
         <span style={styles.heading}>
@@ -85,5 +85,5 @@ export function DesktopPetCard(props: DesktopPetCardProps) {
         </div>
       </div>
     </details>
-  </li>
+  </section>
 }

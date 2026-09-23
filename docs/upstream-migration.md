@@ -5,14 +5,14 @@ The verified runtime is the official `@deepseek-ai/dsh@0.1.5-rc.1` npm distribut
 | Capability | Owner | Upstream extension |
 | --- | --- | --- |
 | macOS app | `apps/macos` | Independent native distribution around the official npm runtime |
-| Gongfeng Marketplace | `plugins/marketplace` | Profile bundle, connection RPC, settings tab |
+| Git repository marketplace | `plugins/marketplace` | Profile bundle, connection RPC, settings tab |
 | Desktop Pet | `plugins/dsh-pet` | Profile bundle, settings card, session events, native macOS helper |
 | WeChat | `plugins/wechat` | Channel bundle, queue/steer, approval waterfall, settings card |
 | WeCom Bot | `plugins/wecom-aibot` | Channel bundle, queue/steer, approval waterfall, settings card |
 | WeCom Tools | `plugins/wecom-tools` | Independent Skill bundle and user authorization |
 | Codex Controller | `plugins/codex-controller` | Persistent Codex session mirror over the pinned app-server |
 
-The public `dshmarket` plugin and the trusted Gongfeng Marketplace are separate catalog providers. A mode-template manager remains a proposal, not an additional required runtime capability.
+The public `dshmarket` plugin and this Git repository marketplace are separate catalog providers. A mode-template manager remains a proposal, not an additional required runtime capability.
 
 The repository's [bootstrap workflow](../README.md) installs the official npm runtime and its local, digest-verified Marketplace artifact. On macOS it also builds the native app and configures that shell to use the same bootstrap profile. Neither the app nor the installer patches DSH source. The copied GitHub sources retain their licenses and design notes; their prior repositories are historical references, not installation dependencies.
 

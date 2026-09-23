@@ -1,4 +1,6 @@
 import { createElement, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ConversationController } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
@@ -17,9 +19,9 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap { 'desktop.share': LocaleKey }
 }
 
-export const inject = ['slots', 'locale', 'conversation', 'sessions']
+export const inject = ['slots', 'locale', 'conversation', 'sessions', 'uiSession']
 
-/** Uses the exported ConversationController attachment API of the pinned rc.1 runtime. */
+/** Uses the exported ConversationController attachment API of the pinned runtime. */
 export function apply(ctx: Context): void {
   const transport = (window as Window & { webkit?: { messageHandlers?: { dshShare?: ShareTransport } } }).webkit?.messageHandlers?.dshShare
   if (!transport) return
@@ -67,7 +69,8 @@ export function apply(ctx: Context): void {
     const [notice, setNotice] = useState('')
     const [busy, setBusy] = useState(false)
     const current = useRef<AbortController | undefined>(undefined)
-    const sessionId = list.current
+    const binding = useSyncExternalStore(listener => ctx.uiSession.adapter.current.subscribe(listener), () => ctx.uiSession.adapter.current.getSnapshot())
+    const sessionId = binding.key as SessionId | undefined
     const scope = sessionId ? ctx.sessions.scope(sessionId) : undefined
     const composer = scope ? conversation.input.for(scope) : undefined
     const input = useSyncExternalStore(listener => composer?.state.subscribe(listener) ?? (() => {}), () => composer?.state.getSnapshot())
@@ -81,10 +84,10 @@ export function apply(ctx: Context): void {
       const abort = new AbortController(); current.current = abort; aborts.add(abort)
       try {
         await admitCurrent(transport!, batch, abort, conversation, () => {
-          const id = ctx.sessions.list.getSnapshot().current
+          const id = ctx.uiSession.adapter.current.getSnapshot().key as SessionId | undefined
           const scope = id ? ctx.sessions.scope(id) : undefined
           return id && scope ? { sessionId: id, actions: conversation.input.for(scope) } : undefined
-        }, listener => ctx.sessions.list.subscribe(listener))
+        }, listener => ctx.uiSession.adapter.current.subscribe(listener))
         accepted.add(batch.id); batches = batches.filter(item => item.id !== batch.id); emit()
         try { await transport!.postMessage({ action: 'ack', batch: batch.id }) }
         catch { if (!abort.signal.aborted) setNotice(t('ackError')) }

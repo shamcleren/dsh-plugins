@@ -1,14 +1,14 @@
-/** Self-contained WeCom settings card contributed through `settings.plugin.item`. */
+/** Self-contained WeCom settings card contributed through `plugins.bundle.config`. */
 
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { FieldState } from './form.js'
 import type { PresetOption, WeComCardFace, WorkspaceOption } from './controller.js'
 import type { LocaleKey } from './locales.js'
 import { styles } from './styles.js'
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
+import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 
 export type WeComCardProps =
-  PropsRuntime<'settings.plugin.item'>
+  PropsRuntime<'plugins.bundle.config'>
   & PropsLocale<'settings.wecom'>
   & InjectFace<WeComCardFace>
 
@@ -223,7 +223,7 @@ export function WeComCard(props: WeComCardProps) {
     />
   )
   return (
-    <li style={styles.card}>
+    <section style={styles.card}>
       <details>
         <summary style={styles.summary} aria-label={t('title')}>
           <span style={styles.heading}>
@@ -323,6 +323,6 @@ export function WeComCard(props: WeComCardProps) {
           </div>
         </div>
       </details>
-    </li>
+    </section>
   )
 }

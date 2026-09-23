@@ -1,4 +1,4 @@
-import { prepareHomeProfile, publishHomeProfile, recoverHomeProfile, discardHomeProfile } from './home-compatibility.mjs'
+import { homeProfileNeedsUpdate, prepareHomeProfile, publishHomeProfile, recoverHomeProfile, discardHomeProfile } from './home-compatibility.mjs'
 /** Staged, rollback-capable updates of installer-owned runtime and app files. */
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
@@ -125,7 +125,8 @@ export async function updateInstallation({ root, repo, state, release, nodeExecu
   const digests = await installationDigests(repo, desktop, release.runtimeDigest, port, buildEnv)
   const appChanged = desktop && (rebuildApp || state.appDigest !== digests.appDigest || !oldApp || !(await optionalStat(join(root, oldApp.app))))
   const launcherChanged = runtimeChanged || state.launcherDigest !== digests.launcherDigest
-  if (!runtimeChanged && !appChanged && !launcherChanged && state.schemaVersion === 2) return false
+  const pluginsChanged = await homeProfileNeedsUpdate({ home: env.DSH_HOME, repo, release })
+  if (!runtimeChanged && !appChanged && !launcherChanged && !pluginsChanged && state.schemaVersion === 2) return false
   await assertIdle(root)
   const stageName = '.update-' + randomUUID(), stage = join(root, stageName), next = join(stage, 'next')
   await mkdir(stage, { mode: 0o700 })
@@ -140,7 +141,10 @@ export async function updateInstallation({ root, repo, state, release, nodeExecu
       await execute('npm', ['exec', '--yes', '--registry=https://registry.npmjs.org/', '--package=pnpm@' + release.pnpmVersion,
         '--', 'pnpm', 'install', '--frozen-lockfile', '--ignore-scripts', '--prod'], { cwd: runtime, env: buildEnv })
       await execute(nodeExecutable, [join(runtime, 'node_modules/@deepseek-ai/dsh/lib/bin.js'), '--version'], { cwd: runtime, env: buildEnv })
+    }
+    if (runtimeChanged || pluginsChanged) {
       profileUpdate = await prepareHomeProfile({ root, home: env.DSH_HOME, repo, runtime, release, nodeExecutable, env: buildEnv, execute, log })
+      if (profileUpdate) profileUpdate.updateId = stageName
     }
     const paths = []
     if (runtimeChanged) paths.push('runtime')
@@ -162,7 +166,7 @@ export async function updateInstallation({ root, repo, state, release, nodeExecu
       paths.push(app.app, 'native-app.json')
     }
     await writeJson(join(next, marker), { ...state, schemaVersion: 2, dshHome: env.DSH_HOME, desktop,
-      dshVersion: release.dshVersion, runtimeDigest: release.runtimeDigest, ...digests, status: 'ready' })
+      dshVersion: release.dshVersion, runtimeDigest: release.runtimeDigest, profileUpdateId: profileUpdate?.updateId ?? state.profileUpdateId, ...digests, status: 'ready' })
     paths.push(marker)
     const entries = []
     for (const path of paths) {
@@ -184,7 +188,7 @@ export async function updateInstallation({ root, repo, state, release, nodeExecu
     await writeJson(join(root, journalName), { ...journal, committed: true })
     committed = true
     await recoverInstallation(root)
-    await recoverHomeProfile({ root, home: env.DSH_HOME, runtimeDigest: release.runtimeDigest, ready: true, log })
+    await recoverHomeProfile({ root, home: env.DSH_HOME, runtimeDigest: release.runtimeDigest, profileUpdateId: profileUpdate?.updateId ?? state.profileUpdateId, ready: true, log })
     log('Updated. Existing DSH settings, credentials and profile plugins were preserved.')
     return true
   } catch (error) {

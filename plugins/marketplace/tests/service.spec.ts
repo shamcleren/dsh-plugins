@@ -15,7 +15,7 @@ vi.mock('@deepseek-ai/dsh-app-boot', () => ({ resolveProfileDir: () => join(path
 vi.mock('@deepseek-ai/dsh-home-paths', () => ({ resolveDshHome: () => paths.home }))
 vi.mock('../src/command.ts', () => ({ runCommand: vi.fn() }))
 
-afterEach(async () => { vi.restoreAllMocks(); if (paths.home) await rm(paths.home, { recursive: true, force: true }) })
+afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllGlobals(); if (paths.home) await rm(paths.home, { recursive: true, force: true }) })
 
 async function fixture() {
   paths.home = await mkdtemp(join(tmpdir(), 'marketplace-source-'))
@@ -64,10 +64,31 @@ it('uses the registered callback port independently of the Host port, without ch
   await expect(f.service.beginOAuth({ repositoryUrl: 'https://other.example/team/plugins' })).rejects.toThrow()
 })
 
+it('connects a public GitHub repository without Gongfeng OAuth and reads its catalog', async () => {
+  const f = await fixture()
+  const catalog = Buffer.from(JSON.stringify({ schemaVersion: 1, plugins: [] }))
+  const gongfeng = vi.spyOn(GongfengOAuthController.prototype, 'repository')
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    expect(new Headers(init?.headers).has('authorization')).toBe(false)
+    const url = String(input)
+    if (url === 'https://api.github.com/repos/shamcleren/dsh-plugins') return Response.json({ default_branch: 'main' })
+    if (url.startsWith('https://api.github.com/repos/shamcleren/dsh-plugins/contents/marketplace.json')) {
+      return Response.json({ type: 'file', size: catalog.length, download_url: 'https://raw.githubusercontent.com/shamcleren/dsh-plugins/main/marketplace.json' })
+    }
+    return new Response(catalog)
+  }))
+  const state = await f.service.configure({ repositoryUrl: 'https://github.com/shamcleren/dsh-plugins.git' })
+  expect(gongfeng).not.toHaveBeenCalled()
+  expect(state).toMatchObject({ host: 'github', repository: 'shamcleren/dsh-plugins', ref: 'main', oauthConfigured: false })
+  await expect(f.service.catalog()).resolves.toMatchObject({ repository: 'shamcleren/dsh-plugins', ref: 'main' })
+  await expect(f.service.beginOAuth({ repositoryUrl: 'https://github.com/shamcleren/dsh-plugins' })).rejects.toThrow(/without OAuth/)
+})
+
 it('does not inspect or accept legacy private tokens as OAuth authorization', async () => {
   const f = await fixture()
   const state = await f.service.state()
   expect(state.oauthConfigured).toBe(false)
+  expect(state.host).toBe('gongfeng')
   expect(state).not.toHaveProperty('tokenConfigured')
   expect(f.describe).toHaveBeenCalledExactlyOnceWith('GONGFENG_OAUTH_ACCESS_TOKEN')
 })
@@ -83,4 +104,23 @@ it('passes the profile store and linker to the official CLI when the desktop env
   expect(vi.mocked(runCommand).mock.calls.at(-1)?.[1]).toEqual(expect.arrayContaining([
     '--config.ignore-scripts=true', '--store-dir', '/private/tmp/installer-store/v11', '--config.node-linker=hoisted', 'remove', '@example/test',
   ]))
+})
+
+it('refetches the Catalog after an installed plugin changes without changing DSH', async () => {
+  const f = await fixture()
+  const profile = join(paths.home, 'profiles/web')
+  const pkg = join(profile, 'node_modules/@example/test')
+  await mkdir(pkg, { recursive: true })
+  await writeFile(join(profile, 'package.json'), JSON.stringify({ dependencies: { '@example/test': 'link:/example' } }))
+  await writeFile(join(pkg, 'package.json'), JSON.stringify({ version: '1.0.0' }))
+  vi.spyOn(GongfengOAuthController.prototype, 'repositoryFile').mockResolvedValue(Buffer.from(JSON.stringify({ commit_id: 'fixture-commit' })))
+  const remote = vi.spyOn(GongfengOAuthController.prototype, 'repositoryRawFile').mockResolvedValue(Buffer.from(JSON.stringify({ schemaVersion: 1, plugins: [] })))
+  await f.service.catalog()
+  await f.service.catalog()
+  expect(remote).toHaveBeenCalledTimes(1)
+  await writeFile(join(pkg, 'package.json'), JSON.stringify({ version: '1.0.1' }))
+  await f.service.catalog()
+  expect(remote).toHaveBeenCalledTimes(2)
+  await f.service.catalog()
+  expect(remote).toHaveBeenCalledTimes(2)
 })

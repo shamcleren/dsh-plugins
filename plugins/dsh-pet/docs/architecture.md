@@ -101,7 +101,7 @@
 宠物开关、选择与尺寸可在 **Web 设置页（Settings → Plugins → Plugin configuration）** 里实时配置：
 
 - 宿主通过 `ctx.settings.installSection` 注册命名空间 `desktop-pet`，schema `{enabled, petId, petSize}`，以 cordis 配置为组合 entry（`applies: live`）。
-- 浏览器侧 `dsh.client` bundle（`src/client/`，tsdown 打包为 `lib/client.js` 的 lazy-CJS 工厂）在 keyed slot `settings.plugin.item`（key=`desktop-pet`）注册一张自包含卡片，经 `ctx.settingsScope.bind` 直接读写 settings。
+- 浏览器侧 `dsh.client` bundle（`src/client/`，tsdown 打包为 `lib/client.js` 的 lazy-CJS 工厂）在 keyed slot `plugins.bundle.config`（key=`@shamcleren/dsh-pet`）注册一张自包含卡片，经 `ctx.settingsScope.bind` 直接读写 settings。
 - 运行时权威来源：settings 用户覆盖 → 组合 entry（cordis 默认）；`state.json` 仅保留位置及其坐标语义（`position` + `positionMode`），不再存 `petId`/`petSize`。
 - 卡片字段即时提交：开关 toggle 即写；`petSize`（数字，80–224）在失焦或 Enter 时提交。Helper 右键菜单的"隐藏宠物"经 `hide` 消息回写 `enabled:false`，与卡片开关一致。
 

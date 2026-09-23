@@ -4,7 +4,11 @@
 
 ## 常用短命令
 
-插件安装使用 `dhp plugin install <插件名>`：未安装则安装，已安装则更新到当前仓库的发布版本。`dhp plugin update --all` 只更新 profile 里已经声明的 catalog 插件，不会把未安装的也装上。`dhp update` 只更新 DSH 运行时和 App。
+插件安装使用 `dhp plugin install <插件名>`：未安装则安装，已安装则更新到当前仓库的发布版本。`dhp plugin update --all` 只更新 profile 里已经声明的 catalog 插件，不会把未安装的也装上。`dhp update` 更新 DSH 运行时和 App，并同步升级已安装的本仓库插件；运行时版本不变时仍检查插件更新。市场目录缓存随运行时或已安装插件版本变化而失效，下次打开市场自动从已配置的可信来源刷新。
+
+DSH `0.1.6-alpha.2` 的侧栏提供官方「插件」页面，可管理插件安装、配置与启停。微信、企微机器人、AIDEV 和桌宠的设置卡片位于各自的已安装插件页面；本仓库的远端市场继续负责私有 catalog。MCP 仍使用官方 MCP Client 配置条目，OAuth 授权由对应服务或 transport 处理；该页面不等同于专门的 MCP 登录与连接管理中心。
+
+该版本发布包对配置求值异常仍可能整体启动失败；MCP 配置应在缺少必需凭据时条件禁用，并保持 `failOnStartupError: false`。普通连接失败允许 Host 继续启动，但等待授权或慢连接仍可能延迟就绪。实测边界见 [0.1.6 兼容验证](verification/dsh-0.1.6-compatibility.md)。
 
 | 操作 | 命令 |
 | --- | --- |
@@ -50,9 +54,9 @@ macOS 客户端已经运行时，`dhp restart` 通过 App 内的 `DeepSeekHarnes
 
 ## 通过 Remote Market 管理
 
-安装远端市场后，启动 DSH，打开“设置 → 插件 → 远端市场 → 来源设置”，填写仓库地址（例如 `https://gitlab.example.com/shamcleren/dsh-plugin`），点击“OAuth 登录并连接”。授权完成后自动读取该仓库的默认分支和插件目录，随后可搜索、安装和更新。
+安装 Git 仓库市场后，启动 DSH，打开“设置 → 插件 → Git 仓库市场 → 来源设置”，填写 `https://gitlab.example.com/...` 或 `https://github.com/owner/repo`。工蜂地址点击“OAuth 登录并连接”；GitHub 公开仓库点击“保存来源”，不需要授权。连接后自动读取该仓库的默认分支和插件目录，随后可搜索、安装和更新。
 
-默认服务端口为 `3080`，与 OAuth 登记回调一致。仅支持工蜂内网版 OAuth，不需要 Token、Application ID、分支配置或 `gongfeng` CLI。已授权时可以直接保存另一个仓库地址；授权失效可点“重新授权”。旧版 Private Token 不再作为登录凭据，需要重新通过 OAuth 登录。来源授权只负责读取远端目录和包，插件自己的账号、模型和机器人设置独立管理。本地安装不需要安装或授权远端市场。
+工蜂 OAuth 使用默认端口 `3080`。它只把令牌发给 `gitlab.example.com`，不会发给 GitHub。不需要 Token、Application ID、分支配置或 `gongfeng` CLI。已授权时可以直接保存另一个工蜂仓库；授权失效可点“重新授权”。GitHub 私有仓库不会读取。旧版 Private Token 不再作为登录凭据。来源授权只负责读取远端目录和包，插件自己的账号、模型和机器人设置独立管理。本地安装不需要安装或授权这个市场。
 
 ## 安装本地发布包
 

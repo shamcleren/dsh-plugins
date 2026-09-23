@@ -21,6 +21,8 @@ export interface MarketplaceCatalogCacheRequest {
   readonly catalogPath: string
   /** Running DSH version used to derive entry compatibility. */
   readonly dshVersion: string
+  /** Installed profile identity and package versions; changes invalidate the Catalog. */
+  readonly profileState: string
   /** Maximum artifact size accepted while parsing the Catalog. */
   readonly maxArtifactBytes: number
   /** Maximum bytes read from or written to one cache entry. */
@@ -28,7 +30,7 @@ export interface MarketplaceCatalogCacheRequest {
 }
 
 function cacheFile(request: MarketplaceCatalogCacheRequest): string {
-  const source = [request.baseUrl, request.repository, request.ref, request.catalogPath].join('\0')
+  const source = [request.baseUrl, request.repository, request.ref, request.catalogPath, request.dshVersion, request.profileState].join('\0')
   const key = createHash('sha256').update(source).digest('hex')
   return join(request.home, 'plugin-cache', `catalog-${key}.json`)
 }

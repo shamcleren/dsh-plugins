@@ -23,6 +23,7 @@ import { runCommand } from './command.ts'
 import { GongfengOAuthController, type GongfengOAuthConfig } from './oauth.ts'
 import { OAuthCallbackListener, OAUTH_REDIRECT_URI } from './oauth-callback.ts'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { githubFile, githubRepository } from './github.ts'
 import { parseRepositoryUrl } from './source.ts'
 import { profilePnpmOptions } from './profile-pnpm.ts'
 import { parseRepositoryFilePointer } from './repository-file.ts'
@@ -199,11 +200,11 @@ export class MarketplaceService extends Service {
     try {
       await this.oauth.callback(new URL(req.url ?? '/', OAUTH_REDIRECT_URI))
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' })
-      res.end('<!doctype html><meta charset="utf-8"><title>DeepSeek Harness</title><p>工蜂授权已完成，可以关闭此页面并返回 DeepSeek Harness。</p>')
+      res.end('<!doctype html><meta charset="utf-8"><title>DeepSeek Harness</title><p>授权已完成，可以关闭此页面并返回 DeepSeek Harness。</p>')
       return true
     } catch {
       res.writeHead(400, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' })
-      res.end('<!doctype html><meta charset="utf-8"><title>DeepSeek Harness</title><p>工蜂授权失败。请关闭此页面并在 DeepSeek Harness 中重试。</p>')
+      res.end('<!doctype html><meta charset="utf-8"><title>DeepSeek Harness</title><p>授权失败。请关闭此页面并在 DeepSeek Harness 中重试。</p>')
       return false
     }
   }
@@ -220,6 +221,7 @@ export class MarketplaceService extends Service {
       repository: config.repository,
       ref: config.ref,
       repositoryUrl: new URL(config.repository, config.baseUrl).href,
+      host: parseRepositoryUrl(new URL(config.repository, config.baseUrl).href).host,
       oauthConfigured: oauthCredential.configured,
       nativeRestartAvailable: process.env.DSH_NATIVE_APP === '1',
       installed: await this.installed(config.profile),
@@ -233,6 +235,7 @@ export class MarketplaceService extends Service {
    */
   async beginOAuth(request: MarketplaceOAuthRequest): Promise<MarketplaceOAuthStart> {
     const source = parseRepositoryUrl(request.repositoryUrl)
+    if (source.host !== 'gongfeng') throw new Error('A public GitHub repository connects without OAuth')
     if (this.ctx.webServer.port !== Number(new URL(OAUTH_REDIRECT_URI).port)) await this.callbackListener.start()
     return this.oauth.begin(this.oauthConfig({ ...this.current(), baseUrl: source.baseUrl }))
   }
@@ -251,6 +254,11 @@ export class MarketplaceService extends Service {
     const source = parseRepositoryUrl(request.repositoryUrl)
     const scope = this.settingsScope
     if (scope === undefined) throw new Error('marketplace settings are unavailable')
+    if (source.host === 'github') {
+      const project = await githubRepository(source.repository)
+      await scope.update({ baseUrl: source.baseUrl, repository: source.repository, ref: project.defaultBranch })
+      return await this.state()
+    }
     const project = await this.oauth.repository(this.oauthConfig({ ...this.current(), baseUrl: source.baseUrl }), source.repository)
     if (!project.defaultBranch) throw new Error('The repository has no default branch')
     await scope.update({ baseUrl: source.baseUrl, repository: source.repository, ref: project.defaultBranch })
@@ -264,7 +272,7 @@ export class MarketplaceService extends Service {
   async catalog(): Promise<MarketplaceCatalogView> {
     const config = this.current()
     validateSource(config.baseUrl, config.repository, config.ref)
-    const cacheRequest = this.catalogCacheRequest(config)
+    const cacheRequest = await this.catalogCacheRequest(config)
     return await readMarketplaceCatalogCache(cacheRequest)
       ?? await this.fetchCatalog(config, cacheRequest)
   }
@@ -276,7 +284,7 @@ export class MarketplaceService extends Service {
   async refreshCatalog(): Promise<MarketplaceCatalogView> {
     const config = this.current()
     validateSource(config.baseUrl, config.repository, config.ref)
-    return await this.fetchCatalog(config, this.catalogCacheRequest(config))
+    return await this.fetchCatalog(config, await this.catalogCacheRequest(config))
   }
 
   /**
@@ -316,6 +324,8 @@ export class MarketplaceService extends Service {
   }
 
   private async repositoryFile(config: ResolvedConfig, path: string, maxBytes: number): Promise<Buffer> {
+    const source = parseRepositoryUrl(new URL(config.repository, config.baseUrl).href)
+    if (source.host === 'github') return githubFile(source.repository, path, config.ref, maxBytes)
     const pointer = parseRepositoryFilePointer(await this.oauth.repositoryFile({
       config: this.oauthConfig(config), repository: config.repository, path, ref: config.ref,
       maxBytes: Math.ceil(maxBytes * 1.5) + 1024 * 1024,
@@ -329,7 +339,8 @@ export class MarketplaceService extends Service {
     return bytes
   }
 
-  private catalogCacheRequest(config: ResolvedConfig): MarketplaceCatalogCacheRequest {
+  private async catalogCacheRequest(config: ResolvedConfig): Promise<MarketplaceCatalogCacheRequest> {
+    const installed = (await this.installed(config.profile)).sort((a, b) => a.packageName.localeCompare(b.packageName))
     return {
       home: resolveDshHome(),
       baseUrl: config.baseUrl,
@@ -337,6 +348,7 @@ export class MarketplaceService extends Service {
       ref: config.ref,
       catalogPath: config.catalogPath,
       dshVersion: packageVersion(),
+      profileState: JSON.stringify([resolveProfileDir(config.profile), installed]),
       maxArtifactBytes: config.maxArtifactBytes,
       maxCatalogBytes: MAX_CATALOG_BYTES,
     }

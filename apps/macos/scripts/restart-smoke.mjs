@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -72,10 +72,16 @@ try {
     dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'], patchReload: 'live' } },
   }))
   const probe = join(scratch, 'probe.mjs'), trigger = join(scratch, 'restart-request')
+  const requestHost = async mode => {
+    // Publish complete contents in one directory event, so the Host watcher
+    // cannot consume an empty file before writeFile has finished writing it.
+    await writeFile(trigger + '.tmp', mode)
+    await rename(trigger + '.tmp', trigger)
+  }
   const ready = join(scratch, 'probe-ready'), failed = join(scratch, 'probe-failed')
   const policy = join(scratch, 'native-policy.json')
   await writeFile(probe, `
-import { watch } from 'node:fs'
+import { watchFile, unwatchFile } from 'node:fs'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 export const inject = ['subprocess', 'connection', 'webServer', 'systemPrompt']
 export async function apply(ctx) {
@@ -106,10 +112,11 @@ export async function apply(ctx) {
     await child.done
   }
   ctx.effect(() => {
-    const watcher = watch(${JSON.stringify(scratch)}, (_, name) => {
-      if (name === 'restart-request') void request().catch(error => writeFile(${JSON.stringify(failed)}, error.message))
-    })
-    return () => watcher.close()
+    // Directory fs.watch may coalesce rapid unlink/recreate events on macOS.
+    // Observe the durable outstanding request instead of relying on one event.
+    const changed = () => { void request().catch(error => writeFile(${JSON.stringify(failed)}, error.message)) }
+    watchFile(${JSON.stringify(trigger)}, { interval: 100 }, changed)
+    return () => unwatchFile(${JSON.stringify(trigger)}, changed)
   })
   await writeFile(${JSON.stringify(ready + '.tmp')}, JSON.stringify({
     pid: process.pid, url: ctx.connection.authenticatedUrl('http://127.0.0.1:' + ctx.webServer.port),
@@ -145,7 +152,7 @@ export async function apply(ctx) {
   await waitFor(httpReady, 'initial Web page responds')
   for (let cycle = 1; cycle <= 2; cycle++) {
     const previous = hostPID
-    await writeFile(trigger, String(cycle))
+    await requestHost(String(cycle))
     hostPID = await waitFor(async () => {
       const error = await optionalText(failed)
       assert.equal(error, '', error)
@@ -161,7 +168,7 @@ export async function apply(ctx) {
     const logPath = join(root, 'logs/launcher.log')
     const nativeReady = () => waitFor(async () => (await optionalText(logPath)).includes('Host ready pid=' + hostPID), 'native readiness callback commits')
     await nativeReady()
-    await writeFile(trigger, 'inspect')
+    await requestHost('inspect')
     const sections = JSON.parse(await waitFor(() => optionalText(policy), 'native policy reaches the assembled model context'))
     assert.equal(sections.length, 1)
     assert.ok(sections[0].text.includes(app), 'lifecycle command targets this fixture App')
@@ -169,7 +176,7 @@ export async function apply(ctx) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       const previous = hostPID
       if (attempt === 2) process.kill(previous, 'SIGKILL')
-      else await writeFile(trigger, 'terminate')
+      else await requestHost('terminate')
       hostPID = await waitFor(async () => {
         const pid = (await hostInfo())?.pid
         return pid && pid !== previous ? pid : undefined
@@ -180,7 +187,7 @@ export async function apply(ctx) {
       assert.throws(() => process.kill(previous, 0), { code: 'ESRCH' })
       console.log(JSON.stringify({ scenario: attempt === 2 ? 'SIGKILL' : 'internal SIGTERM', attempt, appPID, oldHostPID: previous, newHostPID: hostPID, http: 200 }))
     }
-    await writeFile(trigger, 'terminate')
+    await requestHost('terminate')
     await waitFor(async () => (await optionalText(logPath)).includes('Automatic recovery stopped after repeated exits.'), 'recovery budget stops an exit loop')
     assert.equal((await listOwnedProcesses(root)).length, 1, 'only the native App remains after recovery budget exhaustion')
     console.log('Repeated ready/exit cycles stop after three recoveries.')
@@ -193,7 +200,7 @@ export async function apply(ctx) {
     }, 'explicit restart recovers from budget exhaustion')
     await nativeReady()
     const beforeExitLog = (await optionalText(logPath)).length
-    await writeFile(trigger, 'terminate')
+    await requestHost('terminate')
     await waitFor(async () => (await optionalText(logPath)).slice(beforeExitLog).includes('Automatic Host recovery scheduled'), 'a retry is pending before stop')
     await controlService({ action: 'stop', directory: root, log() {} })
     assert.deepEqual(await listOwnedProcesses(root), [])
@@ -225,7 +232,7 @@ export async function apply(ctx) {
     const lockPath = join(root, '.bootstrap.lock')
     await writeFile(lockPath, 'fixture update owner')
     offset = (await optionalText(logPath)).length
-    await writeFile(trigger, 'terminate')
+    await requestHost('terminate')
     await waitFor(async () => (await optionalText(logPath)).slice(offset).includes('Host startup failed: Installation is updating.'), 'recovery respects installation updates')
     assert.equal((await listOwnedProcesses(root)).length, 1)
     assert.equal(await readFile(lockPath, 'utf8'), 'fixture update owner')
@@ -235,7 +242,7 @@ export async function apply(ctx) {
 
     await startHealthy()
     offset = (await optionalText(logPath)).length
-    await writeFile(trigger, 'terminate')
+    await requestHost('terminate')
     await waitFor(async () => (await optionalText(logPath)).slice(offset).includes('Automatic Host recovery scheduled'), 'Host has exited before another owner binds')
     // WebKit may reconnect while the foreign owner holds the port. Close its
     // test-owned sockets so listener cleanup cannot wait on an idle connection.

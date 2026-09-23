@@ -6,15 +6,15 @@
 
 For a new installation, use the [repository bootstrap](../../README.md) with `make init MARKETPLACE=1`. For an existing installation, add the Marketplace tarball from this same repository; see the [plugin management guide](../../docs/plugin-management.md). The default bootstrap does not add this bundle. Other plugins can be installed through **Remote Market** or directly from local tarballs/built source directories without installing or authorizing this market. The canonical source is `plugins/marketplace`; no separate GitHub checkout is required.
 
-The tested runtime is the official DeepSeek Harness `0.1.5-rc.1` npm distribution. Newer upstream releases require compatibility testing before updating this pin. Catalog compatibility uses the installed DSH version, not this plugin's version.
+The tested runtime is the official DeepSeek Harness `0.1.6-alpha.2` npm distribution. Newer upstream releases require compatibility testing before updating this pin. Catalog compatibility uses the installed DSH version, not this plugin's version.
 
 ## Behavior
 
 The Host accepts one configured Gongfeng repository and ref, validates the catalog, verifies artifact byte length and SHA-256, rejects packages outside the catalog, disables package installation scripts, serializes profile mutations, and restores the profile manifest and lockfile when a mutation fails.
 
-Profile mutations retain the pnpm store and node linker recorded by the original installation, so launching the desktop App outside the installer's shell does not require moving dependencies or changing global pnpm settings. Update counts include newer compatible releases, never an older remote release than the locally installed version.
+Profile mutations retain the pnpm store and node linker recorded by the original installation, so launching the desktop App outside the installer's shell does not require moving dependencies or changing global pnpm settings. Update counts include newer compatible releases, never an older remote release than the locally installed version. The local catalog cache is scoped to the trusted source, running DSH version, and installed profile package versions. A runtime or plugin update automatically refetches the catalog on its next use; unchanged installations reuse the cache until Refresh catalog is selected.
 
-The browser UI adds a separate **Remote marketplace / 远端市场** tab (`trusted-marketplace`) without replacing the upstream plugin UI or claiming the `marketplace` tab ID. The pinned official rc.8 runtime provides plugin configuration and inventory tabs by default; a marketplace such as `dshmarket` needs separate installation. Source configuration and authorization are optional: without them, DSH and other installed marketplaces remain usable, the remote tab explains this choice, and its source form opens only when requested. No remote catalog is fetched until credentials are configured.
+The browser UI adds a separate **Git repository marketplace / Git 仓库市场** tab (`trusted-marketplace`) without replacing the upstream plugin UI or claiming the `marketplace` tab ID. The pinned official rc.8 runtime provides plugin configuration and inventory tabs by default; a marketplace such as `dshmarket` needs separate installation. Source configuration and authorization are optional: without them, DSH and other installed marketplaces remain usable, the remote tab explains this choice, and its source form opens only when requested. No remote catalog is fetched until credentials are configured.
 
 The browser UI provides source status, a single repository URL and OAuth sign-in, catalog refresh, search, compatibility and update filters, installed and update counts, per-plugin progress, guarded uninstall, batch updates with partial-failure reporting, and a single restart prompt after a batch of changes.
 
@@ -22,7 +22,7 @@ The bundle inserts `trusted-marketplace`. Its `./client` export uses `settings.p
 
 ## Source connection
 
-Enter an HTTPS repository URL such as `https://gitlab.example.com/shamcleren/dsh-plugin` and select **Connect with OAuth**. The bundled public application uses PKCE and the registered loopback callback `http://127.0.0.1:3080/oauth/gongfeng/callback`. After authorization, the exact selected project's default branch and catalog load automatically. A `.git` suffix is accepted. Only `gitlab.example.com` is supported by this built-in application; tokens cannot be sent to arbitrary origins or followed across redirects.
+Enter one repository home URL. `https://gitlab.example.com/group/project` uses the bundled Gongfeng OAuth application, PKCE, and the registered loopback callback `http://127.0.0.1:3080/oauth/gongfeng/callback`. `https://github.com/owner/repo` is read as a public repository: the default branch, catalog, and artifacts come from GitHub's public content hosts, with no OAuth and no Gongfeng token. A `.git` suffix is accepted. Other hosts, file paths, and private GitHub repositories are rejected. Redirects may stay only on `api.github.com`, `raw.githubusercontent.com`, and `objects.githubusercontent.com`.
 
 When DSH runs on another port, a temporary loopback listener owns port 3080 only during authorization, then releases it on completion, timeout, or unload. If another process owns 3080, login fails with an actionable message; it never terminates or redirects through that process.
 
@@ -30,7 +30,7 @@ There is no Private Token login, application-ID field, branch field, or `gongfen
 
 ## Security
 
-This package does not aggregate public registries and does not install arbitrary NPM or GitHub sources. Catalog credentials remain in the Harness credential service and are never returned to the browser. Installation scripts stay disabled. A catalog entry is not a general trust assertion: the configured repository owner remains responsible for reviewing every published artifact.
+This package does not aggregate public registries and does not install arbitrary npm packages. A configured GitHub repository must be public; its catalog artifacts are still checked by size and SHA-256. Gongfeng credentials remain in the Harness credential service, are never returned to the browser, and are never sent to GitHub. Installation scripts stay disabled. A catalog entry is not a general trust assertion: the configured repository owner remains responsible for reviewing every published artifact.
 
 ## Model Experience
 

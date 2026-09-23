@@ -7,7 +7,7 @@ import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
+import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import { createElement } from 'react'
 import { WeComCard } from './Card.js'
 import { WeComCardController } from './controller.js'
@@ -52,9 +52,9 @@ export function apply(ctx: ClientContext): void {
     () => ctx.remote.$on('credentials/reference-updated', ref => { card.refreshCredential(ref) }),
     'wecom-aibot: credential invalidations',
   )
-  ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
-      name: 'settings.plugin.item',
-      key: SETTINGS_NAMESPACE,
+  ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
+      name: 'plugins.bundle.config',
+      key: '@shamcleren/dsh-wecom-aibot',
       locale: LOCALE_NAMESPACE,
       inject: () => card.inject(),
     }, WeComCard))
@@ -65,7 +65,7 @@ function mountSessionBadge(ctx: SessionBadgeHost): void {
   const t = ctx.locale.bind(LOCALE_NAMESPACE)
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
     { name: 'conversation.session.header.actions', id: 'wecom-session-badge', order: 20, locale: LOCALE_NAMESPACE },
-    () => createElement(ChannelBadge, { sessionId: currentSessionId(ctx), t }),
+    (props: { sessionId: string }) => createElement(ChannelBadge, { sessionId: props.sessionId, t }),
   ))
 }
 
@@ -73,13 +73,8 @@ interface SessionBadgeHost {
   locale: ClientContext['locale']
   slots: {
     inject(slot: string, register: () => unknown): void
-    register(meta: Record<string, unknown>, component: () => unknown): unknown
+    register(meta: Record<string, unknown>, component: (props: { sessionId: string }) => unknown): unknown
   }
-  sessions?: { list: { getSnapshot(): { current?: string } } }
-}
-
-function currentSessionId(ctx: SessionBadgeHost): string | undefined {
-  return ctx.sessions?.list.getSnapshot().current
 }
 
 /** Header mark for the open WeCom Session. */

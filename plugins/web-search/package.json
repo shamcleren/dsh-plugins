@@ -1,6 +1,6 @@
 {
   "name": "@shamcleren/dsh-web-search",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Free, keyless Exa web search through the official DSH MCP client",
   "type": "module",
   "main": "lib/index.js",
@@ -19,15 +19,15 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:live": "node scripts/smoke.mjs"
   },
-  "dependencies": { "@deepseek-ai/dsh-mcp-client": "0.1.5-rc.1", "ajv": "8.20.0" },
+  "dependencies": { "@deepseek-ai/dsh-mcp-client": "0.1.6-alpha.2", "ajv": "8.20.0" },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-system-prompt": "0.1.5-rc.1",
-    "@deepseek-ai/dsh-tools": "0.1.5-rc.1"
+    "@deepseek-ai/dsh-system-prompt": "0.1.6-alpha.2",
+    "@deepseek-ai/dsh-tools": "0.1.6-alpha.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-system-prompt": "0.1.5-rc.1",
-    "@deepseek-ai/dsh-tools": "0.1.5-rc.1"
+    "@deepseek-ai/dsh-system-prompt": "0.1.6-alpha.2",
+    "@deepseek-ai/dsh-tools": "0.1.6-alpha.2"
   }
 }

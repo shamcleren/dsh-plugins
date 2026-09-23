@@ -23,7 +23,7 @@ Commands:
   stop                               stop only this installation's App/Web
   restart [--web]                     restart the App Host, or Web with --web
   status
-  update [--rebuild]                  update the pinned runtime and changed app
+  update [--rebuild]                  update pinned DSH, installed catalog plugins and app
   help
 
 Examples:

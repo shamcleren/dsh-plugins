@@ -1,10 +1,10 @@
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
+import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import type { PresetOption, WeChatCardFace, WeChatCardState } from './controller.js'
 import type { LocaleKey } from './locales.js'
 import { styles } from './styles.js'
 
-export type WeChatCardProps = PropsRuntime<'settings.plugin.item'>
+export type WeChatCardProps = PropsRuntime<'plugins.bundle.config'>
   & PropsLocale<'settings.wechat'>
   & InjectFace<WeChatCardFace>
 
@@ -110,7 +110,7 @@ export function WeChatCard(props: WeChatCardProps) {
   const state = props.useWeChatCard(snapshot => snapshot)
   const t = (key: LocaleKey): string => props.t(key)
   return (
-    <li style={styles.card}>
+    <section style={styles.card}>
       <details>
         <summary style={styles.summary} aria-label={t('title')}>
           <span style={styles.heading}>
@@ -124,6 +124,6 @@ export function WeChatCard(props: WeChatCardProps) {
           <PresetField state={state} t={t} onEdit={props.editPreset} onSave={props.savePreset} onDiscard={props.discardPreset} />
         </div>
       </details>
-    </li>
+    </section>
   )
 }
