@@ -1,18 +1,18 @@
 /** Loopback Connection-compatible channel. Mutations stay behind an explicit user action. */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
-import { clientRequestSchema } from '@deepseek-ai/dsh-client-connection'
+import { clientRequestSchema, type ConnectionRpcHandler } from '@deepseek-ai/dsh-client-connection'
 
 const MAX_BODY_BYTES = 1024 * 1024
-type RpcHandler = (method: string, payload: unknown, signal: AbortSignal) => unknown | Promise<unknown>
+type RpcHandler = ConnectionRpcHandler
 
 export function registerHostRpc(ctx: Context, channel: string, handler: RpcHandler): void {
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: channel, handler: (request, response) => serve(ctx, channel, handler, request, response) }), 'codex-controller: rpc')
 }
 
 async function serve(ctx: Context, channel: string, handler: RpcHandler, request: IncomingMessage, response: ServerResponse): Promise<void> {
-  const rejection = ctx.connection.requestRejection(request)
-  if (rejection !== undefined) return send(response, rejection, rejection === 401 ? 'unauthorized' : 'forbidden')
+  const admission = ctx.connection.admit(request)
+  if ('rejection' in admission) return send(response, admission.rejection, admission.rejection === 401 ? 'unauthorized' : 'forbidden')
   const endpoint = endpointFrom(channel, request.url)
   if (request.method !== 'POST' || endpoint === undefined) return send(response, 404, 'not found')
   if (request.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase() !== 'application/json') return send(response, 415, 'content type must be application/json')
@@ -26,7 +26,7 @@ async function serve(ctx: Context, channel: string, handler: RpcHandler, request
   const abort = new AbortController()
   request.once('aborted', () => abort.abort())
   try {
-    sendJson(response, 200, { type: 'server-response', rpcId: envelope.data.rpcId, result: await handler(endpoint, envelope.data.payload, abort.signal) })
+    sendJson(response, 200, { type: 'server-response', rpcId: envelope.data.rpcId, result: await handler(endpoint, envelope.data.payload, abort.signal, admission.peer) })
   } catch {
     send(response, 500, 'handler failure')
   }

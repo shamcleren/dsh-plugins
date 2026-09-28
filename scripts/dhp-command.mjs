@@ -12,8 +12,10 @@ export function quote(value) {
 }
 
 export function dhpLauncherScript({ node, cli, root }) {
-  return '#!/bin/sh\nset -eu\nunset NODE_OPTIONS NODE_PATH\nexport DSH_PLUGIN_DIR=' +
-    quote(root) + '\nexec ' + quote(node) + ' ' + quote(cli) + ' "$@"\n'
+  const repo = dirname(dirname(cli))
+  return '#!/bin/sh\nset -eu\nunset NODE_OPTIONS NODE_PATH\nexport DSH_PLUGIN_DIR=' + quote(root) +
+    '\nif ' + quote(node) + ' --version >/dev/null 2>&1; then\n  exec ' + quote(node) + ' ' + quote(cli) + ' "$@"\nfi\n' +
+    'exec /bin/sh ' + quote(join(repo, 'scripts/dhp-recover.sh')) + ' ' + quote(repo) + ' ' + quote(root) + ' "$@"\n'
 }
 
 async function optionalStat(path) {
@@ -43,15 +45,17 @@ export async function publishUserDhp({ launcher, userHome = homedir(), pathEnv =
   await mkdir(bin, { recursive: true, mode: 0o700 })
   const command = join(bin, 'dhp')
   const existing = await optionalStat(command)
+  let linked = false
   if (existing) {
     if (!existing.isSymbolicLink()) throw new Error('Refusing to replace ' + command + '; it is not a dhp symlink from this installer')
     const target = resolve(bin, await readlink(command))
     if (target !== launcher && !(await belongsToInstaller(target))) {
       throw new Error('Refusing to replace ' + command + '; it does not belong to this installer')
     }
-    await unlink(command)
+    linked = target === launcher
+    if (!linked) await unlink(command)
   }
-  await symlink(launcher, command)
+  if (!linked) await symlink(launcher, command)
   const onPath = pathEnv.split(':').includes(bin)
   if (!onPath) {
     const snippet = marker + '\n' + pathLine + '\n'

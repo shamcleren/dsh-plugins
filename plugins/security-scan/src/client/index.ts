@@ -4,7 +4,7 @@ import { createElement, useSyncExternalStore } from 'react'
 import { Workbench } from './Workbench.js'
 import { en, zh, type LocaleKey } from './locales.js'
 import { css } from './styles.js'
-import { SECURITY_CHANNEL, ModelCatalogSchema, UiStateSchema, type UiRemote } from '../ui-contract.js'
+import { SECURITY_CHANNEL, ReportActionsSchema, ModelCatalogSchema, UiStateSchema, type UiRemote } from '../ui-contract.js'
 interface ClientContext {
   uiWorkspace?: Pick<UiWorkspace, 'openSession'>
   effect(callback: () => unknown, label?: string): void
@@ -31,6 +31,9 @@ export function apply(ctx: ClientContext): void {
     return result.value
   }
   const remote: UiRemote = {
+    reportActions: async id => ReportActionsSchema.parse(await call('reportActions', { id })),
+    repair: (id, findingIds, mode, expectedRevision) => call('repair', { id, findingIds, mode, expectedRevision }),
+    rescan: id => call('rescan', { id }),
     models: async () => ModelCatalogSchema.parse(await call('models')),
     setup: () => call('setup'),
     state: async () => UiStateSchema.parse(await call('state')),

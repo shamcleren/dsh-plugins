@@ -67,6 +67,9 @@ it('lists AI model and compact usage from the saved report, and formats cache hi
       agent: { status: 'completed', reason: 'completed', provider: 'deepseek', model: 'deepseek-chat', steps: 1, areas: [], files: [], reviewedFindings: 0, additionalFindings: 0, inputTokens: 24_100_000, outputTokens: 12_000, cacheReadTokens: 23_618_000, cacheWriteTokens: 0, usageAvailable: true, events: [] },
     }
     await writeReport(root, report)
+    const { mkdir, writeFile } = await import('node:fs/promises')
+    const broken = join(root, '87654321-4321-4321-8321-cba987654321'); await mkdir(broken)
+    await writeFile(join(broken, 'report.json'), JSON.stringify({ ...report, schemaVersion: 99 }))
     expect(await listReports(root)).toMatchObject([{ source: '/repo', findings: 0, agent: { model: 'deepseek/deepseek-chat', usageAvailable: true, inputTokens: 24_100_000, outputTokens: 12_000, cacheReadTokens: 23_618_000 } }])
     expect(renderReport(report)).toContain('24.1M tok · 缓存命中 98%')
   } finally { await rm(root, { recursive: true, force: true }) }

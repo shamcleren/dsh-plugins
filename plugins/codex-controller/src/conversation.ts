@@ -44,7 +44,7 @@ export function codexViewDefinition(): ConversationViewDefinition<ConversationVi
 }
 
 export function readNotice(event: NoticeEvent): CodexNoticeNode | undefined {
-  if (event.type !== 'user/message' || event.data?.source?.kind !== 'plugin' || event.data.source.plugin !== PLUGIN) return
+  if (event.type !== 'user/message' || (event.data?.source?.kind !== PLUGIN && event.data?.source?.kind !== 'plugin:' + PLUGIN && !(event.data?.source?.kind === 'plugin' && event.data.source.plugin === PLUGIN))) return
   const text = (event.data.content ?? []).filter(block => block.type === 'text').map(block => block.text ?? '').join('\n').trim()
   if (!text) return
   return { summary: event.data.source.summary || 'Codex', text, seq: event.seq ?? 0 }

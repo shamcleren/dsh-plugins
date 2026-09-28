@@ -1,18 +1,19 @@
 /** Trusted single-source plugin Marketplace and profile mutation service. */
 
-import { Service, type Context } from '@deepseek-ai/cordis'
+import { Service, type Volatile, type Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import { resolveProfileDir } from '@deepseek-ai/dsh-app-boot'
-import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+import { readProfilePlugins, readProfileManifest, writeProfileBundles } from '@deepseek-ai/dsh-app-boot'
+import type { ChangeResult } from '@deepseek-ai/dsh-plugin-manager'
+import { withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
-import { type SettingsScope } from '@deepseek-ai/dsh-settings'
+import type { SettingsForms } from '@deepseek-ai/dsh-settings'
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { z as wire } from 'zod'
 import {
   readMarketplaceCatalogCache,
@@ -25,7 +26,6 @@ import { OAuthCallbackListener, OAUTH_REDIRECT_URI } from './oauth-callback.ts'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { githubFile, githubRepository } from './github.ts'
 import { parseRepositoryUrl } from './source.ts'
-import { profilePnpmOptions } from './profile-pnpm.ts'
 import { parseRepositoryFilePointer } from './repository-file.ts'
 import type {
   InstalledMarketplacePlugin,
@@ -73,7 +73,7 @@ export interface Config {
   oauthRefreshTokenRef?: string
   /** Epoch milliseconds when the current OAuth access token expires. */
   oauthExpiresAt?: number
-  /** Profile mutated by install, update, and removal operations. */
+  /** Legacy setting retained for config import only; the active Host owns the target. */
   profile?: string
   /** Maximum decoded tarball bytes. */
   maxArtifactBytes?: number
@@ -88,7 +88,6 @@ interface ResolvedConfig {
   oauthAccessTokenRef: string
   oauthRefreshTokenRef: string
   oauthExpiresAt?: number
-  profile: string
   maxArtifactBytes: number
 }
 
@@ -120,7 +119,6 @@ function resolveConfig(config: Config): ResolvedConfig {
     oauthAccessTokenRef: config.oauthAccessTokenRef ?? DEFAULT_OAUTH_ACCESS_TOKEN_REF,
     oauthRefreshTokenRef: config.oauthRefreshTokenRef ?? DEFAULT_OAUTH_REFRESH_TOKEN_REF,
     ...(config.oauthExpiresAt === undefined ? {} : { oauthExpiresAt: config.oauthExpiresAt }),
-    profile: config.profile ?? 'web',
     maxArtifactBytes,
   }
 }
@@ -141,8 +139,8 @@ async function optionalFile(path: string): Promise<Buffer | undefined> {
 
 /** Remote Marketplace service backed by Gongfeng and the canonical profile CLI. */
 export class MarketplaceService extends Service {
-  static inject = ['credentials', 'webServer']
-  static Config: z<Config> = z.object({
+  static inject = ['credentials', 'webServer', 'profileContext', 'pluginManager']
+  static Config = z.object({
     baseUrl: z.string().default(DEFAULT_BASE_URL),
     repository: z.string().default(DEFAULT_REPOSITORY),
     ref: z.string().default(DEFAULT_REF),
@@ -151,38 +149,31 @@ export class MarketplaceService extends Service {
     oauthAccessTokenRef: z.string().default(DEFAULT_OAUTH_ACCESS_TOKEN_REF),
     oauthRefreshTokenRef: z.string().default(DEFAULT_OAUTH_REFRESH_TOKEN_REF),
     oauthExpiresAt: z.number().step(1).min(0),
-    profile: z.string().default('web'),
+    profile: z.string(),
     maxArtifactBytes: z.number().step(1).min(1).default(DEFAULT_MAX_ARTIFACT_BYTES),
-  })
+  }).volatile()
 
-  private readonly entry: Config
+  private readonly entry: Config | Volatile<Config>
   private current: () => ResolvedConfig
-  private settingsScope: SettingsScope<Config> | undefined
+  private settings: SettingsForms | undefined
   private mutationTail: Promise<void> = Promise.resolve()
   private readonly oauth: GongfengOAuthController
   private readonly callbackListener: OAuthCallbackListener
 
-  constructor(ctx: Context, config: Config = {}) {
+  constructor(ctx: Context, config: Config | Volatile<Config> = {}) {
     super(ctx, 'trustedMarketplace')
     this.entry = config
-    this.current = () => resolveConfig(this.entry)
+    this.current = () => resolveConfig(('get' in this.entry) ? structuredClone(this.entry.get()) : this.entry)
     this.oauth = new GongfengOAuthController(ctx.credentials, async (oauthExpiresAt) => {
-      const scope = this.settingsScope
+      const scope = this.settings
       if (scope === undefined) throw new Error('marketplace settings are unavailable')
-      await scope.update({ oauthExpiresAt })
+      await scope.update(name, { oauthExpiresAt })
     })
     this.callbackListener = new OAuthCallbackListener((req, res) => this.handleOAuthCallback(req, res))
     ctx.effect(() => async () => { this.oauth.dispose(); await this.callbackListener.dispose() }, 'marketplace: OAuth lifetime')
     ctx.inject(['settings'], (settingsCtx) => {
-      const scope = settingsCtx.settings.register(name, MarketplaceService.Config, {
-        base: config,
-      })
-      this.settingsScope = scope
-      this.current = () => resolveConfig(scope.get())
-      settingsCtx.effect(() => () => {
-        this.settingsScope = undefined
-        this.current = () => resolveConfig(this.entry)
-      })
+      this.settings = settingsCtx.settings
+      settingsCtx.effect(() => () => { this.settings = undefined })
     })
     ctx.effect(() => ctx.webServer.register({
       kind: 'exact',
@@ -224,7 +215,7 @@ export class MarketplaceService extends Service {
       host: parseRepositoryUrl(new URL(config.repository, config.baseUrl).href).host,
       oauthConfigured: oauthCredential.configured,
       nativeRestartAvailable: process.env.DSH_NATIVE_APP === '1',
-      installed: await this.installed(config.profile),
+      installed: await this.installed(),
     }
   }
 
@@ -252,16 +243,16 @@ export class MarketplaceService extends Service {
   /** Save one authorized repository, resolving its default branch without listing unrelated projects. */
   async configure(request: MarketplaceConfigureRequest): Promise<MarketplaceState> {
     const source = parseRepositoryUrl(request.repositoryUrl)
-    const scope = this.settingsScope
+    const scope = this.settings
     if (scope === undefined) throw new Error('marketplace settings are unavailable')
     if (source.host === 'github') {
       const project = await githubRepository(source.repository)
-      await scope.update({ baseUrl: source.baseUrl, repository: source.repository, ref: project.defaultBranch })
+      await scope.update(name, { baseUrl: source.baseUrl, repository: source.repository, ref: project.defaultBranch })
       return await this.state()
     }
     const project = await this.oauth.repository(this.oauthConfig({ ...this.current(), baseUrl: source.baseUrl }), source.repository)
     if (!project.defaultBranch) throw new Error('The repository has no default branch')
-    await scope.update({ baseUrl: source.baseUrl, repository: source.repository, ref: project.defaultBranch })
+    await scope.update(name, { baseUrl: source.baseUrl, repository: source.repository, ref: project.defaultBranch })
     return await this.state()
   }
 
@@ -299,11 +290,15 @@ export class MarketplaceService extends Service {
       if (plugin === undefined) throw new Error(`marketplace package "${packageName}" is not in the catalog`)
       if (!plugin.compatible) throw new Error(`marketplace package "${packageName}" is incompatible with this DSH version`)
       const artifact = await this.cacheArtifact(this.current(), plugin)
-      await this.mutateProfile(
-        ['add', artifact, '--save-exact'],
-        plugin.placement === 'before-web-app' ? async () => { await this.placeBeforeWebApp(packageName) } : undefined,
-      )
-      return { packageName, restartRequired: true }
+      const installed = await this.ctx.pluginManager.installBundle(packageName + '@file:' + artifact)
+      this.requireApplied(installed)
+      let restartRequired = installed.application === 'restart-required'
+      if (plugin.placement === 'before-web-app' && await this.placeBeforeWebApp(packageName)) {
+        const activated = await this.ctx.pluginManager.setBundleEnabled(packageName, true)
+        this.requireApplied(activated)
+        restartRequired ||= activated.application === 'restart-required'
+      }
+      return { packageName, restartRequired }
     })
   }
 
@@ -318,8 +313,9 @@ export class MarketplaceService extends Service {
       if (!catalog.plugins.some(entry => entry.packageName === packageName)) {
         throw new Error(`marketplace package "${packageName}" is not in the catalog`)
       }
-      await this.mutateProfile(['remove', packageName])
-      return { packageName, restartRequired: true }
+      const result = await this.ctx.pluginManager.removeBundle(packageName)
+      this.requireApplied(result)
+      return { packageName, restartRequired: result.application === 'restart-required' }
     })
   }
 
@@ -340,7 +336,7 @@ export class MarketplaceService extends Service {
   }
 
   private async catalogCacheRequest(config: ResolvedConfig): Promise<MarketplaceCatalogCacheRequest> {
-    const installed = (await this.installed(config.profile)).sort((a, b) => a.packageName.localeCompare(b.packageName))
+    const installed = (await this.installed()).sort((a, b) => a.packageName.localeCompare(b.packageName))
     return {
       home: resolveDshHome(),
       baseUrl: config.baseUrl,
@@ -348,7 +344,7 @@ export class MarketplaceService extends Service {
       ref: config.ref,
       catalogPath: config.catalogPath,
       dshVersion: packageVersion(),
-      profileState: JSON.stringify([resolveProfileDir(config.profile), installed]),
+      profileState: JSON.stringify([this.ctx.profileContext.dir, installed]),
       maxArtifactBytes: config.maxArtifactBytes,
       maxCatalogBytes: MAX_CATALOG_BYTES,
     }
@@ -408,77 +404,36 @@ export class MarketplaceService extends Service {
     }
   }
 
-  private async installed(profile: string): Promise<InstalledMarketplacePlugin[]> {
-    const dir = resolveProfileDir(profile)
-    const manifestPath = join(dir, 'package.json')
-    let manifest: { dependencies?: Record<string, string> }
-    try {
-      manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { dependencies?: Record<string, string> }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-      throw error
-    }
-    const result: InstalledMarketplacePlugin[] = []
-    for (const [packageName, specifier] of Object.entries(manifest.dependencies ?? {})) {
-      let version: string | undefined
-      try {
-        const installed = JSON.parse(await readFile(join(dir, 'node_modules', packageName, 'package.json'), 'utf8')) as { version?: unknown }
-        if (typeof installed.version === 'string') version = installed.version
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-      }
-      result.push({ packageName, specifier, ...version === undefined ? {} : { version } })
-    }
-    return result
+  private async installed(): Promise<InstalledMarketplacePlugin[]> {
+    const profile = this.ctx.profileContext
+    const inventory = readProfilePlugins({ binName: 'dsh', profileDir: profile.dir, installAnchor: profile.installAnchor })
+    return inventory.dependencies.map(item => ({
+      packageName: item.name,
+      specifier: inventory.manifest.dependencies?.[item.name] ?? item.version,
+      version: item.version,
+    }))
   }
 
-  private async mutateProfile(pnpmArgs: readonly string[], after?: () => Promise<void>): Promise<void> {
-    const config = this.current()
-    const profileDir = resolveProfileDir(config.profile)
-    const manifestPath = join(profileDir, 'package.json')
-    const lockPath = join(profileDir, 'pnpm-lock.yaml')
-    const beforeManifest = await optionalFile(manifestPath)
-    const beforeLock = await optionalFile(lockPath)
-    try {
-      const entry = process.argv[1]
-      if (entry === undefined) throw new Error('marketplace cannot locate the active dsh entry')
-      await runCommand(process.execPath, [
-        ...process.execArgv,
-        entry,
-        'plugin', '--profile', config.profile, '--config.ignore-scripts=true',
-        ...await profilePnpmOptions(profileDir),
-        ...pnpmArgs,
-      ], process.env, 8 * 1024 * 1024)
-      await after?.()
-    } catch (error) {
-      await this.restoreFile(manifestPath, beforeManifest)
-      await this.restoreFile(lockPath, beforeLock)
-      throw error
+  private requireApplied(result: ChangeResult): void {
+    if (result.error || !['applied', 'restart-required'].includes(result.application)) {
+      throw new Error('Plugin operation ' + result.application + ': ' + (result.error?.diagnostic ?? result.error?.code ?? result.stage))
     }
   }
 
-  private async placeBeforeWebApp(packageName: string): Promise<void> {
-    const manifestPath = join(resolveProfileDir(this.current().profile), 'package.json')
-    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
-      dsh?: { profile?: { bundles?: string[] } }
-    }
-    const bundles = manifest.dsh?.profile?.bundles
-    if (bundles === undefined) throw new Error('marketplace profile manifest has no bundle list')
-    const current = bundles.indexOf(packageName)
-    const anchor = bundles.indexOf('@deepseek-ai/dsh-web-app')
-    if (current < 0 || anchor < 0 || current < anchor) return
-    bundles.splice(current, 1)
-    bundles.splice(anchor, 0, packageName)
-    await writeFileAtomic(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600, dirMode: 0o700 })
-  }
-
-  private async restoreFile(path: string, content: Buffer | undefined): Promise<void> {
-    if (content === undefined) {
-      await rm(path, { force: true })
-      return
-    }
-    await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, content)
+  /** The public manifest writer preserves other metadata; use the manager's same file lock. */
+  private async placeBeforeWebApp(packageName: string): Promise<boolean> {
+    const dir = this.ctx.profileContext.dir
+    return await withFileLock(join(dir, 'package.json'), async () => {
+      const manifest = readProfileManifest('dsh', dir)
+      const bundles = [...(manifest.dsh?.profile?.bundles ?? [])]
+      const current = bundles.indexOf(packageName), anchor = bundles.indexOf('@deepseek-ai/dsh-web-app')
+      if (current < 0 || anchor < 0) throw new Error('Installed bundle or Web application layer is missing from the active profile')
+      if (current < anchor) return false
+      bundles.splice(current, 1)
+      bundles.splice(anchor, 0, packageName)
+      writeProfileBundles(dir, manifest, bundles)
+      return true
+    }, { waitMs: 30000 })
   }
 
   private async serializeMutation<T>(operation: () => Promise<T>): Promise<T> {

@@ -488,7 +488,9 @@ describe('WeComConversationRouter', () => {
 
   it.each([
     ['session-conflict', 'existing cwd differs'],
+    ['session/conflict', 'existing cwd differs'],
     ['agent-preset-conflict', 'existing preset differs'],
+    ['agent-preset/conflict', 'existing preset differs'],
   ] as const)('moves an incompatible conversation after %s', async (errorCode, message) => {
     const test = harness()
     test.create.mockImplementationOnce(async (request: RpcRequest<{

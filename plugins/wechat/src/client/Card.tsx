@@ -22,12 +22,12 @@ function PresetField(props: {
     ? t('presetInherit')
     : `${t('presetInherit')}（${state.presetDefaultId}）`
   return (
-    <section style={styles.field} aria-label={t('agentPreset')}>
+    <section style={styles.section} aria-labelledby="wechat-section-preset">
       <div style={styles.fieldHead}>
-        <label htmlFor="wechat-agent-preset" style={styles.label}>{t('agentPreset')}</label>
+        <h3 id="wechat-section-preset" style={styles.sectionHeading}>{t('agentPreset')}</h3>
         {state.presetOverridden ? <span style={styles.badge}>{t('overridden')}</span> : null}
-        {state.dirty ? <span style={styles.badge}>{t('unsaved')}</span> : null}
       </div>
+      <label htmlFor="wechat-agent-preset" style={styles.hiddenLabel}>{t('agentPreset')}</label>
       <select
         id="wechat-agent-preset"
         style={styles.input}
@@ -46,11 +46,12 @@ function PresetField(props: {
       </select>
       <p style={styles.hint}>{state.presetsFailed ? t('presetLoadFailed') : t('agentPresetHint')}</p>
       {state.failed ? <p style={styles.error}>{state.failureMessage ?? t('saveFailed')}</p> : null}
-      <div style={styles.loginActions}>
-        <button type="button" style={styles.save} disabled={!state.dirty || state.saving} onClick={props.onSave}>
+      <div style={styles.footer}>
+        <button type="button" style={{ ...styles.save, ...(!state.dirty || state.saving ? styles.disabled : {}) }} disabled={!state.dirty || state.saving} onClick={props.onSave}>
           {state.saving ? t('saving') : t('save')}
         </button>
-        <button type="button" style={styles.button} disabled={!state.dirty || state.saving} onClick={props.onDiscard}>{t('discard')}</button>
+        <button type="button" style={{ ...styles.button, ...(!state.dirty || state.saving ? styles.disabled : {}) }} disabled={!state.dirty || state.saving} onClick={props.onDiscard}>{t('discard')}</button>
+        {state.dirty ? <span style={styles.badge}>{t('unsaved')}</span> : null}
       </div>
     </section>
   )
@@ -62,9 +63,9 @@ function LoginPanel(props: WeChatCardProps & { state: WeChatCardState }) {
   const t = (key: LocaleKey): string => props.t(key)
   const active = login.status === 'qr' || login.status === 'scanned' || login.status === 'verification-required'
   return (
-    <section style={styles.field} aria-label={t('loginTitle')}>
+    <section style={styles.section} aria-labelledby="wechat-section-login">
       <div style={styles.fieldHead}>
-        <span style={styles.label}>{t('loginTitle')}</span>
+        <h3 id="wechat-section-login" style={styles.sectionHeading}>{t('loginTitle')}</h3>
         <span style={login.accounts.length > 0 ? styles.badge : styles.mutedBadge}>
           {login.accounts.length > 0 ? t('connected') : t('notConnected')}
         </span>
@@ -105,25 +106,16 @@ function LoginPanel(props: WeChatCardProps & { state: WeChatCardState }) {
   )
 }
 
-/** Render personal WeChat settings in the generic plugin section. */
+/** Render personal WeChat settings on this plugin's page in the official plugin manager. */
 export function WeChatCard(props: WeChatCardProps) {
   const state = props.useWeChatCard(snapshot => snapshot)
   const t = (key: LocaleKey): string => props.t(key)
   return (
-    <section style={styles.card}>
-      <details>
-        <summary style={styles.summary} aria-label={t('title')}>
-          <span style={styles.heading}>
-            <span style={styles.headText}><span style={styles.title}>{t('title')}</span><span style={styles.description}>{t('description')}</span></span>
-          </span>
-        </summary>
-        <div style={styles.body}>
-          <LoginPanel {...props} state={state} />
-          <p style={styles.hint}>{t('automaticReception')}</p>
-          <p style={styles.hint}>{t('commandsHint')}</p>
-          <PresetField state={state} t={t} onEdit={props.editPreset} onSave={props.savePreset} onDiscard={props.discardPreset} />
-        </div>
-      </details>
-    </section>
+    <div style={styles.form} aria-label={t('title')}>
+      <LoginPanel {...props} state={state} />
+      <p style={styles.hint}>{t('automaticReception')}</p>
+      <p style={styles.hint}>{t('commandsHint')}</p>
+      <PresetField state={state} t={t} onEdit={props.editPreset} onSave={props.savePreset} onDiscard={props.discardPreset} />
+    </div>
   )
 }

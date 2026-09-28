@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { PresetRoot } from '@deepseek-ai/dsh-agent-presets'
+interface PresetRoot { path: string; trust: 'user' | 'builtin' }
 
 export const CODEX_PRESET = 'dsh-codex'
 const files = ['agent.cordis.yml', 'preset.yml'] as const

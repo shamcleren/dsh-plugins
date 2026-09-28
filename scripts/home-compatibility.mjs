@@ -30,6 +30,61 @@ async function exclusiveFile(path, bytes) {
 
 export { lockDshHome } from './home-lock.mjs'
 
+/** Preserve the legacy document before the official 0.1.7 importer moves it. */
+export async function backupLegacySettings({ home, runtime, log = console.log }) {
+  const bytes = await regular(join(home, 'settings.yaml'))
+  if (!bytes) return
+  const yaml = createRequire(join(runtime, 'package.json'))('yaml')
+  try {
+    const document = yaml.parse(bytes.toString('utf8'))
+    if (document !== null && (typeof document !== 'object' || Array.isArray(document))) throw new Error('invalid root')
+  } catch { throw new Error('Existing settings.yaml is invalid. It was left unchanged; correct its YAML before updating.') }
+  const backups = join(home, '.dhp-backups')
+  await safeDirectory(backups)
+  // The upstream importer renames over .imported; preserve an older import too.
+  for (const content of [bytes, await regular(join(home, 'settings.yaml.imported'))]) {
+    if (!content) continue
+    const backup = join(backups, 'settings-' + hash(content) + '.yaml')
+    const previous = await regular(backup)
+    if (previous && (!previous.equals(content) || (process.platform !== 'win32' && ((await stat(backup)).mode & 0o077) !== 0))) throw new Error('Existing settings backup is unsafe; no settings were changed')
+    if (!previous) {
+      await exclusiveFile(backup, content)
+      log('Legacy settings backed up: ' + backup + '. Official DSH imports them into the Profile on first launch.')
+    }
+  }
+}
+
+/** Translate the one upstream settings namespace/field rename inside the staged profile. */
+export async function legacyPresetPatch({ home, profile, runtime }) {
+  const bytes = await regular(join(home, 'settings.yaml'))
+  if (!bytes) return undefined
+  const yaml = createRequire(join(runtime, 'package.json'))('yaml')
+  const selected = yaml.parse(bytes.toString('utf8'))?.['agent-presets']?.default
+  if (selected === undefined) return undefined
+  if (typeof selected !== 'string' || !selected.trim()) throw new Error('Legacy agent preset selection is invalid; settings were left unchanged')
+  const patch = await regular(join(profile, 'cordis.patch.yml'))
+  const document = yaml.parseDocument(patch?.toString('utf8') ?? '[]')
+  if (document.errors.length || !yaml.isSeq(document.contents)) throw new Error('Cannot migrate preset selection into this Profile patch; settings were left unchanged')
+  let registryConfig
+  for (const item of document.contents.items) {
+    if (!yaml.isMap(item) || item.get('id') !== 'agent-preset-registry') continue
+    const config = item.get('config', true)
+    if (config && !yaml.isMap(config)) throw new Error('Profile preset registry config is not a mapping; settings were left unchanged')
+    // An explicitly configured new selection wins over stale legacy settings.
+    if (config?.has('selectedDefault')) return undefined
+    if (config) registryConfig = config.clone()
+  }
+  // Overlay config replaces the whole object. Retain an explicit fallback, or
+  // use the legacy default as both the required fallback and live selection.
+  registryConfig ??= document.createNode({ default: selected })
+  if (!registryConfig.has('default')) registryConfig.set('default', selected)
+  registryConfig.set('selectedDefault', selected)
+  const row = document.createNode({ id: 'agent-preset-registry' })
+  row.set('config', registryConfig)
+  document.add(row)
+  return document.toString()
+}
+
 /** Ask the selected official provider to validate both known layouts, without revealing values. */
 export async function checkCredentials({ home, runtime, log = console.log }) {
   const filename = join(home, '.credentials.yaml'), bytes = await regular(filename)
@@ -132,10 +187,30 @@ export async function stabilizeProfileLock(profile, runtime) {
 
 /** Read-only release comparison, including same-runtime plugin updates. */
 export async function homeProfileNeedsUpdate({ home, repo, release }) {
+  return (await homeProfileUpdates({ home, repo, release })).length > 0
+}
+
+/** Share the installer's catalog selection with the read-only status preview. */
+export async function homeProfileUpdates({ home, repo, release }) {
   const profile = join(home, 'profiles/web')
   const bytes = await regular(join(profile, 'package.json'))
-  if (!bytes) return false
-  return (await catalogReplacements(profile, JSON.parse(bytes), repo, release, false)).length > 0
+  if (!bytes) return []
+  const manifest = JSON.parse(bytes)
+  const entries = await catalogReplacements(profile, manifest, repo, release, false)
+  return Promise.all(entries.map(async entry => {
+    let current
+    try { current = (await json(join(profile, 'node_modules', entry.package, 'package.json'))).version }
+    catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error }
+    return { id: entry.id, current: current ?? 'missing/unknown', target: entry.version,
+      source: linksRepositorySource(profile, manifest.dependencies[entry.package], repo) }
+  }))
+}
+
+/** A `link:` to this repository's own plugin source is a local build, not a delivered release. */
+function linksRepositorySource(profile, spec, repo) {
+  if (typeof spec !== 'string' || !spec.startsWith('link:')) return false
+  const fromPlugins = relative(join(repo, 'plugins'), resolve(profile, spec.slice('link:'.length)))
+  return fromPlugins !== '' && !fromPlugins.startsWith('..') && !isAbsolute(fromPlugins)
 }
 
 async function catalogReplacements(profile, manifest, repo, release, marketplace) {
@@ -145,8 +220,12 @@ async function catalogReplacements(profile, manifest, repo, release, marketplace
     const installed = manifest?.dependencies?.[entry.package]
     if (!installed && !(marketplace && entry.id === 'trusted-marketplace')) continue
     if (entry.dshVersion !== release.dshVersion) throw new Error('Catalog runtime does not match ' + entry.package)
+    if (linksRepositorySource(profile, installed, repo)) { entries.push(entry); continue }
     let current
-    if (installed) current = await json(join(profile, 'node_modules', entry.package, 'package.json'))
+    if (installed) {
+      try { current = await json(join(profile, 'node_modules', entry.package, 'package.json')) }
+      catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error }
+    }
     if (current?.version === entry.version) continue
     entries.push(entry)
   }
@@ -157,16 +236,18 @@ async function catalogReplacements(profile, manifest, repo, release, marketplace
 export async function prepareHomeProfile({ root, home, repo, runtime, release, nodeExecutable, env, execute, log, marketplace = false }) {
   await safeDirectory(home)
   await checkCredentials({ home, runtime, log })
+  await backupLegacySettings({ home, runtime, log })
   const profiles = join(home, 'profiles'), profile = join(profiles, 'web')
   if (await stat(profiles)) await safeDirectory(profiles)
   if (await stat(profile)) await safeDirectory(profile)
   const bytes = await regular(join(profile, 'package.json')), manifest = bytes ? JSON.parse(bytes) : undefined
   if (!manifest && !marketplace) return undefined
   const entries = await catalogReplacements(profile, manifest, repo, release, marketplace)
+  const presetPatch = await legacyPresetPatch({ home, profile, runtime })
   const replacements = []
   for (const entry of entries) replacements.push({ entry, artifact: await releaseArtifact(repo, entry) })
   await verifyProfilePeers(profile, runtime, new Set(replacements.map(item => item.entry.package)))
-  if (replacements.length === 0) return undefined
+  if (replacements.length === 0 && presetPatch === undefined) return undefined
   await safeDirectory(profiles)
   const before = await profileFingerprint(profile)
   const stageName = '.dhp-web-' + randomUUID(), stage = join(profiles, stageName)
@@ -184,7 +265,7 @@ export async function prepareHomeProfile({ root, home, repo, runtime, release, n
           retainedLinks.push({ name, target: resolve(profile, spec.slice(5)) })
         }
         const original = join(profile, 'node_modules', name)
-        if ((await lstat(original)).isSymbolicLink()) {
+        if ((await stat(original))?.isSymbolicLink()) {
           const target = await readlink(original), absolute = resolve(dirname(original), target)
           const fromProfile = relative(profile, absolute)
           if (!isAbsolute(target) && (fromProfile === '..' || fromProfile.startsWith('../') || isAbsolute(fromProfile))) {
@@ -210,7 +291,7 @@ export async function prepareHomeProfile({ root, home, repo, runtime, release, n
     log('Preparing compatible plugins: ' + replacements.map(item => item.entry.id).join(', '))
     const buildEnv = { ...env, DSH_HOME: stagingHome, PATH: dirname(nodeExecutable) + ':' + join(runtime, 'node_modules/.bin') + ':' + env.PATH }
     const cli = join(runtime, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
-    await execute(nodeExecutable, [cli, 'plugin', '--profile', 'web', '--config.ignore-scripts=true', 'add', ...artifacts, ...retainedLinks.map(({ name, target }) => name + '@link:' + target), '--save-exact'], { cwd: runtime, env: buildEnv })
+    if (artifacts.length || retainedLinks.length) await execute(nodeExecutable, [cli, 'plugin', '--profile', 'web', '--config.ignore-scripts=true', 'add', ...artifacts, ...retainedLinks.map(({ name, target }) => name + '@link:' + target), '--save-exact'], { cwd: runtime, env: buildEnv })
     // Explicit add refreshes pnpm's relative lock entry for staging. Absolute
     // links remain valid when this staged profile is published at its final path.
     for (const { name, target } of retainedLinks) {
@@ -230,6 +311,7 @@ export async function prepareHomeProfile({ root, home, repo, runtime, release, n
       bundles.splice(bundles.indexOf('@deepseek-ai/dsh-web-app') + (entry.placement === 'after-web-app' ? 1 : 0), 0, entry.package)
     }
     await writeFile(join(stagedProfile, 'package.json'), JSON.stringify(next, null, 2) + '\n')
+    if (presetPatch !== undefined) await writeFile(join(stagedProfile, 'cordis.patch.yml'), presetPatch, { mode: 0o600 })
     await execute(nodeExecutable, [cli, '--profile', 'web', '--dump-config'], { cwd: runtime, env: buildEnv, stdio: ['ignore', 'ignore', 'inherit'] })
     await stabilizeProfileLock(stagedProfile, runtime)
     return { root, home, stageName, runtimeDigest: release.runtimeDigest, existed: !!manifest, before }
@@ -251,11 +333,18 @@ export async function recoverHomeProfile({ root, home, runtimeDigest, profileUpd
   const bytes = await regular(join(home, journalName))
   if (!bytes) return
   const journal = JSON.parse(bytes)
-  if (journal.owner !== owner || journal.root !== root || !/^\.dhp-web-[a-f0-9-]+$/.test(journal.stageName) || typeof journal.existed !== 'boolean') throw new Error('Profile upgrade belongs to another installation or has an invalid journal; finish that installation first')
+  if (journal.owner !== owner || journal.root !== root || !/^\.dhp-web-[a-f0-9-]+$/.test(journal.stageName) || typeof journal.existed !== 'boolean' ||
+    (journal.cleanupReady !== undefined && typeof journal.cleanupReady !== 'boolean')) throw new Error('Profile upgrade belongs to another installation or has an invalid journal; finish that installation first')
   const stage = join(home, 'profiles', journal.stageName), profile = join(home, 'profiles/web'), backup = join(stage, 'previous'), next = join(stage, 'next/profiles/web')
   for (const path of [join(home, 'profiles'), stage]) {
     const info = await stat(path)
+    if (!info && path === stage && journal.cleanupReady) continue
     if (!info?.isDirectory() || info.isSymbolicLink()) throw new Error('Unsafe profile upgrade staging directory')
+  }
+  if (journal.cleanupReady) {
+    await rm(stage, { recursive: true, force: true })
+    await rm(join(home, journalName))
+    return
   }
   for (const path of [join(stage, 'next'), join(stage, 'next/profiles'), profile, backup, next]) {
     const info = await stat(path)
@@ -272,6 +361,11 @@ export async function recoverHomeProfile({ root, home, runtimeDigest, profileUpd
     await rename(backup, destination)
     log('Previous Web profile preserved: ' + destination)
   }
+  const nextJournal = join(home, journalName + '.' + randomUUID() + '.next')
+  try {
+    await exclusiveFile(nextJournal, JSON.stringify({ ...journal, cleanupReady: true }))
+    await rename(nextJournal, join(home, journalName))
+  } finally { await rm(nextJournal, { force: true }) }
   await rm(stage, { recursive: true, force: true })
   await rm(join(home, journalName))
 }

@@ -1,6 +1,6 @@
 # Desktop Share
 
-`@shamcleren/dsh-desktop-share` imports macOS shared files into an existing DSH conversation draft. It requires the independently maintained DSH macOS shell **0.2.11+**, built with its Share Extension enabled, and the tested official runtime **0.1.6-alpha.2**.
+`@shamcleren/dsh-desktop-share` imports macOS shared files into an existing DSH conversation draft. It requires the independently maintained DSH macOS shell **0.2.11+**, built with its Share Extension enabled, and the tested official runtime **0.1.7-rc.2**.
 
 ## Use
 

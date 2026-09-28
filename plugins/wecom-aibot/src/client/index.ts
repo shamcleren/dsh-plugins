@@ -34,12 +34,12 @@ const BADGE_CSS = `
  * injecting `remote` alone resolves the mount point but not the namespaces this
  * card calls, and every call then throws before reaching the wire.
  */
-export const inject = ['slots', 'locale', 'connection', 'remote', 'remote.credentials', 'remote.workspace', 'remote.agentPresets', 'settingsScope']
+export const inject = ['slots', 'locale', 'connection', 'remote', 'remote.credentials', 'remote.workspace', 'remote.agentPresets', 'configForms']
 
 /** Register the WeCom card when the generic plugin-settings slot exists. */
 export function apply(ctx: ClientContext): void {
   const api = cardApi(ctx)
-  const scope = ctx.settingsScope.bind<Config>({ namespace: SETTINGS_NAMESPACE })
+  const scope = ctx.configForms.get<Config>(SETTINGS_NAMESPACE )
   const card = new WeComCardController(
     scope,
     api,

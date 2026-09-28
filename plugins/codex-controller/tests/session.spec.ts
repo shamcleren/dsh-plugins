@@ -195,21 +195,23 @@ describe('Codex session bridge', () => {
     expect(seen).toBe('')
     const framed = [{
       role: 'user',
-      source: { kind: 'plugin', plugin: 'dsh-session-title-llm' },
+      source: { kind: 'dsh-session-title-llm' },
       content: [{ type: 'text', text: 'Generate the session title from this JSON array of human messages:\n' + JSON.stringify([{ seq: 3, text: '帮我修一下登录跳转' }]) }],
     }]
     const framedTitle = []
     for await (const chunk of adapter.stream({ purpose: 'session-title', messages: framed, model: 'native', provider: 'codex' } as never)) framedTitle.push(chunk)
     expect(framedTitle.some(chunk => chunk.type === 'text-delta' && chunk.text === '【codex】帮我修一下登录跳转')).toBe(true)
     const messages = [
-      { role: 'user', source: { kind: 'plugin', plugin: 'codex-controller', form: 'notice' }, content: [{ type: 'text', text: 'notice' }] },
+      { role: 'user', source: { kind: 'codex-controller', form: 'notice' }, content: [{ type: 'text', text: 'notice' }] },
       { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '请用 /review 看这个改动' }] },
       { role: 'user', source: { kind: 'skill-invocation', form: 'instructions' }, content: [{ type: 'text', text: 'skill body' }] },
-      { role: 'user', source: { kind: 'plugin', plugin: 'tool-cordis', form: 'instructions' }, content: [{ type: 'text', text: 'plugin reference' }] },
+      { role: 'user', source: { kind: 'tool-cordis', form: 'instructions' }, content: [{ type: 'text', text: 'plugin reference' }] },
     ]
     expect(turnText(messages as never)).toBe('请用 /review 看这个改动\n\nskill body\n\nplugin reference')
+    expect(turnText([{ role: 'user', content: [{ type: 'text', text: 'new request' }] }, { role: 'developer', id: 'fixture', source: { kind: 'tool-cordis', form: 'instructions' }, content: [{ type: 'text', text: 'context' }] }] as never)).toBe('new request\n\ncontext')
     expect(localTitle('请用 /review 看这个改动')).toBe('【codex】请用 /review 看这个改动')
-    expect(threadIdFromSession({ snapshotEvents: () => [{ type: 'user/message', data: { source: { kind: 'plugin', plugin: 'codex-controller' }, content: [{ type: 'text', text: 'codex-thread:abc' }] } }] } as never)).toBe('abc')
+    expect(threadIdFromSession({ snapshotEvents: () => [{ type: 'user/message', data: { source: { kind: 'codex-controller' }, content: [{ type: 'text', text: 'codex-thread:abc' }] } }] } as never)).toBe('abc')
+    expect(threadIdFromSession({ snapshotEvents: () => [{ type: 'user/message', data: { source: { kind: 'plugin:codex-controller' }, content: [{ type: 'text', text: 'codex-thread:abc' }] } }] } as never)).toBe('abc')
     await bridge.close()
   })
 

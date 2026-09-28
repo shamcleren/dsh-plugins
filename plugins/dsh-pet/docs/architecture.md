@@ -100,8 +100,8 @@
 
 宠物开关、选择与尺寸可在 **Web 设置页（Settings → Plugins → Plugin configuration）** 里实时配置：
 
-- 宿主通过 `ctx.settings.installSection` 注册命名空间 `desktop-pet`，schema `{enabled, petId, petSize}`，以 cordis 配置为组合 entry（`applies: live`）。
-- 浏览器侧 `dsh.client` bundle（`src/client/`，tsdown 打包为 `lib/client.js` 的 lazy-CJS 工厂）在 keyed slot `plugins.bundle.config`（key=`@shamcleren/dsh-pet`）注册一张自包含卡片，经 `ctx.settingsScope.bind` 直接读写 settings。
+- 宿主将 Profile entry `desktop-pet` 的 `{enabled, petId, petSize}` 声明为 volatile 配置；Settings 自动生成实时表单，`loader/volatile-update` 通知插件应用变化。
+- 浏览器侧 `dsh.client` bundle（`src/client/`，tsdown 打包为 `lib/client.js` 的 lazy-CJS 工厂）在 keyed slot `plugins.bundle.config`（key=`@shamcleren/dsh-pet`）注册一张自包含卡片，经 `ctx.configForms.get` 直接读写 settings。
 - 运行时权威来源：settings 用户覆盖 → 组合 entry（cordis 默认）；`state.json` 仅保留位置及其坐标语义（`position` + `positionMode`），不再存 `petId`/`petSize`。
 - 卡片字段即时提交：开关 toggle 即写；`petSize`（数字，80–224）在失焦或 Enter 时提交。Helper 右键菜单的"隐藏宠物"经 `hide` 消息回写 `enabled:false`，与卡片开关一致。
 
@@ -121,7 +121,7 @@
 ## 组件清单
 
 1. **共享动画引擎 + 状态机**（纯 TS、可测试）：`src/shared/`。
-2. **宿主插件**：`src/`——宠物包扫描/校验/复制（`packs.ts`）、状态聚合（`status.ts`，任务列表）、位置持久化（`state-store.ts`，`position` + `positionMode`）、settings 命名空间注册（`index.ts` 经 `installSection`）、HTTP 路由（`server.ts`，经 `ctx.webServer.register`：`/desktop-pet/packs`、`/desktop-pet/sprite`、`/desktop-pet/activate`）、协议（`protocol.ts`）、Helper 生命周期（`helper-process.ts`）、入口（`index.ts`）。
+2. **宿主插件**：`src/`——宠物包扫描/校验/复制（`packs.ts`）、状态聚合（`status.ts`，任务列表）、位置持久化（`state-store.ts`，`position` + `positionMode`）、Profile 实时配置声明与监听（`index.ts`）、HTTP 路由（`server.ts`，经 `ctx.webServer.register`：`/desktop-pet/packs`、`/desktop-pet/sprite`、`/desktop-pet/activate`）、协议（`protocol.ts`）、Helper 生命周期（`helper-process.ts`）、入口（`index.ts`）。
 3. **原生 Helper**（Swift + AppKit）：`native/macos/`——Atlas/Animation/Protocol/PetView/PetController/main + `build.sh` → 构建产物 `lib/helper/darwin/desktop-pet-helper.app`。
 4. **浏览器设置卡片**：`src/client/`（`index.ts`/`controller.ts`/`Card.tsx`/`locales.ts`/`styles.ts`）+ 共享选宠契约（`shared/picker.ts`）+ `tsdown.client.config.ts` → 打包产物 `lib/client.js`（lazy-CJS 工厂，经 `dsh.client.inject` 注入）。
 

@@ -12,7 +12,7 @@ export DSH_INIT_REBUILD = $(REBUILD)
 help:
 	@printf '%s\n' \
 		'make init [DIR=/new/path] [WEB_ONLY=1] [MARKETPLACE=1] [RESUME=1] [REBUILD=1]' \
-		'First-time install only. After init, dhp is a user command:' \
+		'Initialize or repair an installation. Daily commands:' \
 		'  dhp help' \
 		'  dhp plugin list' \
 		'  dhp plugin install wechat' \

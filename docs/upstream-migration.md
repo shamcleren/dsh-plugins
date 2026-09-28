@@ -1,6 +1,6 @@
 # Upstream-only distribution
 
-The verified runtime is the official `@deepseek-ai/dsh@0.1.5-rc.1` npm distribution. Plugin sources and release artifacts live outside the DSH repository. A clean upstream source checkout can track upstream independently; runtime upgrades require a tested plugin release because upstream pre-release APIs are not stable. The catalog pins this tested version rather than advertising compatibility with untested alpha releases.
+The verified runtime is the official `@deepseek-ai/dsh@0.1.7-rc.2` npm distribution. Plugin sources and release artifacts live outside the DSH repository. A clean upstream source checkout can track upstream independently; runtime upgrades require a tested plugin release because upstream pre-release APIs are not stable. The catalog pins this tested version; verification details and limitations are recorded in [DSH compatibility verification](verification/dsh-0.1.7-compatibility.md).
 
 | Capability | Owner | Upstream extension |
 | --- | --- | --- |
@@ -11,6 +11,9 @@ The verified runtime is the official `@deepseek-ai/dsh@0.1.5-rc.1` npm distribut
 | WeCom Bot | `plugins/wecom-aibot` | Channel bundle, queue/steer, approval waterfall, settings card |
 | WeCom Tools | `plugins/wecom-tools` | Independent Skill bundle and user authorization |
 | Codex Controller | `plugins/codex-controller` | Persistent Codex session mirror over the pinned app-server |
+| Security Scan | `plugins/security-scan` | Native agent, tools, Skill, session projection and workspace overlay |
+| Web Search | `plugins/web-search` | Official MCP bridge with tool forwarding |
+| Desktop Share | `plugins/desktop-share` | Native inbox and current-session draft attachments |
 
 The public `dshmarket` plugin and this Git repository marketplace are separate catalog providers. A mode-template manager remains a proposal, not an additional required runtime capability.
 

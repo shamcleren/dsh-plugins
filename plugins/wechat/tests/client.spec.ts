@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { Config } from '../src/config.js'
+import { isValidElement, type ReactNode } from 'react'
+import { WeChatCard } from '../src/client/Card.js'
 import { ChannelBadge } from '../src/client/index.js'
 import { WeChatCardController } from '../src/client/controller.js'
 import { zh } from '../src/client/locales.js'
@@ -9,19 +11,19 @@ function success<T>(value: T) {
   return Promise.resolve({ ok: true as const, value })
 }
 
-function settingsScope(): {
-  scope: SettingsScope<Config>
+function configForms(): {
+  scope: ConfigForm<Config>
   set: ReturnType<typeof vi.fn>
   unset: ReturnType<typeof vi.fn>
-  publish(patch: Partial<SettingsScopeSnapshot<Config>>): void
+  publish(patch: Partial<ConfigFormSnapshot<Config>>): void
 } {
-  let snapshot: SettingsScopeSnapshot<Config> = {
+  let snapshot: ConfigFormSnapshot<Config> = {
     status: 'ready', value: {}, base: {}, user: {},
     revision: 1, writable: true, mode: 'host',
   }
   const listeners = new Set<() => void>()
-  const set = vi.fn(async () => {})
-  const unset = vi.fn(async () => {})
+  const set = vi.fn(async () => true)
+  const unset = vi.fn(async () => true)
   return {
     set,
     unset,
@@ -30,7 +32,7 @@ function settingsScope(): {
       for (const listener of listeners) listener()
     },
     scope: {
-      mutate: vi.fn(async () => {}),
+      mutate: vi.fn(async () => true),
       getSnapshot: () => snapshot,
       subscribe(listener) {
         listeners.add(listener)
@@ -58,6 +60,19 @@ function presetsApi() {
 }
 
 describe('WeChat settings login controller', () => {
+  it('renders account binding and preset on the plugin page without a collapsed wrapper', async () => {
+    const remote = { state: vi.fn(() => success({ status: 'idle' as const, accounts: [] })), begin: vi.fn(), verify: vi.fn(), cancel: vi.fn() }
+    const controller = new WeChatCardController(remote as never, configForms().scope, presetsApi())
+    const face = controller.inject()
+    await vi.waitFor(() => { expect(remote.state).toHaveBeenCalledOnce() })
+    const snapshot = face.hooks.weChatCard.getSnapshot()
+    const tags = intrinsicTags(WeChatCard({ ...face, useWeChatCard: (select: (value: typeof snapshot) => unknown) => select(snapshot), t: (key: string) => key } as never))
+    expect(tags).not.toContain('details')
+    expect(tags.filter(tag => tag === 'h3')).toHaveLength(2)
+    expect(tags).toContain('select')
+    controller.dispose()
+  })
+
   it('turns a Host QR URL into a scannable image inside the settings card', async () => {
     const remote = {
       state: vi.fn(() => success({ status: 'idle' as const, accounts: [] })),
@@ -67,7 +82,7 @@ describe('WeChat settings login controller', () => {
       })),
       verify: vi.fn(), cancel: vi.fn(),
     }
-    const controller = new WeChatCardController(remote as never, settingsScope().scope, presetsApi())
+    const controller = new WeChatCardController(remote as never, configForms().scope, presetsApi())
     const face = controller.inject()
     await vi.waitFor(() => { expect(remote.state).toHaveBeenCalledOnce() })
 
@@ -94,7 +109,7 @@ describe('WeChat settings login controller', () => {
       })),
       cancel: vi.fn(),
     }
-    const controller = new WeChatCardController(remote as never, settingsScope().scope, presetsApi())
+    const controller = new WeChatCardController(remote as never, configForms().scope, presetsApi())
     const face = controller.inject()
     await vi.waitFor(() => { expect(remote.state).toHaveBeenCalledOnce() })
     face.beginLogin()
@@ -113,7 +128,7 @@ describe('WeChat settings login controller', () => {
       state: vi.fn(() => success({ status: 'idle' as const, accounts: [] })),
       begin: vi.fn(), verify: vi.fn(), cancel: vi.fn(),
     }
-    const settings = settingsScope()
+    const settings = configForms()
     const presets = presetsApi()
     const controller = new WeChatCardController(remote as never, settings.scope, presets)
     await vi.waitFor(() => {
@@ -146,7 +161,7 @@ describe('WeChat settings login controller', () => {
     presets.list.mockImplementationOnce(() => Promise.resolve({
       result: { ok: false as const, error: { code: 'presets-unavailable', message: 'no registry' } },
     }) as never)
-    const controller = new WeChatCardController(remote as never, settingsScope().scope, presets)
+    const controller = new WeChatCardController(remote as never, configForms().scope, presets)
 
     await vi.waitFor(() => {
       expect(controller.inject().hooks.weChatCard.getSnapshot().presetsFailed).toBe(true)
@@ -165,3 +180,12 @@ describe('WeChat session badge', () => {
     expect(ChannelBadge({ sessionId: 'session-wecom-abc', t })).toBeNull()
   })
 })
+
+/** Expand function components (these cards use no React hooks) and list intrinsic tags. */
+function intrinsicTags(node: ReactNode): string[] {
+  if (Array.isArray(node)) return node.flatMap(intrinsicTags)
+  if (!isValidElement<{ children?: ReactNode }>(node)) return []
+  if (typeof node.type === 'function') return intrinsicTags((node.type as (props: unknown) => ReactNode)(node.props))
+  const own = typeof node.type === 'string' ? [node.type] : []
+  return [...own, ...intrinsicTags(node.props.children)]
+}

@@ -27,7 +27,7 @@ const LOCALE_NAMESPACE = 'settings.desktop-pet'
 const SETTINGS_NAMESPACE = 'desktop-pet'
 const ACTIVATE_POLL_MS = 500
 
-export const inject = ['slots', 'locale', 'settingsScope', 'uiWorkspace']
+export const inject = ['slots', 'locale', 'configForms', 'uiWorkspace']
 
 /**
  * Poll the host for a pending session activation (a task-list row the user
@@ -65,7 +65,7 @@ function startActivatePoll(ctx: ClientContext): () => void {
 
 /** Register the desktop-pet card in the generic plugin-settings slot. */
 export function apply(ctx: ClientContext): void {
-  const scope = ctx.settingsScope.bind<PetSettings>({ namespace: SETTINGS_NAMESPACE })
+  const scope = ctx.configForms.get<PetSettings>(SETTINGS_NAMESPACE )
   const card = new DesktopPetCardController(scope)
   ctx.effect(
     () => () => card.dispose(),

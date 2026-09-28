@@ -1,6 +1,6 @@
 /** Settings-scope projection, live writes, and pet-list fetch for the browser card. */
 
-import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { PetSettings } from '../config.js'
 import { canonicalPetId, PET_PACKS_PATH, type PetPickerItem } from '../shared/picker.js'
 
@@ -71,7 +71,7 @@ export class DesktopPetCardController {
   private petsFailed = false
   private disposed = false
 
-  constructor(private readonly scope: SettingsScope<PetSettings>) {
+  constructor(private readonly scope: ConfigForm<PetSettings>) {
     const value = scope.getSnapshot().value
     this.petSizeDraft = value === undefined ? '' : String(value.petSize)
     this.store = createStore(this.projection())

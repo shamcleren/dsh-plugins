@@ -179,18 +179,19 @@ test('restart --web explicitly switches a running native installation to Web', a
   assert.deepEqual(spawned[0].args, ['web', '--host', '127.0.0.1', '--port', '3186', '--no-open'])
 })
 
-test('update reuses bootstrap while preserving a Web-only installation', async t => {
+test('update delegates option recovery to bootstrap even when the old launcher is missing', async t => {
   const f = await installed(t)
   const repo = join(f.scratch, 'repository')
   await mkdir(join(repo, 'scripts'), { recursive: true })
   await writeFile(join(repo, 'scripts/bootstrap.mjs'), 'export {}\n')
+  await rm(join(f.directory, 'bin/dsh'))
   const calls = []
   await runDhp(['--dir', f.directory, 'update', '--rebuild'], {
     repo, execute: async (...args) => { calls.push(args) },
   })
   assert.equal(calls[0][0], process.execPath)
   assert.deepEqual(calls[0][1], [
-    join(repo, 'scripts/bootstrap.mjs'), '--dir', f.directory, '--no-app', '--rebuild-app',
+    join(repo, 'scripts/bootstrap.mjs'), '--dir', f.directory, '--rebuild-app',
   ])
 })
 
@@ -254,4 +255,82 @@ test('plugin exec requires an installed plugin with exactly one safe bin', async
   await assert.rejects(executePlugin({
     plugin: 'security-scan', repo, directory: f.directory, execute: async () => {},
   }), /not installed/)
+})
+
+async function statusFixture(t) {
+  const f = await installed(t)
+  const { releaseInfo } = await import('../bootstrap.mjs')
+  const { installationDigests } = await import('../update-installation.mjs')
+  const release = await releaseInfo(repository)
+  const marker = join(f.directory, 'bootstrap-state.json')
+  const state = JSON.parse(await readFile(marker, 'utf8'))
+  await writeFile(marker, JSON.stringify({ ...state, runtimeDigest: release.runtimeDigest,
+    ...await installationDigests(repository, false, release.runtimeDigest) }))
+  const runtime = join(f.directory, 'runtime/node_modules/@deepseek-ai/dsh')
+  await mkdir(runtime, { recursive: true })
+  await writeFile(join(runtime, 'package.json'), JSON.stringify({ version: release.dshVersion }))
+  return { ...f, release, runtime, marker }
+}
+
+async function statusOutput(f) {
+  const lines = []
+  await runDhp(['--dir', f.directory, 'status'], {
+    repo: repository, log: line => lines.push(line), inspect: async () => ({ stdout: '' }),
+    execute() { throw new Error('Status executed a mutation') },
+    kill() { throw new Error('Status stopped a process') },
+    spawnProcess() { throw new Error('Status started a process') },
+  })
+  return lines.join('\n')
+}
+
+test('status reports aligned pinned versions without modifying installation state', async t => {
+  const f = await statusFixture(t)
+  const before = await readFile(f.marker, 'utf8')
+  const output = await statusOutput(f)
+  assert.ok(output.includes('DSH: ' + f.release.dshVersion + ' -> ' + f.release.dshVersion + ' [aligned]'))
+  assert.match(output, /Launchers: aligned/)
+  assert.match(output, /Catalog plugins: no pending version replacements/)
+  assert.match(output, /not upstream latest/)
+  assert.equal(await readFile(f.marker, 'utf8'), before)
+})
+
+test('status previews runtime and installed catalog replacements including source links', async t => {
+  const f = await statusFixture(t)
+  await writeFile(join(f.runtime, 'package.json'), '{"version":"0.1.6-alpha.2"}')
+  const catalog = JSON.parse(await readFile(join(repository, 'marketplace.json'), 'utf8'))
+  const [old, source, missing] = catalog.plugins
+  const profile = join(f.dshHome, 'profiles/web')
+  const manifest = JSON.stringify({ dependencies: {
+    [old.package]: '0.0.1', [source.package]: 'link:' + join(repository, 'plugins', source.id),
+    [missing.package]: '0.0.1', 'third-party': '1.0.0',
+  } })
+  await writeFile(join(profile, 'package.json'), manifest)
+  for (const [entry, version] of [[old, '0.0.1'], [source, source.version]]) {
+    await mkdir(join(profile, 'node_modules', entry.package), { recursive: true })
+    await writeFile(join(profile, 'node_modules', entry.package, 'package.json'), JSON.stringify({ version }))
+  }
+  const output = await statusOutput(f)
+  assert.match(output, /DSH: 0.1.6-alpha.2 -> .* \[version change\]/)
+  assert.match(output, /Catalog plugins: 3 pending/)
+  assert.ok(output.includes(old.id + ': 0.0.1 -> ' + old.version))
+  assert.match(output, /source link -> release package/)
+  assert.ok(output.includes(missing.id + ': missing/unknown'))
+  assert.equal(await readFile(join(profile, 'package.json'), 'utf8'), manifest)
+})
+
+test('status distinguishes dependency refresh and incomplete preview from alignment', async t => {
+  const f = await statusFixture(t)
+  const state = JSON.parse(await readFile(f.marker, 'utf8'))
+  await writeFile(f.marker, JSON.stringify({ ...state, runtimeDigest: 'old' }))
+  assert.match(await statusOutput(f), /\[dependency refresh\]/)
+  await writeFile(join(f.dshHome, 'profiles/web/package.json'), '{invalid')
+  assert.match(await statusOutput(f), /Update preview incomplete:/)
+  await writeFile(join(f.directory, '.bootstrap.lock'), 'in progress')
+  assert.match(await statusOutput(f), /Update preview unavailable:/)
+})
+
+test('status displays desktop version and pending rebuild', async t => {
+  const f = await installed(t, true)
+  const output = await statusOutput(f)
+  assert.match(output, /App: 0.2.9 -> .* \[rebuild pending\]/)
 })

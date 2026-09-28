@@ -1,6 +1,6 @@
 /** Session-log markers and human-prompt selection for a Codex-backed conversation. */
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { Message } from '@deepseek-ai/dsh-llm'
+import type { RequestMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 
 export const PLUGIN = 'codex-controller'
@@ -14,7 +14,7 @@ export interface TurnContent {
 }
 
 /** The newest direct human text. Plugin notices and tool results are not Codex turns. */
-export function latestHumanText(messages: readonly Message[]): string {
+export function latestHumanText(messages: readonly RequestMessage[]): string {
   const index = latestUserIndex(messages)
   return index === undefined ? '' : textOf(messages[index])
 }
@@ -23,7 +23,7 @@ export function latestHumanText(messages: readonly Message[]): string {
  * Human text plus user-invoked skill and plugin-instruction bodies from the same request.
  * Those bodies are DSH pre-step context, not DSH tool calls, so Codex receives them as text.
  */
-export function turnText(messages: readonly Message[]): string {
+export function turnText(messages: readonly RequestMessage[]): string {
   const index = latestUserIndex(messages)
   if (index === undefined) return ''
   const forwarded = messages.slice(index + 1).filter(isForwardedInstruction).map(textOf).filter(Boolean)
@@ -31,7 +31,7 @@ export function turnText(messages: readonly Message[]): string {
 }
 
 /** Human text and durable images from the same request. */
-export function turnContent(messages: readonly Message[]): TurnContent {
+export function turnContent(messages: readonly RequestMessage[]): TurnContent {
   const index = latestUserIndex(messages)
   if (index === undefined) return { text: '', images: [] }
   const message = messages[index]
@@ -45,10 +45,10 @@ export function turnContent(messages: readonly Message[]): TurnContent {
  * The question behind a title request. The title service sends its own plugin message
  * holding the human messages as JSON, so the ordinary human-text selection finds nothing.
  */
-export function titleText(messages: readonly Message[]): string {
+export function titleText(messages: readonly RequestMessage[]): string {
   const direct = turnText(messages)
   if (direct) return direct
-  const framed = messages.find(message => (message.source as { plugin?: string }).plugin === TITLE_PLUGIN)
+  const framed = messages.find(message => String(message.source?.kind) === TITLE_PLUGIN)
   return firstFramedText(textOf(framed))
 }
 
@@ -66,7 +66,7 @@ export function threadIdFromSession(session: Pick<Session, 'snapshotEvents'>): s
     const event = events[index]
     if (event?.type !== 'user/message') continue
     const source = event.data.source
-    if (source.kind !== 'plugin' || source.plugin !== PLUGIN) continue
+    if (source.kind !== 'codex-controller' && source.kind !== 'plugin:codex-controller') continue
     for (const block of event.data.content) {
       if (block.type !== 'text') continue
       const match = new RegExp(THREAD_MARKER + '([A-Za-z0-9_-]+)').exec(block.text)
@@ -98,26 +98,26 @@ function firstFramedText(framed: string): string {
   return ''
 }
 
-function latestUserIndex(messages: readonly Message[]): number | undefined {
+function latestUserIndex(messages: readonly RequestMessage[]): number | undefined {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
-    if (message?.role === 'user' && message.source.kind === 'user' && hasPromptContent(message)) return index
+    if (message?.role === 'user' && (message.source === undefined || message.source.kind === 'user') && hasPromptContent(message)) return index
   }
 }
 
-function hasPromptContent(message: Message): boolean {
+function hasPromptContent(message: RequestMessage): boolean {
   return message.content.some(block => block.type === 'image' || (block.type === 'text' && block.text.trim()))
 }
 
-function textOf(message: Message | undefined): string {
+function textOf(message: RequestMessage | undefined): string {
   return message?.content.filter(block => block.type === 'text').map(block => block.text).join('\n').trim() ?? ''
 }
 
-function isForwardedInstruction(message: Message): boolean {
+function isForwardedInstruction(message: RequestMessage): boolean {
   const source = message.source as { kind?: string; form?: string; plugin?: string }
-  if (message.role !== 'user' || source.form !== 'instructions') return false
+  if ((message.role !== 'user' && message.role !== 'developer') || source?.form !== 'instructions') return false
   if (source.kind === 'skill-invocation') return true
-  return source.kind === 'plugin' && source.plugin !== PLUGIN
+  return source.kind !== PLUGIN && source.plugin !== PLUGIN
 }
 
 export function bound(summary: string): string {

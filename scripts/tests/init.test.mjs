@@ -5,6 +5,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'n
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { dhpLauncherScript } from '../dhp-command.mjs'
 
 const repository = new URL('../../', import.meta.url)
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'"
@@ -109,4 +110,29 @@ test('unsupported OS and download architectures fail without making requests', a
   const other = await fixture(t, { architecture: 's390x' })
   assert.match(other.run().stderr, /arm64 and x64/)
   await assert.rejects(readFile(other.env.DOWNLOAD_LOG), { code: 'ENOENT' })
+})
+
+test('repeat init uses private Node offline and clears inherited injection options', async t => {
+  const f = await fixture(t)
+  const installation = join(f.root, 'installation')
+  await mkdir(installation)
+  await cp(join(f.root, 'node-v24.19.0-linux-x64'), join(installation, 'node'), { recursive: true })
+  const result = f.run(['--dir', installation], { DSH_BOOTSTRAP_NODE_ROOT: '/stale', NODE_OPTIONS: '--require=/nonexistent' })
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal((await f.result()).source, undefined)
+  await assert.rejects(readFile(f.env.DOWNLOAD_LOG), { code: 'ENOENT' })
+})
+
+test('an installed dhp with a missing Node dispatches update through verified init', async t => {
+  const f = await fixture(t)
+  await cp(new URL('../dhp-recover.sh', import.meta.url), join(f.repo, 'scripts/dhp-recover.sh'))
+  const installation = join(f.root, "installation 'quoted'"), launcher = join(f.root, 'dhp')
+  await writeFile(launcher, dhpLauncherScript({ root: installation, node: join(installation, 'node/bin/node'), cli: join(f.repo, 'scripts/dhp.mjs') }), { mode: 0o700 })
+  const result = spawnSync(launcher, ['update', '--rebuild'], { env: { ...f.env, DSH_INIT_DIR: '/wrong-target' }, encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual((await f.result()).args, ['--dir', installation, '--rebuild-app'])
+  assert.equal((await f.result()).sourceExists, true)
+  const invalid = spawnSync(launcher, ['update', '--force'], { env: f.env, encoding: 'utf8' })
+  assert.equal(invalid.status, 1)
+  assert.match(invalid.stderr, /Usage:/)
 })

@@ -1,5 +1,5 @@
 /** Materialize the filesystem effects of the public CLI for installer transaction tests. */
-import { lstat, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
@@ -11,7 +11,7 @@ export async function fakeInstall(command, args, settings) {
     await mkdir(join(runtime, 'node_modules/@deepseek-ai/dsh/lib'), { recursive: true })
     await writeFile(join(runtime, 'node_modules/@deepseek-ai/dsh/package.json'), JSON.stringify({ version }))
     await writeFile(join(runtime, 'node_modules/@deepseek-ai/dsh/lib/bin.js'), 'console.log(' + JSON.stringify(version) + ')')
-    for (const name of ['semver', '@deepseek-ai/dsh-credentials-local']) {
+    for (const name of ['semver', 'yaml', '@deepseek-ai/dsh-credentials-local']) {
       try { await symlink(join(repo, 'runtime/node_modules', name), join(runtime, 'node_modules', name)) } catch (error) { if (error.code !== 'EEXIST') throw error }
     }
   }
@@ -22,7 +22,10 @@ export async function fakeInstall(command, args, settings) {
   try { manifest = JSON.parse(await readFile(join(profile, 'package.json'))) } catch { manifest = { dependencies: {}, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } } } }
   for (const artifact of args.filter(arg => arg.endsWith('.tgz'))) {
     const pkg = JSON.parse(execFileSync('tar', ['-xOf', artifact, 'package/package.json'], { encoding: 'utf8' }))
-    await mkdir(join(profile, 'node_modules', pkg.name), { recursive: true })
+    // pnpm replaces a source link instead of writing through it into the linked checkout.
+    const installed = join(profile, 'node_modules', pkg.name)
+    if ((await lstat(installed).catch(() => undefined))?.isSymbolicLink()) await rm(installed)
+    await mkdir(installed, { recursive: true })
     await writeFile(join(profile, 'node_modules', pkg.name, 'package.json'), JSON.stringify(pkg))
     manifest.dependencies[pkg.name] = 'file:' + artifact
     if (!manifest.dsh.profile.bundles.includes(pkg.name)) manifest.dsh.profile.bundles.push(pkg.name)

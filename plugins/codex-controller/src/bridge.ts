@@ -298,7 +298,7 @@ export class CodexBridge {
   private notice(sessionId: string, summary: string, text: string): void {
     const session = this.host.session(sessionId)
     if (!session || !text.trim()) return
-    session.append('user/message', createUserMessage({ source: { kind: 'plugin', plugin: PLUGIN, form: 'notice', summary: bound(summary) }, content: [{ type: 'text', text }] }), { surfaceOp: 'append' })
+    session.append('user/message', createUserMessage({ source: { kind: 'codex-controller', form: 'notice', summary: bound(summary) }, content: [{ type: 'text', text }] }), { surfaceOp: 'append' })
   }
 
   private settle(sessionId: string, end: TurnEnd): void {

@@ -8,12 +8,14 @@ if [ "${1:-}" = --dir ]; then
   installation=$2
 fi
 unset NODE_OPTIONS NODE_PATH
-if [ -x "$installation/node/bin/node" ]; then
+if [ -x "$installation/node/bin/node" ] && "$installation/node/bin/node" --version >/dev/null 2>&1; then
   node="$installation/node/bin/node"
 elif command -v node >/dev/null 2>&1; then
   node=$(command -v node)
 else
-  printf '%s\n' 'Initialize DSH first: make init (then retry ./dhp). No Node.js is available for this command.' >&2
-  exit 1
+  exec /bin/sh "$repository/scripts/dhp-recover.sh" "$repository" "$installation" "$@"
+fi
+if ! "$node" --version >/dev/null 2>&1; then
+  exec /bin/sh "$repository/scripts/dhp-recover.sh" "$repository" "$installation" "$@"
 fi
 exec "$node" "$repository/scripts/dhp.mjs" "$@"

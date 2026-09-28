@@ -1,5 +1,5 @@
 type SnapshotStore<T> = { getSnapshot(): T; subscribe(listener: () => void): () => void; set(value: T): void; update(mutator: (value: T) => void): void }
-import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { RemoteResult, TypertRemoteNamespaceMap } from '@deepseek-ai/dsh-typert-protocol'
 import QRCode from 'qrcode/lib/browser.js'
 import type { Config } from '../config.js'
@@ -70,7 +70,7 @@ export class WeChatCardController {
 
   constructor(
     private readonly remote: LoginRemote,
-    private readonly scope: SettingsScope<Config>,
+    private readonly scope: ConfigForm<Config>,
     private readonly presets: PresetRosterApi,
   ) {
     this.state = createStore(this.snapshot())

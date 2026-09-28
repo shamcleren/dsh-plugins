@@ -36,7 +36,7 @@ export const inject = ['remote']
 export async function apply(ctx: ClientContext): Promise<() => Promise<void>> {
   const disposeRemote = await ctx.remote.$mount(wechatLoginRemote)
   const cardFiber = ctx.inject(
-    ['slots', 'locale', 'remote', 'remote.wechatLogin', 'remote.agentPresets', 'settingsScope'],
+    ['slots', 'locale', 'remote', 'remote.wechatLogin', 'remote.agentPresets', 'configForms'],
     mountCard,
   )
   const badgeFiber = ctx.inject(['slots', 'locale'], mountSessionBadge as unknown as (ctx: ClientContext) => void)
@@ -57,7 +57,7 @@ export async function apply(ctx: ClientContext): Promise<() => Promise<void>> {
 function mountCard(ctx: ClientContext): () => void {
   const card = new WeChatCardController(
     ctx.remote.wechatLogin,
-    ctx.settingsScope.bind<Config>({ namespace: SETTINGS_NAMESPACE }),
+    ctx.configForms.get<Config>(SETTINGS_NAMESPACE ),
     { list: () => listPresets(ctx) },
   )
   ctx.effect(

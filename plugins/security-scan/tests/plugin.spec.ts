@@ -1,8 +1,7 @@
-import { Context } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
-import { SettingsProvider } from '@deepseek-ai/dsh-settings'
 import { expect, it, vi } from 'vitest'
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -12,10 +11,9 @@ import * as SecurityScan from '../src/index.js'
 import { SecurityTasks } from '../src/tasks.js'
 import { newTask } from '../src/ui-contract.js'
 
-class MemorySettings extends SettingsProvider {
-  readonly writable = true
-  protected async load(): Promise<Record<string, unknown>> { return {} }
-  protected async persist(): Promise<void> {}
+class MemorySettings extends Service {
+  readonly writable = false
+  constructor(ctx: Context) { super(ctx, 'settings') }
 }
 
 it('registers and retracts its real DSH tool, skill and settings with the plugin lifetime', async () => {
@@ -23,7 +21,7 @@ it('registers and retracts its real DSH tool, skill and settings with the plugin
   const workspace = await mkdtemp(join(tmpdir(), 'security-tool-'))
   ctx.provide('systemPrompt', { tools: () => undefined } as never)
   ctx.provide('webServer', { host: '127.0.0.1', register: vi.fn(() => () => {}) } as never)
-  ctx.provide('connection', { requestRejection: vi.fn() } as never)
+  ctx.provide('connection', { admit: () => ({ peer: {} }) } as never)
   try {
     const settings = await ctx.plugin(MemorySettings)
     const skills = await settings.ctx.plugin(SkillRegistry)
@@ -65,7 +63,7 @@ it('accesses optional model services only through declared injection scopes in t
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = workspace
   ctx.provide('systemPrompt', { tools: () => undefined } as never)
-  ctx.provide('connection', { requestRejection: () => undefined } as never)
+  ctx.provide('connection', { admit: () => ({ peer: {} }) } as never)
   ctx.provide('llm', { listProviders: () => [{ id: 'scope-fixture', name: 'Test provider' }], listModels: async () => [{ provider: 'scope-fixture', id: 'model-fixture', name: 'Test model' }] } as never)
   ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'scope-fixture', model: 'model-fixture' }) } as never)
   try {

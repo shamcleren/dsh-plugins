@@ -9,7 +9,7 @@ const packageRequest = z.strictObject({ packageName: z.string().min(1) })
 const source = z.strictObject({ repositoryUrl: z.string().url() })
 
 /** Create an allowlisted handler for the human-operated settings page. */
-export function createMarketplaceRpcHandler(service: BrowserService, report: (error: unknown) => void): ConnectionRpcHandler {
+export function createMarketplaceRpcHandler(service: BrowserService, report: (error: unknown) => void): (method: string, payload: unknown, signal: AbortSignal) => ReturnType<ConnectionRpcHandler> {
   return async (endpoint, payload) => {
     try {
       let value: unknown

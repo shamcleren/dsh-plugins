@@ -1,4 +1,5 @@
-import { mkdtemp, mkdir, realpath, readFile, rm, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { mkdtemp, mkdir, realpath, readFile, rm, writeFile, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -49,7 +50,7 @@ it('saves tasks without running them; detects stale updates and retains data acr
   const reopened = await SecurityTasks.open(f.options); services.push(reopened)
   expect((await reopened.state()).tasks[0]?.config.name).toBe('Changed')
 })
-it('runs the shared workflow, records a report, and permits rendering archived 0.2 reports', async () => {
+it.each(['0.2.0', '0.11.0', '0.11.1', '0.11.2', '0.11.3', '0.11.4'])('runs the shared workflow and preserves archived %s reports', async version => {
   const f = await fixture(), task = await f.service.save(f.config)
   const run = await f.service.start(task.id, task.revision)
   await vi.waitFor(async () => { expect((await f.service.state()).runs.find(item => item.id === run.id)?.status).toBe('succeeded') })
@@ -57,8 +58,8 @@ it('runs the shared workflow, records a report, and permits rendering archived 0
   expect(finished.config).toEqual(f.config)
   expect(await f.service.report(finished.reportId!, 'html')).toContain('代码安全扫描报告')
   const reportFile = join(finished.reportRoot!, finished.reportId!, 'report.json')
-  const saved = JSON.parse(await readFile(reportFile, 'utf8')); saved.pluginVersion = '0.2.0'; await writeFile(reportFile, JSON.stringify(saved))
-  expect(await f.service.report(finished.reportId!, 'html')).toContain('0.2.0')
+  const saved = JSON.parse(await readFile(reportFile, 'utf8')); saved.pluginVersion = version; await writeFile(reportFile, JSON.stringify(saved))
+  expect(await f.service.report(finished.reportId!, 'html')).toContain(version)
   await f.service.settings({ ...state.settings, reportDirectory: join(f.root, 'other-reports') })
   expect(await f.service.report(finished.reportId!, 'json')).toContain(finished.reportId)
   await f.service.remove(task.id, task.revision)
@@ -190,6 +191,7 @@ it('syncs a workbench run to its new session and a conversation run to its exist
   const first = await f.service.start(task.id, task.revision)
   await vi.waitFor(async () => expect((await f.service.state()).runs.find(run => run.id === first.id)?.phase).toBe('finished'))
   expect(mirror.start).toHaveBeenCalledOnce()
+  expect((await f.service.state()).runs.find(run => run.id === first.id)).toMatchObject({ sessionId: 'created-session' })
   expect(mirror.publish.mock.calls.length).toBeGreaterThan(2)
   const second = await f.service.start(task.id, task.revision, 'conversation', 'current-session')
   await vi.waitFor(async () => expect((await f.service.state()).runs.find(run => run.id === second.id)?.phase).toBe('finished'))
@@ -202,6 +204,7 @@ it('keeps scan results when session synchronization fails and leaves disabled ta
   const plain = await f.service.save({ ...f.config, syncSession: false }), first = await f.service.start(plain.id, plain.revision)
   await vi.waitFor(async () => expect((await f.service.state()).runs.find(run => run.id === first.id)?.phase).toBe('finished'))
   expect(mirror.start).not.toHaveBeenCalled()
+  expect((await f.service.state()).runs.find(run => run.id === first.id)?.sessionId).toBeUndefined()
   const watched = await f.service.save({ ...f.config, syncSession: true }), second = await f.service.start(watched.id, watched.revision)
   await vi.waitFor(async () => expect((await f.service.state()).runs.find(run => run.id === second.id)?.phase).toBe('finished'))
   expect((await f.service.state()).runs.find(run => run.id === second.id)).toMatchObject({ status: 'succeeded', sessionWarning: true, reportId: expect.any(String) })
@@ -337,4 +340,158 @@ it('exposes the model catalog separately from polling and preserves explicit/def
   expect((await f.service.state()).tasks[0]?.config.agent).toMatchObject({ provider: 'a/b', model: 'm/n' })
   const cleared = await f.service.save({ ...task.config, agent: { ...task.config.agent, provider: '', model: '' } }, task.id, task.revision)
   expect(cleared.config.agent).toMatchObject({ enabled: true, provider: '', model: '' })
+})
+
+async function abandonedStore() {
+  const f = await fixture()
+  await f.service.save(f.config)
+  await f.service.close()
+  const child = spawnSync(process.execPath, ['-e', ''], { stdio: 'ignore' })
+  expect(child.status).toBe(0)
+  const path = join(f.options.root, '.tasks.lock'), owner = String(child.pid) + '\n'
+  await writeFile(path, owner, { mode: 0o600 })
+  return { ...f, path, owner }
+}
+it('recovers an exited process lock while preserving saved tasks', async () => {
+  const f = await abandonedStore()
+  const next = await SecurityTasks.open(f.options); services.push(next)
+  expect((await next.state()).tasks[0]?.config).toEqual(f.config)
+  expect(await readFile(f.path, 'utf8')).toBe(String(process.pid) + '\n')
+  await next.close()
+  await expect(readFile(f.path)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+it('allows only one concurrent owner when recovering a stale lock', async () => {
+  const f = await abandonedStore()
+  const results = await Promise.allSettled(Array.from({ length: 8 }, () => SecurityTasks.open(f.options)))
+  const winners = results.filter(result => result.status === 'fulfilled')
+  for (const winner of winners) services.push(winner.value)
+  expect(winners).toHaveLength(1)
+  expect(await readFile(f.path, 'utf8')).toBe(String(process.pid) + '\n')
+  for (const result of results) if (result.status === 'rejected') expect(result.reason.message).toBe('task-store-locked')
+})
+it.each(['', 'unknown-owner\n', '0\n', '-1\n', '2147483648\n'])('preserves unknown lock %j', async owner => {
+  const f = await abandonedStore(); await writeFile(f.path, owner)
+  await expect(SecurityTasks.open(f.options)).rejects.toThrow('task-store-locked')
+  expect(await readFile(f.path, 'utf8')).toBe(owner)
+})
+it('preserves locks when process inspection is denied', async () => {
+  const f = await abandonedStore()
+  const kill = vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('denied'), { code: 'EPERM' }) })
+  try {
+    await expect(SecurityTasks.open(f.options)).rejects.toThrow('task-store-locked')
+    expect(await readFile(f.path, 'utf8')).toBe(f.owner)
+  } finally { kill.mockRestore() }
+})
+it('refuses symlink locks and an existing recovery guard', async () => {
+  const f = await abandonedStore(), target = join(f.root, 'foreign-lock')
+  await writeFile(target, f.owner); await rm(f.path); await symlink(target, f.path)
+  await expect(SecurityTasks.open(f.options)).rejects.toThrow('task-store-locked')
+  expect(await readFile(target, 'utf8')).toBe(f.owner)
+  await rm(f.path); await writeFile(f.path, f.owner)
+  const guard = join(f.options.root, '.tasks-recovery.lock')
+  await writeFile(guard, 'unknown owner')
+  await expect(SecurityTasks.open(f.options)).rejects.toThrow('task-store-locked')
+  expect(await readFile(guard, 'utf8')).toBe('unknown owner')
+  expect(await readFile(f.path, 'utf8')).toBe(f.owner)
+})
+
+it('rescans the immutable run configuration after edits and retains comparison across report-root changes', async () => {
+  const f = await fixture(), task = await f.service.save(f.config)
+  const first = await f.service.start(task.id, task.revision)
+  await vi.waitFor(async () => { expect((await f.service.state()).runs.find(run => run.id === first.id)?.reportId).toBeTruthy() })
+  const previous = (await f.service.state()).runs[0]!
+  await f.service.save({ ...f.config, name: 'Edited task', secrets: true }, task.id, task.revision)
+  await f.service.settings({ ...f.options.settings(), reportDirectory: join(f.root, 'new-reports') })
+  const next = await f.service.rescan(previous.reportId!)
+  expect(next.config).toEqual(f.config)
+  expect(next.previousReportId).toBe(previous.reportId)
+  await vi.waitFor(async () => { expect((await f.service.state()).runs[0]?.reportId).toBeTruthy() })
+  const current = (await f.service.state()).runs[0]!
+  expect((await f.service.reportActions(current.reportId!)).comparison).toMatchObject({ previousId: previous.reportId, comparable: false })
+  await f.service.removeRun(previous.id)
+  expect(await f.service.report(previous.reportId!, 'json')).toContain(previous.reportId)
+  await f.service.removeReport(previous.reportId!)
+  expect((await f.service.reportActions(current.reportId!)).comparison).toBeUndefined()
+})
+
+it('protects a comparison report while its rescan is active', async () => {
+  let hold = false
+  const f = await fixture({ audit: async options => {
+    if (hold) await new Promise<void>((_, reject) => options.signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }))
+    return audit(options)
+  } }), task = await f.service.save(f.config)
+  await f.service.start(task.id, task.revision)
+  await vi.waitFor(async () => { expect((await f.service.state()).runs[0]?.reportId).toBeTruthy() })
+  const previous = (await f.service.state()).runs[0]!
+  hold = true
+  await f.service.rescan(previous.reportId!)
+  await expect(f.service.removeReport(previous.reportId!)).rejects.toThrow('report-in-use')
+  await expect(f.service.rescan(previous.reportId!)).rejects.toThrow('task-busy')
+})
+
+it('persists a repair identity before admission and reuses it after retries and restart', async () => {
+  const create = vi.fn(async () => ({})), prompt = vi.fn(async (..._args: unknown[]) => ({ accepted: true })), rename = vi.fn(async () => ({})), attachSession = vi.fn()
+  const native = { sessionController: { create, prompt, rename }, workspaceRegistry: { create: async () => ({ attachSession }) } } as never
+  const f = await fixture({ agentContext: () => ({ native }), audit: async options => {
+    const result = await audit(options)
+    result.report.findings = [{ id: 'selected', fingerprint: 'fp', engine: 'semgrep', rule: 'eval', file: 'app.py', line: 1, title: 'Candidate', cwe: '', severity: 'high', status: 'needs-review', change: 'unknown', evidence: 'evidence', recommendation: 'review', verification: 'not verified' }]
+    return result
+  } }), task = await f.service.save(f.config)
+  await f.service.start(task.id, task.revision)
+  await vi.waitFor(async () => { expect((await f.service.state()).runs[0]?.reportId).toBeTruthy() })
+  const run = (await f.service.state()).runs[0]!, id = run.reportId!
+  expect((await f.service.reportActions(id)).repairable).toBe(true)
+  await expect(f.service.repair(id, ['unknown'], 'local')).rejects.toThrow('unknown-finding')
+  prompt.mockRejectedValueOnce(new Error('connection lost'))
+  await expect(f.service.repair(id, ['selected'], 'local')).rejects.toThrow('connection lost')
+  const [result, concurrent] = await Promise.all([f.service.repair(id, ['selected'], 'local'), f.service.repair(id, ['selected'], 'local')])
+  expect(concurrent).toEqual(result)
+  expect(prompt.mock.calls[0]![0]).toEqual(prompt.mock.calls[1]![0])
+  expect(create.mock.calls[0]).toEqual(create.mock.calls[1])
+  expect(result.sessionId).toMatch(/^security-repair-/u)
+  await f.service.close()
+  const reopened = await SecurityTasks.open(f.options); services.push(reopened)
+  expect((await reopened.reportActions(id)).run?.repair).toMatchObject({ sessionId: result.sessionId, admitted: true })
+  expect(await reopened.repair(id, ['selected'], 'local')).toEqual(result)
+  expect(prompt).toHaveBeenCalledTimes(2)
+  const rpc = createSecurityRpc(Promise.resolve(reopened), vi.fn())
+  expect(await rpc('repair', { id, findingIds: [] }, new AbortController().signal)).toMatchObject({ ok: false })
+})
+
+it('isolates PR repairs, records only their own delivery URL, and rescans the repair branch', async () => {
+  const create = vi.fn(async (..._args: unknown[]) => ({})), prompt = vi.fn(async (..._args: unknown[]) => ({ accepted: true }))
+  const native = { sessionController: { create, prompt, rename: vi.fn() }, workspaceRegistry: { create: async () => ({ attachSession: vi.fn() }) } } as never
+  const f = await fixture({ agentContext: () => ({ native }), audit: async options => {
+    const result = await audit(options)
+    result.report.findings = [{ id: 'selected', fingerprint: 'fp', engine: 'semgrep', rule: 'eval', file: 'app.py', line: 1, title: 'Candidate', cwe: '', severity: 'high', status: 'needs-review', change: 'unknown', evidence: 'evidence', recommendation: 'review', verification: 'not verified' }]
+    return result
+  } })
+  const git = (...args: string[]) => { const result = spawnSync('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd: f.target, encoding: 'utf8' }); expect(result.status, result.stderr).toBe(0); return result.stdout.trim() }
+  git('init', '-b', 'main'); git('config', 'user.email', 'fixture@example.invalid'); git('config', 'user.name', 'Fixture'); git('add', '.'); git('commit', '-m', 'fixture'); git('remote', 'add', 'origin', 'git@github.com:example/project.git')
+  const task = await f.service.save(f.config); await f.service.start(task.id, task.revision)
+  await vi.waitFor(async () => { expect((await f.service.state()).runs[0]?.reportId).toBeTruthy() })
+  const original = (await f.service.state()).runs[0]!, id = original.reportId!, before = await f.service.reportActions(id)
+  expect(before.repairMode).toBe('pr'); expect(before.prPreview?.base).toBe('main')
+  const repaired = await f.service.repair(id, ['selected'], 'pr', before.prPreview!.revision)
+  const actions = await f.service.reportActions(id), workspace = actions.run!.repair!.workspace!
+  expect(create.mock.calls[0]![0]).toEqual({ sessionId: repaired.sessionId, cwd: workspace.target })
+  expect(JSON.stringify(prompt.mock.calls)).toContain('security_record_repair_delivery')
+  expect(JSON.stringify(prompt.mock.calls)).toContain('点击修复按钮本身不授权这些交付动作')
+  expect(JSON.stringify(prompt.mock.calls)).toContain('没有远端、工具或权限时，继续在已创建的本地修复分支解决问题')
+  await expect(f.service.repair(id, ['selected'], 'local')).rejects.toThrow('repair-exists')
+  await expect(f.service.recordRepairDelivery('another-session', 'https://github.com/example/project/pull/1')).rejects.toThrow('repair-unavailable')
+  await expect(f.service.recordRepairDelivery(repaired.sessionId, 'https://github.com/other/project/pull/1')).rejects.toThrow('repair-pr-url')
+  await f.service.recordRepairDelivery(repaired.sessionId, 'https://github.com/example/project/pull/1')
+  await writeFile(join(workspace.target, 'app.py'), 'print("fixed")\n')
+  expect(await readFile(join(f.target, 'app.py'), 'utf8')).toBe('print("test")\n')
+  expect(await f.service.repair(id, ['selected'], 'pr')).toEqual(repaired)
+  expect(prompt).toHaveBeenCalledTimes(1)
+  const next = await f.service.rescan(id)
+  expect(next.config.target).toBe(workspace.target)
+  expect(next.repairSource?.prUrl).toBe('https://github.com/example/project/pull/1')
+  await vi.waitFor(async () => { expect((await f.service.state()).runs.find(run => run.id === next.id)?.reportId).toBeTruthy() })
+  const completed = (await f.service.state()).runs.find(run => run.id === next.id)!
+  const saved = JSON.parse(await f.service.report(completed.reportId!, 'json'))
+  expect(saved.source.identity).toBe(workspace.sourceIdentity)
+  expect(git('branch', '--show-current')).toBe('main')
 })

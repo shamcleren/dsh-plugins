@@ -17,7 +17,8 @@ import { AgentPolicySchema } from '../src/agent-contract.js'
 import { audit } from '../src/workflow.js'
 import { readReport, reviewReport, writeReport, exitCode } from '../src/report.js'
 import { SecurityTasks } from '../src/tasks.js'
-import { newTask } from '../src/ui-contract.js'
+import { newTask, RunSchema } from '../src/ui-contract.js'
+import { scanSession } from '../src/session.js'
 
 const roots: string[] = [], contexts: Context[] = [], services: SecurityTasks[] = []
 afterEach(async () => {
@@ -48,9 +49,10 @@ async function model(next: (options: GenerateOptions, step: number) => Promise<S
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(AgentLoop, { agents: [], maxParallelToolCalls: 1 })
   ctx.on('session/flush', session => { transcripts.set(session.id, structuredClone(session.snapshotEvents())) })
-  ctx.provide('workspaceRegistry', { create: async () => ({ attachSession: async () => {} }) } as never)
-  ctx.provide('sessionController', { rename: async () => ({ title: '', seq: 0 }) } as never)
-  return { native: ctx, requests, transcripts }
+  const attached: string[] = [], renamed: string[] = []
+  ctx.provide('workspaceRegistry', { create: async () => ({ attachSession: async (id: string) => { attached.push(id) } }) } as never)
+  ctx.provide('sessionController', { rename: async (request: { title: string }) => { renamed.push(request.title); return { title: request.title, seq: 0 } } } as never)
+  return { native: ctx, requests, transcripts, attached, renamed }
 }
 async function fixture() {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'security-agent-'))); roots.push(root)
@@ -258,7 +260,12 @@ it('uses one native execution flow for manual and conversation launches and crea
     settings: () => ({ semgrepPath: '/missing', gitleaksPath: '/missing', reportDirectory: join(f.root, 'reports'), autoScan: false, hookTools: [] }),
     writable: () => true, updateSettings: async () => {}, log: vi.fn(),
     agentContext: () => ({ native: adapter.native, selection: f.selection }),
-    audit: async options => { expect(adapter.native.agents.list()).toHaveLength(1); return audit(options) },
+    audit: async options => {
+      expect(adapter.native.agents.list()).toHaveLength(1)
+      const running = (await service.state()).runs.find(run => run.status === 'running')!
+      expect(running.sessionId).toBe(running.originSessionId ?? 'security-' + running.id)
+      return audit(options)
+    },
   }); services.push(service)
   expect(newTask().syncSession).toBe(true)
   const task = await service.save({ ...newTask(), name: 'Native audit', target: f.workspace, engine: 'inventory', dependencies: false, secrets: false, agent: f.policy })
@@ -271,6 +278,7 @@ it('uses one native execution flow for manual and conversation launches and crea
   expect(runs.map(run => run.sessionId)).toEqual(['original-chat', 'security-' + manual.id])
   expect(runs[0]?.originSessionId).toBe('original-chat')
   expect(mirror.start).not.toHaveBeenCalled()
+  expect(mirror.publish).toHaveBeenCalledWith('security-' + manual.id, expect.objectContaining({ status: 'running' }))
   expect(mirror.publish).toHaveBeenCalledWith('original-chat', expect.objectContaining({ status: 'running' }))
   expect(mirror.publish).not.toHaveBeenCalledWith('original-chat', expect.objectContaining({ phase: 'finished' }))
   expect(adapter.native.agents.get(SessionId('original-chat'))).toBe(original.agent)
@@ -281,8 +289,39 @@ it('uses one native execution flow for manual and conversation launches and crea
     expect(transcript.filter(event => event.type === 'tool/call').map(event => event.data.name)).toEqual(['plan_review', 'read_evidence', 'finish_review'])
     expect(JSON.stringify(transcript.at(-1))).toContain(run.reportId)
     expect(JSON.stringify(transcript.at(-1))).toContain('report.html')
-    expect(transcript.filter(event => event.type === 'turn/start')).toHaveLength(1)
+    expect(transcript.filter(event => event.type === 'turn/start')).toHaveLength(run.originSessionId ? 1 : 2)
   }
+})
+
+it('exposes a new execution session through a model-free first turn before rules run', async () => {
+  const f = await fixture(), adapter = await model((_options, step) => [call('plan_review', { areas: ['injection'] }), done()][step - 1]!)
+  const seen: Array<{ events: string[]; requests: number }> = [], order: string[] = []
+  const result = await runAgentReview({ ...f, native: adapter.native, keepSession: true,
+    onSession: async id => { order.push('session'); seen.push({ events: adapter.native.agents.get(SessionId(id))!.session.snapshotEvents().map(event => event.type), requests: adapter.requests.length }) },
+    prepare: async () => { order.push('rules'); return f.reportFile } })
+  expect(order).toEqual(['session', 'rules'])
+  expect(seen).toEqual([{ events: expect.arrayContaining(['turn/start', 'turn/end']), requests: 0 }])
+  expect(seen[0]!.events).not.toContain('step/start')
+  expect(seen[0]!.events).not.toContain('user/message')
+  expect(result.audit.nativeEnd).toBe('completed')
+  expect(result.audit.steps).toBe(2)
+})
+
+it('opens a listable observation session for rule-only scans without calling a model', async () => {
+  const f = await fixture(), adapter = await model(() => { throw new Error('observation must not call a model') })
+  const run = RunSchema.parse({ id: randomUUID(), taskId: randomUUID(), config: { ...newTask(), name: 'Rules only', target: f.workspace, agent: { ...f.policy, enabled: false } }, status: 'running', phase: 'preparing', trigger: 'manual', createdAt: new Date().toISOString() })
+  const mirror = scanSession(adapter.native)
+  const id = await mirror.start(run, f.workspace, new AbortController().signal)
+  await mirror.publish(id, run)
+  const events = adapter.native.sessions.get(SessionId(id))!.snapshotEvents()
+  expect(id).toBe('security-' + run.id)
+  expect(events.filter(event => event.type === 'turn/start')).toHaveLength(1)
+  expect(events.find(event => event.type === 'turn/end')).toMatchObject({ data: { reason: { kind: 'completed' } } })
+  expect(events.some(event => event.type === 'step/start')).toBe(false)
+  expect(events.filter(event => event.type === 'user/message')).toEqual([expect.objectContaining({ data: expect.objectContaining({ source: expect.objectContaining({ form: 'notice' }) }) })])
+  expect(adapter.requests).toHaveLength(0)
+  expect(adapter.attached).toEqual([id])
+  expect(adapter.renamed).toEqual(['安全扫描 · Rules only'])
 })
 
 it('accepts native session cancellation and keeps incomplete results', async () => {
@@ -382,7 +421,7 @@ it('accepts additions alone but still rejects null, wrong types, missing citatio
   expect(result.reviews).toHaveLength(1)
   expect(result.audit.status).toBe('completed')
   expect(result.audit.events.filter(item => item.kind === 'rejected').map(item => item.code)).toEqual(['empty-submission', 'invalid-arguments', 'invalid-arguments', 'invalid-arguments'])
-  const feedback = adapter.requests[6]!.messages.flatMap(message => message.content).filter(block => block.type === 'tool-result').map(block => JSON.stringify(block)).join('\n')
+  const feedback = adapter.requests[6]!.messages.filter(message => message.role === 'tool').map(block => JSON.stringify(block)).join('\n')
   expect(feedback).toContain('findings')
   expect(feedback).toContain('citations')
   expect(feedback).toContain('expected')
@@ -400,7 +439,7 @@ it('keeps the official bash tool in native review, preserves host guards and sti
     call('submit_review', { reviews: [review] }), done(),
   ][step - 1]!)
   const shell = vi.fn(async (_request: unknown) => ({ exitCode: 0, signal: null, timedOut: false, aborted: false, timeoutMs: 1000, stdout: { text: 'fixture-shell-ok', truncated: false }, stderr: { text: '', truncated: false } }))
-  adapter.native.provide('shell', { resolve: (request: unknown) => request, run: shell } as never)
+  adapter.native.provide('shell', { resolve: (request: unknown) => request, execute: async (request: unknown) => ({ result: () => shell(request) }) } as never)
   adapter.native.provide('shellEnv', { collect: () => ({}) } as never)
   await adapter.native.plugin(Bash)
   adapter.native.tools.guard(exec => exec.name === 'bash' && (exec.arguments as { command?: string }).command === 'blocked' ? 'Fixture host denial' : undefined)
@@ -428,7 +467,7 @@ it('queues an audit behind the initiating turn, preserves its model, then releas
   })
   const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
   const original = await adapter.native.agents.create({ sessionId: SessionId('borrowed-' + randomUUID()), meta: { cwd: f.workspace }, agentOptions: { provider: f.selection.provider, model: 'conversation-model' } })
-  const message = (text: string) => createUserMessage({ source: { kind: 'plugin', plugin: 'test' }, content: [{ type: 'text', text }] })
+  const message = (text: string) => createUserMessage({ source: { kind: 'security-scan' }, content: [{ type: 'text', text }] })
   original.agent.followup(message('Start a scan'))
   await running
   const pending = runAgentReview({ ...f, native: adapter.native, existingAgent: original.agent })
@@ -452,7 +491,7 @@ it('cancelling a queued audit removes only its prompt without interrupting the u
   const adapter = await model(async (options, step) => { if (step === 1) { started(); await gate; expect(options.signal?.aborted).toBe(false) }; return done() })
   const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
   const original = await adapter.native.agents.create({ sessionId: SessionId('queued-' + randomUUID()), meta: { cwd: f.workspace }, agentOptions: f.selection })
-  const message = (text: string) => createUserMessage({ source: { kind: 'plugin', plugin: 'test' }, content: [{ type: 'text', text }] })
+  const message = (text: string) => createUserMessage({ source: { kind: 'security-scan' }, content: [{ type: 'text', text }] })
   original.agent.followup(message('Ordinary turn')); await running
   const pending = runAgentReview({ ...f, native: adapter.native, existingAgent: original.agent, signal: controller.signal })
   await vi.waitFor(() => expect(original.agent.inbox.nextTurn).toHaveLength(1))
@@ -478,7 +517,7 @@ it('cancels only the active audit turn and preserves subsequent conversation inp
   const original = await adapter.native.agents.create({ sessionId: SessionId('active-' + randomUUID()), meta: { cwd: f.workspace }, agentOptions: f.selection })
   const pending = runAgentReview({ ...f, native: adapter.native, existingAgent: original.agent, signal: controller.signal })
   await running
-  original.agent.followup(createUserMessage({ source: { kind: 'plugin', plugin: 'test' }, content: [{ type: 'text', text: 'Continue ordinary work' }] }))
+  original.agent.followup(createUserMessage({ source: { kind: 'security-scan' }, content: [{ type: 'text', text: 'Continue ordinary work' }] }))
   controller.abort()
   expect((await pending).audit).toMatchObject({ reason: 'cancelled', nativeEnd: 'aborted' })
   await original.agent.whenIdle()
@@ -507,10 +546,10 @@ it('reports every actionable batch evidence issue without saving partial reviews
   expect(serialized).toContain('redactedLines')
   expect(serialized).not.toContain('sk-12345678901234567890')
   const transcript = [...adapter.transcripts.values()][0]!
-  const blocks = transcript.filter(entry => entry.type === 'tool/result').flatMap(entry => entry.data.message.content)
-  const error = blocks.find(block => block.type === 'tool-result' && block.isError)!
-  expect(error.type).toBe('tool-result')
-  if (error.type !== 'tool-result') throw new Error('missing tool result')
+  const messages = transcript.filter(entry => entry.type === 'tool/result').map(entry => entry.data.message)
+  const error = messages.find(message => message.isError)!
+  expect(error.role).toBe('tool')
+  if (!error) throw new Error('missing tool result')
   const text = error.content.find(block => block.type === 'text')!
   if (text.type !== 'text') throw new Error('missing error text')
   const detail = JSON.parse(text.text.replace(/^Error: /u, ''))
@@ -529,9 +568,9 @@ it('bounds batch validation feedback and identifies omitted issues', async () =>
   const adapter = await model((_options, step) => step === 1 ? call('submit_review', { reviews: Array.from({ length: 30 }, (_, index) => ({ ...review, findingId: 'unknown-' + index })) }) : done())
   const result = await runAgentReview({ ...f, native: adapter.native })
   const transcript = [...adapter.transcripts.values()][0]!
-  const blocks = transcript.filter(entry => entry.type === 'tool/result').flatMap(entry => entry.data.message.content)
-  const error = blocks.find(block => block.type === 'tool-result' && block.isError)!
-  if (error.type !== 'tool-result') throw new Error('missing tool result')
+  const messages = transcript.filter(entry => entry.type === 'tool/result').map(entry => entry.data.message)
+  const error = messages.find(message => message.isError)!
+  if (!error) throw new Error('missing tool result')
   const text = error.content.find(block => block.type === 'text')!
   if (text.type !== 'text') throw new Error('missing error text')
   const detail = JSON.parse(text.text.replace(/^Error: /u, ''))

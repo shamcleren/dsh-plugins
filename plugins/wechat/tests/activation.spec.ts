@@ -1,8 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
-import { SettingsProvider, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
+import { Context, Service } from '@deepseek-ai/cordis'
 import { afterEach, expect, it, vi } from 'vitest'
 import * as WeChat from '../src/index.js'
 import { WeChatAccountStore } from '../src/storage.js'
@@ -28,10 +27,9 @@ it.each(['scanning-owner', undefined])('QR auto-activation requires the scanning
   const document: Record<string, Record<string, unknown>> = {
     wechat: { enabled: false, accountIds: ['previous-account'], workspaceId: 'workspace-a' },
   }
-  class MemorySettings extends SettingsProvider {
-    readonly writable = true
-    protected async load(): Promise<Record<string, unknown>> { return document }
-    protected async persist(ns: SettingsNamespace, section: Record<string, unknown>): Promise<void> { document[ns] = section }
+  class MemorySettings extends Service {
+    readonly writable = false
+    constructor(ctx: Context) { super(ctx, 'settings') }
   }
   vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async input => new Response(JSON.stringify(
     String(input).includes('get_bot_qrcode')
@@ -44,7 +42,7 @@ it.each(['scanning-owner', undefined])('QR auto-activation requires the scanning
   ctx.provide('workspaceRegistry', { list: () => [{ id: 'workspace-a', path: directory, title: 'Test', sessionIds: [] }], archivedSessionIds: [] } as never)
   try {
     const settings = await ctx.plugin(MemorySettings)
-    const fiber = await settings.ctx.plugin(WeChat, {})
+    const fiber = await settings.ctx.plugin(WeChat, { workspaceId: 'workspace-a' })
     await vi.waitFor(() => { expect(fiber.ctx.get('wechatLogin' as never)).toBeDefined() })
     const login = fiber.ctx.get('wechatLogin' as never) as unknown as WeChatLoginService
     expect(observed.started).not.toHaveBeenCalled()
@@ -65,17 +63,16 @@ it('starts every previously bound account on load even with retired disabled/fil
   vi.stubEnv('DSH_HOME', directory)
   const store = await WeChatAccountStore.open(join(directory, 'channels/wechat'))
   for (const accountId of ['account-a', 'account-b']) await store.saveAccount({ accountId, userId: 'owner-' + accountId, token: 'fixture-only', baseUrl: 'https://example.invalid' })
-  class ReadOnlySettings extends SettingsProvider {
+  class ReadOnlySettings extends Service {
     readonly writable = false
-    protected async load() { return { wechat: { enabled: false, accountIds: ['missing-account'], allowedUsers: ['old-user'], adminUsers: ['old-admin'], workspaceId: 'workspace-a' } } }
-    protected async persist() { throw new Error('Must not write settings') }
+    constructor(ctx: Context) { super(ctx, 'settings') }
   }
   const ctx = new Context()
   ctx.provide('sessionController', {} as never)
   ctx.provide('sessions', {} as never)
   ctx.provide('workspaceRegistry', { list: () => [{ id: 'workspace-a', path: directory, title: 'Test', sessionIds: [] }], archivedSessionIds: [] } as never)
   try {
-    const settings = await ctx.plugin(ReadOnlySettings), fiber = await settings.ctx.plugin(WeChat, {})
+    const settings = await ctx.plugin(ReadOnlySettings), fiber = await settings.ctx.plugin(WeChat, { workspaceId: 'workspace-a' })
     await vi.waitFor(() => expect(observed.started).toHaveBeenCalledTimes(2))
     const login = fiber.ctx.get('wechatLogin' as never) as unknown as WeChatLoginService
     expect(login.state()).toMatchObject({ receiver: { status: 'running', accounts: 2 } })

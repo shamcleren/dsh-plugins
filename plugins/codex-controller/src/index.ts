@@ -1,9 +1,10 @@
+import './message-source.js'
 /** Persistent Codex sessions: one DSH session, one resumable Codex thread, native approval. */
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type {} from '@deepseek-ai/dsh-agent-presets'
+import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-attachment'
@@ -24,7 +25,6 @@ import { emptyRecord, readRecord } from './journal.js'
 import { registerDelegate } from './delegate.js'
 import { registerHostRpc } from './host-rpc.js'
 import { bindBridge } from './owner.js'
-import { retireCodexPreset } from './preset-install.js'
 import { CODEX_CHANNEL, isSessionId } from './ui-contract.js'
 
 export const name = 'codex-controller'
@@ -99,13 +99,11 @@ export function apply(ctx: Context, config: Config = {}): void {
     attachments = scope.attachments
     scope.effect(() => () => { if (attachments === scope.attachments) attachments = undefined }, 'codex-controller: attachment store')
   })
-  ctx.inject(['sessionController', 'agentPresets', 'webServer', 'workspaceRegistry'], scope => {
+  ctx.inject(['sessionController', 'webServer', 'workspaceRegistry'], scope => {
     controller = scope.sessionController
     workspaces = scope.workspaceRegistry
     origin = 'http://127.0.0.1:' + scope.webServer.port
-    const preparation = retireCodexPreset(scope.agentPresets.roots).catch(() => { ctx.logger.warn('Codex preset was left in place; it was not owned by this plugin.') })
     scope.effect(() => () => { if (controller === scope.sessionController) controller = undefined; if (workspaces === scope.workspaceRegistry) workspaces = undefined }, 'codex-controller: session controller')
-    void preparation
   })
   ctx.inject(['llm'], scope => {
     if (scope.llm.listProviders().some(provider => provider.id === CODEX_PROVIDER)) return
@@ -131,7 +129,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   })
 }
 
-async function createSession(payload: unknown, controller: Context['sessionController'] | undefined, bridge: CodexBridge, cwdFor: (sessionId: string) => string | undefined, workspaceCwd: () => string | undefined): Promise<{ ok: true; value: { sessionId: string } } | { ok: false; error: { code: string; message: string } }> {
+async function createSession(payload: unknown, controller: Context['sessionController'] | undefined, bridge: CodexBridge, cwdFor: (sessionId: string) => string | undefined, workspaceCwd: () => string | undefined): Promise<{ ok: true; value: { sessionId: string } } | { ok: false; error: { code: string; message: string; details: Record<string, never> } }> {
   if (!controller) return failure('session controller unavailable')
   const requested = isRecord(payload) && typeof payload.cwd === 'string' ? payload.cwd : ''
   const fromSession = isRecord(payload) && isSessionId(payload.sessionId) ? cwdFor(payload.sessionId) : undefined
@@ -144,8 +142,8 @@ async function createSession(payload: unknown, controller: Context['sessionContr
   return { ok: true, value: { sessionId } }
 }
 
-function failure(message: string): { ok: false; error: { code: string; message: string } } {
-  return { ok: false, error: { code: 'codex-controller', message } }
+function failure(message: string): { ok: false; error: { code: string; message: string; details: Record<string, never> } } {
+  return { ok: false, error: { code: 'codex-controller', message, details: {} } }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -14,13 +14,13 @@ async function fixture(t) {
   const scratch = await mkdtemp(join(tmpdir(), 'dsh-bootstrap-test-'))
   t.after(() => rm(scratch, { recursive: true, force: true }))
   return { directory: join(scratch, 'installation with spaces'), dshHome: join(scratch, 'user/.dsh'),
-    userHome: join(scratch, 'user'), desktop: false, repo, log() {} }
+    userHome: join(scratch, 'user'), desktop: false, repo, log() {}, assertIdle: async () => {} }
 }
 
 test('arguments reject unknown flags and missing directory values', () => {
   assert.equal(parseArgs(['--no-app', '--resume']).desktop, false)
-  assert.equal(parseArgs([]).desktop, process.platform === 'darwin')
-  assert.equal(parseArgs([]).marketplace, false)
+  assert.equal(parseArgs([]).desktop, undefined)
+  assert.equal(parseArgs([]).marketplace, undefined)
   assert.equal(parseArgs([]).directory, join(repo, 'dist'))
   assert.equal(parseArgs(['--with-marketplace']).marketplace, true)
   assert.throws(() => parseArgs(['--dir']), /requires/)
@@ -35,18 +35,18 @@ test('opt-in Marketplace install pins official packages, skips lifecycle scripts
   assert.equal(first.reused, false)
   assert.equal(calls.length, 4)
   assert.equal(calls[0].command, 'npm')
-  assert.ok(calls[0].args.includes('--package=pnpm@11.7.0'))
+  assert.ok(calls[0].args.includes('--package=pnpm@11.28.0'))
   assert.ok(calls[0].args.includes('--ignore-scripts'))
   assert.ok(calls[2].args.includes('--config.ignore-scripts=true'))
   assert.ok(calls[2].settings.env.DSH_HOME.startsWith(options.dshHome + '/profiles/.dhp-web-'))
   await mkdir(options.dshHome, { recursive: true })
   const sentinel = join(options.dshHome, 'settings.yaml')
-  await writeFile(sentinel, 'user-owned configuration')
+  await writeFile(sentinel, '# user-owned configuration\n')
   calls.length = 0
   assert.equal((await bootstrap({ ...options, marketplace: false, dshHome: undefined, execute })).reused, true)
   assert.equal(calls.length, 1)
   assert.equal(calls[0].args.at(-1), '--version')
-  assert.equal(await readFile(sentinel, 'utf8'), 'user-owned configuration')
+  assert.equal(await readFile(sentinel, 'utf8'), '# user-owned configuration\n')
 })
 
 test('default installation needs no catalog or artifacts and never installs plugins', async t => {
@@ -152,24 +152,34 @@ test('first initialization preserves existing shared settings and records the se
   const settings = join(options.dshHome, 'settings.yaml')
   const content = 'test-existing-model: keep\n'
   await writeFile(settings, content)
-  await bootstrap({ ...options, execute: async () => {} })
+  await bootstrap({ ...options, execute: fakeInstall })
   assert.equal(await readFile(settings, 'utf8'), content)
-  await assert.rejects(bootstrap({ ...options, dshHome: join(options.directory, 'home'), execute: async () => {} }), /data directory differs/)
+  await assert.rejects(bootstrap({ ...options, dshHome: join(options.directory, 'home'), execute: fakeInstall }), /data directory differs/)
   const marker = join(options.directory, 'bootstrap-state.json')
   const state = JSON.parse(await readFile(marker, 'utf8'))
   await writeFile(marker, JSON.stringify({ ...state, schemaVersion: 1, dshHome: undefined }))
-  await bootstrap({ ...options, dshHome: undefined, execute: async () => {}, assertIdle: async () => {} })
+  await bootstrap({ ...options, dshHome: undefined, execute: fakeInstall, assertIdle: async () => {} })
   assert.equal(JSON.parse(await readFile(marker, 'utf8')).dshHome, join(options.directory, 'home'))
   assert.equal(await readFile(settings, 'utf8'), content)
 })
 
-test('failed installs are explicit and can resume without deleting saved profile data', async t => {
+test('failed installs resume on the same command without deleting saved profile data', async t => {
   const options = await fixture(t)
   await assert.rejects(bootstrap({ ...options, execute: async () => { throw new Error('network unavailable') } }), /network unavailable/)
   assert.equal(JSON.parse(await readFile(join(options.directory, 'bootstrap-state.json'))).status, 'failed')
-  await assert.rejects(bootstrap({ ...options, execute: async () => {} }), /--resume/)
-  await bootstrap({ ...options, resume: true, execute: async () => {} })
+  await bootstrap({ ...options, execute: fakeInstall })
+  assert.equal((await bootstrap({ ...options, execute: fakeInstall })).reused, true)
   assert.equal(JSON.parse(await readFile(join(options.directory, 'bootstrap-state.json'))).status, 'ready')
+})
+
+test('repeat init inherits Web-only and failed Marketplace choices when flags are omitted', async t => {
+  const options = await fixture(t)
+  await assert.rejects(bootstrap({ ...options, marketplace: true, execute: async () => { throw new Error('offline') } }), /offline/)
+  await bootstrap({ ...options, desktop: undefined, marketplace: undefined, execute: fakeInstall })
+  const state = JSON.parse(await readFile(join(options.directory, 'bootstrap-state.json')))
+  assert.equal(state.desktop, false)
+  assert.ok(state.marketplaceSha256)
+  assert.equal((await bootstrap({ ...options, desktop: undefined, execute: fakeInstall })).reused, true)
 })
 
 test('unowned directories and symlink roots are never adopted', async t => {

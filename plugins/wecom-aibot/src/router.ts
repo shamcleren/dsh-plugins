@@ -49,6 +49,12 @@ const MAX_CARD_BUTTONS = 6
 const MAX_SETTLED_CARDS = 100
 const INTERNAL_ERROR_REPLY = '处理请求时发生错误，请稍后重试。'
 const NO_PENDING_APPROVAL_REPLY = '当前没有待处理的审批。'
+
+/** Session create refusals that mean the bound Session cannot accept this channel's workspace or preset. */
+function replacesExistingSession(code: string): boolean {
+  return code === 'session-conflict' || code === 'session/conflict'
+    || code === 'agent-preset-conflict' || code === 'agent-preset/conflict'
+}
 const APPROVAL_OWNER_REPLY = '只有发起本轮请求的用户可以处理该审批。'
 const NO_PENDING_QUESTION_REPLY = '当前没有待回答的问题。'
 const QUESTION_OWNER_REPLY = '只有发起本轮请求的用户可以回答该问题。'
@@ -1203,8 +1209,8 @@ export class WeComConversationRouter {
       await this.createSession(requestedSessionId, workspaceId)
       return requestedSessionId
     } catch (error: unknown) {
-      if (!(error instanceof HostApiError)
-        || (error.code !== 'session-conflict' && error.code !== 'agent-preset-conflict')) throw error
+      // DSH 0.1.6 reports these as session/conflict and agent-preset/conflict.
+      if (!(error instanceof HostApiError) || !replacesExistingSession(error.code)) throw error
       const replacement = `session-wecom-${randomUUID().replaceAll('-', '')}`
       await this.createSession(replacement, workspaceId)
       await this.runtime.bindings.set(conversationKey, replacement)

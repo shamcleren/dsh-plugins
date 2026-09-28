@@ -30,6 +30,8 @@ export async function controlService({
     log('DSH home: ' + dshHome)
     log('Mode: ' + (app ? 'app port ' + app.port : 'web'))
     log(processes.length ? processes.map(item => 'Running PID ' + item.pid).join('\n') : 'Stopped')
+    const { reportUpdates } = await import('./status.mjs')
+    await reportUpdates({ installation, app, repo, log })
     return { installation, processes, app }
   }
   if (action === 'restart' && !web && desktop) {

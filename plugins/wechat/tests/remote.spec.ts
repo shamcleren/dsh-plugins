@@ -1,9 +1,15 @@
 import * as Cordis from '@deepseek-ai/cordis'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apply as applyWechatClient, inject as injectWechatClient } from '../src/client/index.js'
 import { WECHAT_LOGIN_REMOTE } from '../src/remote.js'
+
+beforeEach(() => {
+  vi.stubGlobal('__DSH_TRANSPORT__', { streamBaseUrl: 'http://127.0.0.1/' })
+  vi.stubGlobal('WebSocket', class extends EventTarget { close() {} })
+})
+afterEach(() => vi.unstubAllGlobals())
 
 describe('WeChat login Remote contribution', () => {
   it('mounts without the settings plugin load failure', async () => {
@@ -18,6 +24,7 @@ describe('WeChat login Remote contribution', () => {
     await ctx.plugin(gateway)
 
     await expect(ctx.remote.$mount(WECHAT_LOGIN_REMOTE)).resolves.toBeTypeOf('function')
+    await ctx.fiber.dispose()
   })
 
   it('activates the complete client loader entry after mounting its Remote namespace', async () => {
@@ -38,6 +45,7 @@ describe('WeChat login Remote contribution', () => {
 
     await expect(ctx.plugin({ apply: applyWechatClient, inject: injectWechatClient }))
       .resolves.toBeDefined()
+    await ctx.fiber.dispose()
   })
 })
 

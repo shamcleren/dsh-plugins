@@ -16,7 +16,7 @@ open "dist/DeepSeek Harness.app"
 Linux 安装后使用 `./dist/bin/dsh` 启动 Web 版。首次打开 DSH，按界面配置模型；已有配置会直接复用。
 
 - App 与运行时位于项目的 `dist/`，默认端口 **3080**。
-- 配置文件为 **`~/.dsh/settings.yaml`**，会话、凭据和插件数据也在 `~/.dsh`。
+- 实时配置保存在 **`~/.dsh/profiles/web/cordis.patch.yml`**；旧 `settings.yaml` 首次启动时由官方导入，并保留备份。会话、凭据和插件数据仍在 `~/.dsh`。
 - 基础安装不额外添加本仓库插件。已有 DSH 配置会保留，本仓库已安装插件会同步升级到兼容版本；不同安装目录或端口仍共享这份数据，请先退出原来的 DSH。
 
 没有 make、仅安装 Web 版、自定义路径或安装失败续装，见 [安装选项](docs/installation.md)。
@@ -27,6 +27,7 @@ Linux 安装后使用 `./dist/bin/dsh` 启动 Web 版。首次打开 DSH，按�
 
 ```sh
 ./dhp plugin list                     # 查看插件、安装状态和版本
+./dhp status                          # 查看运行状态、DSH/App 版本和待更新项
 ./dhp plugin install security-scan    # 安装或更新安全扫描
 ./dhp plugin install wechat           # 安装或更新微信插件
 ./dhp plugin install web-search       # 免费联网搜索，无需 API Key
@@ -84,7 +85,7 @@ git pull --ff-only
 ./dhp restart
 ```
 
-`make init` 可以重复执行，会复用或更新安装并保留配置；日常更新推荐用 `dhp update`。当前锁定官方 DSH **0.1.6-alpha.2**（2026-09-21 核对的官方最新发布版本，npm `alpha`），每次更新都会检查并同步本仓库已安装插件，DSH 版本不变时也会更新插件。不会自动追踪未经验证的新版本。
+`make init` 与 `dhp update` 共用幂等的更新与修复流程：完整且未变化的内容直接复用，缺失或摘要变化的受管运行时、启动器、私有 Node.js 和 App 会暂存重建，保留用户配置。安装失败后可重新执行 `make init`，日常使用 `dhp update`；详情见[重复执行与恢复](docs/installation.md#重复执行与更新)。当前锁定官方 DSH **0.1.7-rc.2**（2026-09-28 核对，npm `latest` / `next`），每次更新都会检查并同步本仓库已安装插件，DSH 版本不变时也会更新插件。不会自动追踪未经验证的新版本。
 
 已有 DSH 可直接升级：新版凭据保持原样，旧平面凭据先备份到 `~/.dsh/.dhp-backups/`，再由官方 DSH 转换。请退出所有使用同一 `~/.dsh` 的旧 App/CLI；升级后不要再用旧运行时读取这份数据。第三方插件不兼容时会在替换前提示，详见 [兼容与恢复](docs/installation.md#已有-dsh-的兼容与恢复)。
 

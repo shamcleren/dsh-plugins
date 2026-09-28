@@ -11,8 +11,12 @@ case "${DSH_INIT_MARKETPLACE:-0}" in 1) set -- --with-marketplace "$@" ;; 0) ;; 
 case "${DSH_INIT_RESUME:-0}" in 1) set -- --resume "$@" ;; 0) ;; *) fail 'RESUME must be 0 or 1' ;; esac
 case "${DSH_INIT_REBUILD:-0}" in 1) set -- --rebuild-app "$@" ;; 0) ;; *) fail 'REBUILD must be 0 or 1' ;; esac
 desktop=1
+installation="$repository/dist"
+expect_directory=0
 for argument in "$@"; do
+  if [ "$expect_directory" = 1 ]; then installation=$argument; expect_directory=0; continue; fi
   case "$argument" in
+    --dir) expect_directory=1 ;;
     --no-app) desktop=0 ;;
     --help)
       printf '%s\n' 'Usage: make init [DIR=/new/path] [WEB_ONLY=1] [MARKETPLACE=1] [RESUME=1] [REBUILD=1]' \
@@ -27,14 +31,23 @@ case "$(uname -s)" in
   Linux) platform=linux ;;
   *) fail 'Only macOS and Linux are supported' ;;
 esac
-if [ "$platform" = darwin ] && [ "$desktop" = 1 ]; then
+if [ "$platform" = darwin ] && [ "$desktop" = 1 ] && [ ! -f "$installation/bootstrap-state.json" ]; then
   command -v xcrun >/dev/null 2>&1 && xcrun --find swiftc >/dev/null 2>&1 \
     || fail 'Desktop builds need Xcode Command Line Tools. Run xcode-select --install, or use WEB_ONLY=1.'
 fi
 
-# Never pass a stale source directory from a caller into the bootstrap.
+# Never pass a stale source directory or Node injection options into bootstrap.
 unset DSH_BOOTSTRAP_NODE_ROOT
 unset NODE_OPTIONS NODE_PATH
+# Repeated init must also work offline on machines installed without system Node.
+if [ -x "$installation/node/bin/node" ] && [ -x "$installation/node/bin/npm" ] \
+  && "$installation/node/bin/node" -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit((major === 22 && minor >= 19) || major >= 24 ? 0 : 1)' >/dev/null 2>&1 \
+  && PATH="$installation/node/bin:$PATH" "$installation/node/bin/npm" --version >/dev/null 2>&1; then
+  PATH="$installation/node/bin:$PATH"
+  export PATH
+  exec "$installation/node/bin/node" "$repository/scripts/bootstrap.mjs" "$@"
+fi
+
 if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 \
   && node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit((major === 22 && minor >= 19) || major >= 24 ? 0 : 1)' >/dev/null 2>&1 \
   && npm --version >/dev/null 2>&1; then

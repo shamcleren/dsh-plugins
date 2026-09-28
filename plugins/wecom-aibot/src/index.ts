@@ -1,10 +1,12 @@
-import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/cordis-plugin-loader'
+import type { Config as PlainConfig } from './config.js'
+import { type Volatile, type Context } from '@deepseek-ai/cordis'
 import { installChannelApproval } from './approval.js'
 import { installChannelTitle } from './channel-title.js'
 import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-settings'
 import { WSClient } from '@wecom/aibot-node-sdk'
-import { Config, DEFAULT_BOT_ID_ENV, DEFAULT_SECRET_ENV, DEFAULT_WORKSPACE_NAME } from './config.js'
+import { Config as ConfigSchema, DEFAULT_BOT_ID_ENV, DEFAULT_SECRET_ENV, DEFAULT_WORKSPACE_NAME } from './config.js'
 import type { WeComSettingsPatch } from './config.js'
 import { onCredentialsUpdated, resolveCredentials } from './credentials.js'
 import { createHostApi } from './host-api.js'
@@ -16,8 +18,8 @@ import { join } from 'node:path'
 
 export { WeComBotAccount } from './account.js'
 export type { WeComBotClient } from './account.js'
+export const Config = ConfigSchema.volatile()
 export {
-  Config,
   DEFAULT_BOT_ID_ENV,
   DEFAULT_SECRET_ENV,
   DEFAULT_THINKING_TEXT,
@@ -39,13 +41,14 @@ export const inject = ['sessionController', 'workspaceRegistry', 'sessions']
 export const WECOM_AIBOT_SETTINGS_NAMESPACE = 'wecom-aibot'
 
 /** Connect one configured WeCom Bot for the lifetime of this plugin fiber. */
-export function apply(ctx: Context, config: Config): void {
+export function apply(ctx: Context, config: PlainConfig | Volatile<PlainConfig>): void {
   const api = createHostApi(ctx,
     sessionId => runtime.routesSession(sessionId),
     sessionId => runtime.observesSession(sessionId))
   const logger = ctx.logger(name)
   installChannelTitle(ctx, logger)
-  let settings = (): Config => config
+  // Cloning detaches the validated readonly snapshot for existing mutable config consumers.
+  const settings = (): PlainConfig => ('get' in config) ? structuredClone(config.get()) as PlainConfig : config
   let bindings: Promise<ConversationBindings> | undefined
   const bindingStore = (): Promise<ConversationBindings> => {
     bindings ??= ConversationBindings.open(join(
@@ -91,11 +94,8 @@ export function apply(ctx: Context, config: Config): void {
       sessionId => runtime.ownsSession(sessionId),
       request => runtime.requestApproval(request))
   })
+  ctx.on('loader/volatile-update', () => { runtime.update(settings()) })
   ctx.inject(['settings'], settingsCtx => {
-    settingsCtx.settings.installSection(settingsCtx, WECOM_AIBOT_SETTINGS_NAMESPACE, Config, config, {
-    setSource: current => { settings = current },
-    onChange: () => { runtime.update(settings()) },
-    })
     // Path ops rather than a wholesale replace: the caller only names the field it
     // changed and cannot drop settings it never read, which a merge patch also
     // cannot express for the reset-to-inherited case.

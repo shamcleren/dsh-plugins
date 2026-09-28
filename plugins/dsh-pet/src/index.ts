@@ -1,3 +1,4 @@
+import type {} from '@deepseek-ai/cordis-plugin-loader'
 /**
  * desktop-pet — a desktop floating pet for DeepSeek Harness, reusing the
  * Codex/OpenAI pet asset packs. Host-only: reduces session events into a pet
@@ -5,17 +6,18 @@
  * over a stdio JSON protocol. No DSH app-shell changes are required.
  */
 
+import z from '@deepseek-ai/schemastery'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Context } from '@deepseek-ai/cordis'
-import type { SettingsProvider } from '@deepseek-ai/dsh-settings'
+import { type Volatile, type Context } from '@deepseek-ai/cordis'
+import type { SettingsForms } from '@deepseek-ai/dsh-settings'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-user-approval'
-import { Config, PetSettings } from './config.js'
+import { Config as ConfigSchema, PetSettings } from './config.js'
 import { HelperProcess } from './helper-process.js'
 import { resolveSelection, retireBundledAlias, syncPacks, type PetPack } from './packs.js'
 import { MessageKind, type CompanionMessage } from './protocol.js'
@@ -24,7 +26,14 @@ import { canonicalPetId, PET_ID_ALIASES, RETIRED_PET_IDS } from './shared/picker
 import { PanelStateStore, type Position } from './state-store.js'
 import { PetStatusTracker } from './status.js'
 
-export { Config } from './config.js'
+type PlainConfig = import('./config.js').Config
+type LiveConfig = Omit<PlainConfig, keyof PetSettings> & { [K in keyof PetSettings]: Volatile<PetSettings[K]> }
+export const Config = z.object({
+  ...ConfigSchema.dict!,
+  enabled: PetSettings.dict!.enabled!.volatile(),
+  petId: PetSettings.dict!.petId!.volatile(),
+  petSize: PetSettings.dict!.petSize!.volatile(),
+})
 export type { Config as DesktopPetConfig } from './config.js'
 export { PetSettings } from './config.js'
 export { MessageKind } from './protocol.js'
@@ -47,7 +56,7 @@ function parsePosition(value: unknown): Position | null {
   return { x: record.x, y: record.y }
 }
 
-export function apply(ctx: Context, config: Config): void {
+export function apply(ctx: Context, config: PlainConfig | LiveConfig): void {
   const logger = ctx.logger(name)
 
   const packsDir = dshHomePath('desktop-pet', 'packs')
@@ -56,13 +65,17 @@ export function apply(ctx: Context, config: Config): void {
   // The runtime-adjustable subset, authoritative once the settings provider
   // attaches; falls back to the composition entry otherwise.
   const entry: PetSettings = {
-    enabled: config.enabled,
-    petId: config.petId,
-    petSize: config.petSize,
+    enabled: (typeof config.enabled === 'object') ? config.enabled.get() : config.enabled,
+    petId: (typeof config.petId === 'object') ? config.petId.get() : config.petId,
+    petSize: (typeof config.petSize === 'object') ? config.petSize.get() : config.petSize,
   }
   let fallback: PetSettings = { ...entry }
-  let source: () => PetSettings = () => fallback
-  let settingsProvider: SettingsProvider | undefined
+  const source = (): PetSettings => ({
+    enabled: (typeof config.enabled === 'object') ? config.enabled.get() : fallback.enabled,
+    petId: (typeof config.petId === 'object') ? config.petId.get() : fallback.petId,
+    petSize: (typeof config.petSize === 'object') ? config.petSize.get() : fallback.petSize,
+  })
+  let settingsProvider: SettingsForms | undefined
 
   let packs: PetPack[] = []
   let helper: HelperProcess | undefined
@@ -229,16 +242,10 @@ export function apply(ctx: Context, config: Config): void {
 
   tracker.start(() => pushDisplay())
 
+  ctx.on('loader/volatile-update', () => { void applySettings() })
   ctx.inject(['settings'], settingsCtx => {
     settingsProvider = settingsCtx.settings
-    settingsCtx.settings.installSection(ctx, 'desktop-pet', PetSettings, entry, {
-      setSource: current => {
-        source = current
-      },
-      onChange: () => {
-        void applySettings()
-      },
-    })
+    settingsCtx.effect(() => () => { settingsProvider = undefined })
   })
 
   // Expose the scanned packs and their spritesheets to the browser card, which

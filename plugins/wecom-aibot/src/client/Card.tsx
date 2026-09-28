@@ -223,106 +223,103 @@ export function WeComCard(props: WeComCardProps) {
     />
   )
   return (
-    <section style={styles.card}>
-      <details>
-        <summary style={styles.summary} aria-label={t('title')}>
-          <span style={styles.heading}>
-            <span style={styles.headText}>
-              <span style={styles.title}>{t('title')}</span>
-              <span style={styles.description}>{t('description')}</span>
-            </span>
-            {state.dirty ? <span style={styles.badge}>{t('unsaved')}</span> : null}
-          </span>
-        </summary>
-        <div style={styles.body}>
-          {!state.writable ? <p style={styles.hint}>{t('readOnly')}</p> : null}
-          <SecretField id="wecom-bot-id" label={t('botId')} hint={t('botIdHint')} state={state.botId} configured={state.botIdConfigured} configuredLabel={t('configured')} unconfiguredLabel={t('unconfigured')} disabled={!state.botIdWritable} onEdit={text => { props.edit('botId', text) }} />
-          <SecretField id="wecom-secret" label={t('secret')} hint={t('secretHint')} state={state.secret} configured={state.secretConfigured} configuredLabel={t('configured')} unconfiguredLabel={t('unconfigured')} disabled={!state.secretWritable} onEdit={text => { props.edit('secret', text) }} />
-          {state.credentialFailure === undefined ? null : (
-            <p style={styles.error}>
-              {t(state.credentialFailure.message === undefined ? 'credentialUnconfirmed' : 'credentialRejected')}
-              {` (${state.credentialFailure.ref})`}
-              {state.credentialFailure.message === undefined ? '' : `: ${state.credentialFailure.message}`}
-            </p>
-          )}
-          {valueField('allowedUsers', 'wecom-users', 'allowedUsers', 'allowedUsersHint')}
-          {valueField('adminUsers', 'wecom-admin-users', 'adminUsers', 'adminUsersHint')}
-          <p style={styles.hint}>{t('useridHint')}</p>
-          <WorkspaceField
-            state={state.workspaceId}
-            options={state.workspaceOptions}
-            loading={state.workspacesLoading}
-            failed={state.workspacesFailed}
-            disabled={disabled}
-            label={t('workspace')}
-            hint={t('workspaceHint')}
-            defaultLabel={t('workspaceDefault')}
-            loadingLabel={t('workspaceLoading')}
-            failedLabel={t('workspaceLoadFailed')}
-            missingLabel={t('workspaceMissing')}
-            overriddenLabel={t('overridden')}
-            resetLabel={t('reset')}
-            onEdit={value => { props.edit('workspaceId', value) }}
-            onReset={() => { props.resetField('workspaceId') }}
-          />
-          <p style={styles.hint}>{t('commandsHint')}</p>
-          <details style={styles.advanced}>
-            <summary style={styles.advancedSummary}>{t('advanced')}</summary>
-            <div style={styles.field}>
-              <div style={styles.fieldHead}>
-                <label htmlFor="wecom-prevent-idle-sleep" style={styles.label}>{t('preventIdleSleep')}</label>
-                {state.preventIdleSleep.overridden ? <span style={styles.badge}>{t('overridden')}</span> : null}
-              </div>
-              <label htmlFor="wecom-prevent-idle-sleep" style={styles.toggle}>
-                <input
-                  id="wecom-prevent-idle-sleep"
-                  type="checkbox"
-                  checked={state.preventIdleSleep.text === 'true'}
-                  disabled={disabled}
-                  onChange={event => { props.edit('preventIdleSleep', event.target.checked ? 'true' : 'false') }}
-                />
-                <span>{state.preventIdleSleep.text === 'true' ? t('on') : t('off')}</span>
-              </label>
-              <p style={styles.hint}>{t('preventIdleSleepHint')}</p>
-            </div>
-            <PresetField
-              state={state.agentPreset}
-              options={state.presetOptions}
-              loading={state.presetsLoading}
-              failed={state.presetsFailed}
-              disabled={disabled}
-              label={t('agentPreset')}
-              hint={t('agentPresetHint')}
-              inheritLabel={state.presetDefaultId === undefined
-                ? t('presetInherit')
-                : `${t('presetInherit')}（${state.presetDefaultId}）`}
-              loadingLabel={t('presetLoading')}
-              failedLabel={t('presetLoadFailed')}
-              missingLabel={t('presetMissing')}
-              unavailableLabel={t('presetUnavailable')}
-              overriddenLabel={t('overridden')}
-              resetLabel={t('reset')}
-              onEdit={value => { props.edit('agentPreset', value) }}
-              onReset={() => { props.resetField('agentPreset') }}
-            />
-            {valueField('thinkingText', 'wecom-thinking-text', 'thinkingText', 'thinkingTextHint')}
-            {valueField('turnTimeoutMs', 'wecom-timeout', 'timeout', 'timeoutHint', true)}
-          </details>
-          <div style={styles.footer}>
-            {state.failed ? (
-              <p style={{ ...styles.error, flex: 1 }}>
-                {t('failed')}
-                {state.rejected.length === 0 ? '' : ` ${t('rejectedFields')} ${state.rejected.map(field => {
-                  const label = FIELD_LABELS[field]
-                  return label === undefined ? field : t(label)
-                }).join('、')}`}
-              </p>
-            ) : null}
-            <button type="button" style={styles.button} disabled={!state.dirty || state.saving} onClick={props.discard}>{t('discard')}</button>
-            <button type="button" style={styles.save} disabled={!state.dirty || state.invalid || state.saving} onClick={props.save}>{t(state.saving ? 'saving' : 'save')}</button>
+    <div style={styles.form} aria-label={t('title')}>
+      {!state.writable ? <p style={styles.hint}>{t('readOnly')}</p> : null}
+      <section style={styles.section} aria-labelledby="wecom-section-connection">
+        <h3 id="wecom-section-connection" style={styles.sectionHeading}>{t('sectionConnection')}</h3>
+        <SecretField id="wecom-bot-id" label={t('botId')} hint={t('botIdHint')} state={state.botId} configured={state.botIdConfigured} configuredLabel={t('configured')} unconfiguredLabel={t('unconfigured')} disabled={!state.botIdWritable} onEdit={text => { props.edit('botId', text) }} />
+        <SecretField id="wecom-secret" label={t('secret')} hint={t('secretHint')} state={state.secret} configured={state.secretConfigured} configuredLabel={t('configured')} unconfiguredLabel={t('unconfigured')} disabled={!state.secretWritable} onEdit={text => { props.edit('secret', text) }} />
+        {state.credentialFailure === undefined ? null : (
+          <p style={styles.error}>
+            {t(state.credentialFailure.message === undefined ? 'credentialUnconfirmed' : 'credentialRejected')}
+            {` (${state.credentialFailure.ref})`}
+            {state.credentialFailure.message === undefined ? '' : `: ${state.credentialFailure.message}`}
+          </p>
+        )}
+      </section>
+      <section style={styles.section} aria-labelledby="wecom-section-access">
+        <h3 id="wecom-section-access" style={styles.sectionHeading}>{t('sectionAccess')}</h3>
+        {valueField('allowedUsers', 'wecom-users', 'allowedUsers', 'allowedUsersHint')}
+        {valueField('adminUsers', 'wecom-admin-users', 'adminUsers', 'adminUsersHint')}
+        <p style={styles.hint}>{t('useridHint')}</p>
+      </section>
+      <section style={styles.section} aria-labelledby="wecom-section-conversation">
+        <h3 id="wecom-section-conversation" style={styles.sectionHeading}>{t('sectionConversation')}</h3>
+        <WorkspaceField
+          state={state.workspaceId}
+          options={state.workspaceOptions}
+          loading={state.workspacesLoading}
+          failed={state.workspacesFailed}
+          disabled={disabled}
+          label={t('workspace')}
+          hint={t('workspaceHint')}
+          defaultLabel={t('workspaceDefault')}
+          loadingLabel={t('workspaceLoading')}
+          failedLabel={t('workspaceLoadFailed')}
+          missingLabel={t('workspaceMissing')}
+          overriddenLabel={t('overridden')}
+          resetLabel={t('reset')}
+          onEdit={value => { props.edit('workspaceId', value) }}
+          onReset={() => { props.resetField('workspaceId') }}
+        />
+        <p style={styles.hint}>{t('commandsHint')}</p>
+      </section>
+      <section style={styles.section} aria-labelledby="wecom-section-advanced">
+        <h3 id="wecom-section-advanced" style={styles.sectionHeading}>{t('advanced')}</h3>
+        <div style={styles.field}>
+          <div style={styles.fieldHead}>
+            <label htmlFor="wecom-prevent-idle-sleep" style={styles.label}>{t('preventIdleSleep')}</label>
+            {state.preventIdleSleep.overridden ? <span style={styles.badge}>{t('overridden')}</span> : null}
           </div>
+          <label htmlFor="wecom-prevent-idle-sleep" style={styles.toggle}>
+            <input
+              id="wecom-prevent-idle-sleep"
+              type="checkbox"
+              checked={state.preventIdleSleep.text === 'true'}
+              disabled={disabled}
+              onChange={event => { props.edit('preventIdleSleep', event.target.checked ? 'true' : 'false') }}
+            />
+            <span>{state.preventIdleSleep.text === 'true' ? t('on') : t('off')}</span>
+          </label>
+          <p style={styles.hint}>{t('preventIdleSleepHint')}</p>
         </div>
-      </details>
-    </section>
+        <PresetField
+          state={state.agentPreset}
+          options={state.presetOptions}
+          loading={state.presetsLoading}
+          failed={state.presetsFailed}
+          disabled={disabled}
+          label={t('agentPreset')}
+          hint={t('agentPresetHint')}
+          inheritLabel={state.presetDefaultId === undefined
+            ? t('presetInherit')
+            : `${t('presetInherit')}（${state.presetDefaultId}）`}
+          loadingLabel={t('presetLoading')}
+          failedLabel={t('presetLoadFailed')}
+          missingLabel={t('presetMissing')}
+          unavailableLabel={t('presetUnavailable')}
+          overriddenLabel={t('overridden')}
+          resetLabel={t('reset')}
+          onEdit={value => { props.edit('agentPreset', value) }}
+          onReset={() => { props.resetField('agentPreset') }}
+        />
+        {valueField('thinkingText', 'wecom-thinking-text', 'thinkingText', 'thinkingTextHint')}
+        {valueField('turnTimeoutMs', 'wecom-timeout', 'timeout', 'timeoutHint', true)}
+      </section>
+      <div style={styles.footer}>
+        <button type="button" style={{ ...styles.save, ...(!state.dirty || state.invalid || state.saving ? styles.disabled : {}) }} disabled={!state.dirty || state.invalid || state.saving} onClick={props.save}>{t(state.saving ? 'saving' : 'save')}</button>
+        <button type="button" style={{ ...styles.button, ...(!state.dirty || state.saving ? styles.disabled : {}) }} disabled={!state.dirty || state.saving} onClick={props.discard}>{t('discard')}</button>
+        {state.dirty ? <span style={styles.badge}>{t('unsaved')}</span> : null}
+        {state.failed ? (
+          <p style={{ ...styles.error, flexBasis: '100%' }}>
+            {t('failed')}
+            {state.rejected.length === 0 ? '' : ` ${t('rejectedFields')} ${state.rejected.map(field => {
+              const label = FIELD_LABELS[field]
+              return label === undefined ? field : t(label)
+            }).join('、')}`}
+          </p>
+        ) : null}
+      </div>
+    </div>
   )
 }

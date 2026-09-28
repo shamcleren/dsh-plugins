@@ -1,6 +1,6 @@
 /** Staged settings and credential writes for the WeCom browser card. */
 
-import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 type SnapshotStore<T> = { getSnapshot(): T; subscribe(listener: () => void): () => void; set(value: T): void; update(mutator: (value: T) => void): void }
 
 export interface FieldState {
@@ -108,7 +108,7 @@ export class CardForm<T> {
   private rejected: readonly string[] = []
 
   constructor(
-    private readonly scope: SettingsScope<T>,
+    private readonly scope: ConfigForm<T>,
     fields: FieldSpec[],
     secrets: SecretSpec[],
   ) {

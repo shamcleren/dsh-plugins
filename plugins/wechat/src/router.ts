@@ -24,6 +24,12 @@ import type { WeChatRuntimeConfig, WeChatSettingsPatch } from './config.js'
 const HISTORY_PAGE_MESSAGES = 100
 const CONTINUATION_REPLY = '已加入当前任务。'
 const COMMAND_PERMISSION_REPLY = '只有机器人管理员可以执行该命令。'
+
+/** Session create refusals that mean the bound Session cannot accept this channel's workspace or preset. */
+function replacesExistingSession(code: string): boolean {
+  return code === 'session-conflict' || code === 'session/conflict'
+    || code === 'agent-preset-conflict' || code === 'agent-preset/conflict'
+}
 /**
  * Selecting a model is deployment-wide upstream: `sessions.selectModel` installs
  * the Session choice and then saves it as the default for every future Agent,
@@ -481,8 +487,7 @@ export class WeChatConversationRouter {
       await this.createSession(requestedSessionId, workspaceId)
       return requestedSessionId
     } catch (error) {
-      if (!(error instanceof HostApiError)
-        || (error.code !== 'session-conflict' && error.code !== 'agent-preset-conflict')) throw error
+      if (!(error instanceof HostApiError) || !replacesExistingSession(error.code)) throw error
       const replacement = `session-wechat-${randomUUID().replaceAll('-', '')}`
       await this.createSession(replacement, workspaceId)
       await this.runtime.bindings.set(key, replacement)

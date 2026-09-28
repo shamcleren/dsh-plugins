@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { type CatalogFilter, pluginRows, visibleRows } from './model.ts'
 import { requestNativeOpen, requestNativeRestart } from './native.ts'
 import type { LocaleKey } from './locales.ts'
-import type { CatalogView, MarketplaceRemote, MarketplaceState } from './types.ts'
+import type { CatalogView, MarketplaceRemote, MarketplaceState, MutationResult } from './types.ts'
 import { connectSource } from './connect.ts'
 import { DEFAULT_REPOSITORY_URL, repositoryHost } from '../source.ts'
 import css from './MarketplacePanel.module.css'
@@ -57,13 +57,14 @@ export function MarketplacePanel({ remote, t }: Props): ReactNode {
   const installedRows = useMemo(() => rows.filter(row => row.installed !== undefined), [rows])
   const unknownInstalled = useMemo(() => (state?.installed ?? []).filter(entry => !rows.some(row => row.installed?.packageName === entry.packageName)), [rows, state])
 
-  const mutate = async (key: string, operation: () => Promise<unknown>): Promise<void> => {
+  const mutate = async (key: string, operation: () => Promise<MutationResult>): Promise<void> => {
     setBusy(key)
     setError(undefined)
     try {
-      await operation()
-      setRestartPending(true)
-      setNotice(t('restartPending'))
+      const result = await operation()
+      const needsRestart = restartPending || result.restartRequired
+      setRestartPending(needsRestart)
+      setNotice(t(needsRestart ? 'restartPending' : 'changesApplied'))
       await load(false)
     } catch (failure) {
       setError(errorMessage(failure))
@@ -88,17 +89,19 @@ export function MarketplacePanel({ remote, t }: Props): ReactNode {
     setBusy('update-all')
     setError(undefined)
     let completed = 0
+    let needsRestart = restartPending
     try {
       for (const row of updates) {
-        await remote.add(row.plugin.packageName)
+        const result = await remote.add(row.plugin.packageName)
+        needsRestart ||= result.restartRequired
         completed += 1
       }
     } catch (failure) {
       setError(`${t('partialUpdate')} ${errorMessage(failure)}`)
     } finally {
       if (completed > 0) {
-        setRestartPending(true)
-        setNotice(t('restartPending'))
+        setRestartPending(needsRestart)
+        setNotice(t(needsRestart ? 'restartPending' : 'changesApplied'))
         await load(false).catch((failure: unknown) => { setError(errorMessage(failure)) })
       }
       setBusy(undefined)

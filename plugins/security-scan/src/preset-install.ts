@@ -2,7 +2,7 @@ import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
-import type { PresetRoot } from '@deepseek-ai/dsh-agent-presets'
+interface PresetRoot { path: string; trust: 'user' | 'builtin' }
 
 export const SECURITY_PRESET = 'dsh-security-audit'
 const source = fileURLToPath(new URL('../agent-presets/dsh-security-audit/', import.meta.url))

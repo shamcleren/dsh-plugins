@@ -3,12 +3,15 @@ import { z } from 'zod'
 import { AgentPolicySchema, AgentAuditSchema } from './agent-contract.js'
 export const SECURITY_CHANNEL = '/security-scan'
 const shortText = z.string().trim().max(2000)
+export const RepairModeSchema = z.enum(['pr', 'local'])
+export const RepairWorkspaceSchema = z.object({ repository: shortText, repositoryUrl: shortText, base: shortText, commit: z.string().regex(/^[a-f0-9]{40,64}$/), branch: shortText, directory: shortText, target: shortText, sourceIdentity: shortText, prUrl: z.string().url().optional() }).strict()
+export type RepairWorkspace = z.infer<typeof RepairWorkspaceSchema>
 export const TaskConfigSchema = z.object({
   name: z.string().trim().min(1).max(100), kind: z.enum(['local', 'remote']), target: shortText.min(1),
   ref: shortText.default(''), scope: z.enum(['full', 'diff', 'staged']),
   baseline: z.enum(['none', 'git', 'report']), base: shortText.default(''), baselineId: z.union([z.literal(''), z.string().uuid()]).default(''),
   engine: z.enum(['auto', 'inventory']), dependencies: z.boolean().default(false), secrets: z.boolean().default(false),
-  syncSession: z.boolean().default(true),
+  syncSession: z.boolean().default(true), repairMode: RepairModeSchema.default('pr'),
   view: z.enum(['all', 'new']).default('all'), autoScan: z.boolean().default(false),
   agent: AgentPolicySchema.default(() => AgentPolicySchema.parse({})),
 }).strict().superRefine((value, ctx) => {
@@ -28,6 +31,9 @@ export const RunSchema = z.object({
   phase: z.enum(['queued', 'preparing', 'scanning', 'baseline', 'report', 'agent', 'finished']),
   trigger: z.enum(['manual', 'edit', 'conversation']), createdAt: z.string().datetime(), finishedAt: z.string().datetime().optional(),
   reportId: z.string().uuid().optional(), rulesReportId: z.string().uuid().optional(), reportRoot: shortText.optional(), error: shortText.optional(),
+  previousReportId: z.string().uuid().optional(), previousReportRoot: shortText.optional(),
+  repairSource: RepairWorkspaceSchema.optional(),
+  repair: z.object({ mode: RepairModeSchema.default('local'), workspace: RepairWorkspaceSchema.optional(), admitted: z.boolean().optional(), requestId: z.string().uuid(), sessionId: z.string().max(200), findingIds: z.array(z.string().max(200)).min(1).max(20) }).strict().optional(),
   originSessionId: z.string().max(200).optional(),
   sessionId: z.string().max(200).optional(), sessionWarning: z.boolean().optional(),
   diagnostics: z.array(shortText).max(12).optional(),
@@ -60,7 +66,18 @@ export const UiStateSchema = z.object({ tasks: z.array(TaskSchema), runs: z.arra
 export type UiState = z.infer<typeof UiStateSchema>
 export const HookRequestSchema = z.object({ taskId: z.string().uuid(), revision: z.number().int().positive(), event: z.enum(['pre-commit', 'pre-push']), action: z.enum(['install', 'remove']), enforce: z.boolean(), base: shortText.default(''), confirm: z.literal(true) }).strict()
 export type HookRequest = z.infer<typeof HookRequestSchema>
+export const FindingItemSchema = z.object({ category: z.enum(['sourceRisk', 'dependencyRisk', 'secretRisk']).default('sourceRisk'), id: z.string(), title: z.string(), file: z.string(), line: z.number(), severity: z.enum(['critical', 'high', 'medium', 'low', 'info']), status: z.enum(['confirmed', 'needs-review', 'dismissed']) })
+export const ReportActionsSchema = z.object({
+  findings: z.array(FindingItemSchema), run: RunSchema.optional(), repairable: z.boolean(),
+  repairMode: RepairModeSchema.default('pr'), prPreview: z.object({ repositoryUrl: shortText, base: shortText, commit: shortText, revision: z.string().regex(/^[a-f0-9]{64}$/) }).optional(), prError: shortText.optional(),
+  comparison: z.object({ previousId: z.string(), comparable: z.boolean(), items: z.array(FindingItemSchema.extend({ change: z.enum(['remaining', 'notObserved', 'added', 'unverified']) })) }).optional(),
+})
+export type ReportActions = z.infer<typeof ReportActionsSchema>
+export const RepairRequestSchema = z.object({ id: z.string().uuid(), findingIds: z.array(z.string().min(1).max(200)).min(1).max(20), mode: RepairModeSchema, expectedRevision: z.string().regex(/^[a-f0-9]{40,64}$/).optional() }).strict()
 export type UiRemote = {
+  reportActions(id: string): Promise<ReportActions>
+  repair(id: string, findingIds: string[], mode: 'pr' | 'local', expectedRevision?: string): Promise<{ sessionId: string }>
+  rescan(id: string): Promise<Run>
   models(): Promise<ModelCatalog>
   state(): Promise<UiState>
   setup(): Promise<void>
@@ -75,4 +92,4 @@ export type UiRemote = {
   source(id: string, file: string, line: number): Promise<{ content: string }>
   report(id: string, format: 'html' | 'json'): Promise<string>
 }
-export const newTask = (): TaskConfig => ({ name: '', kind: 'local', target: '', ref: '', scope: 'full', baseline: 'none', base: '', baselineId: '', engine: 'auto', dependencies: true, secrets: true, view: 'all', autoScan: false, syncSession: true, agent: AgentPolicySchema.parse({ enabled: true }) })
+export const newTask = (): TaskConfig => ({ name: '', kind: 'local', target: '', ref: '', scope: 'full', baseline: 'none', base: '', baselineId: '', engine: 'auto', dependencies: true, secrets: true, view: 'all', autoScan: false, syncSession: true, repairMode: 'pr', agent: AgentPolicySchema.parse({ enabled: true }) })

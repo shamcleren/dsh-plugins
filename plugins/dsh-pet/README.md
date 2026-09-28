@@ -32,7 +32,7 @@
 ## 系统要求
 
 - macOS 12 或更高版本。
-- DeepSeek Harness `0.1.6-alpha.2`。DSH 仍处于预发布阶段，升级 DSH 前应重新执行本仓库验证。
+- DeepSeek Harness `0.1.7-rc.2`。DSH 仍处于预发布阶段，升级 DSH 前应重新执行本仓库验证。
 - 从源码构建需要 Node.js 22+、pnpm 11 和 Xcode Command Line Tools。
 - 发布包内的 Helper 是 `arm64 + x86_64` 通用二进制。
 

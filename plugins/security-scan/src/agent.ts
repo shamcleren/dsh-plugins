@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { createUserMessage, type LlmCallConfig } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
 import { reviewInSession } from './session-review.js'
+import { firstTurnTrigger } from './session.js'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import { SessionId, type TurnEndReason } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -86,9 +87,11 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
   const controller = new AbortController(), cancel = () => { controller.abort(options.signal.reason); handle?.agent.cancel({ kind: 'hook', reason: 'security-scan-cancelled' }) }
   options.signal.addEventListener('abort', cancel, { once: true })
   if (options.signal.aborted) cancel()
-  let ready = false
+  let ready = false, auditTurn: number | undefined, turnStarted!: () => void
+  const started = new Promise<void>(resolve => { turnStarted = resolve })
+  const trigger = firstTurnTrigger(zh.entry)
   const candidateView = (item: typeof eligible[number]) => ({ id: item.id, file: item.file, line: item.line, engine: item.engine, cwe: item.cwe, title: redactAgentText(item.title), severity: item.severity, status: item.status, ...(item.engine === 'gitleaks' ? { evidencePolicy: '密钥值会被隐藏。脱敏占位符和测试目录不能作为误报依据；无法核实时保留 needs-review。' } : {}) })
-  const prompt = () => createUserMessage({ source: { kind: 'plugin', plugin: 'security-scan' }, content: [{ type: 'text', text: JSON.stringify({
+  const prompt = () => createUserMessage({ source: { kind: 'security-scan' }, content: [{ type: 'text', text: JSON.stringify({
     instruction: 'Review source candidates. Initial page contains 30 candidates; use list_candidates for subsequent pages. Other engine findings remain in the report outside this source review.',
     finalReportLink: options.reportLink, finalResponseInstruction: options.reportLink ? 'End with a concise result summary and a Markdown link to finalReportLink. The plugin has reserved this destination and publishes it immediately after your native turn ends. Do not claim the report already exists during tool execution.' : 'End with a concise summary. A plugin notice will provide the saved report location.',
     reportId: report.id, coverage: report.coverage, engines: report.engines.map(engine => ({ name: engine.name, status: engine.status, detail: redactAgentText(engine.detail) })),
@@ -200,7 +203,8 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
       own(agentCtx.tools.restrict({ allow: BASIC_AUDIT_TOOLS.filter(name => agentCtx.tools.get(name, agent)) }))
       own(agentCtx.tools.guard(exec => Object.hasOwn(schemas, exec.name) || BASIC_AUDIT_TOOLS.some(name => name === exec.name) ? undefined : 'Use audit tools or the declared native basic tools'))
       own(agentCtx.systemPrompt.section({ name: 'security-review', order: 0, text: system }))
-      own(agentCtx.on('agent/pre-step', async (_payload, next) => {
+      own(agentCtx.on('agent/pre-step', async (payload, next) => {
+        if (trigger.admits(payload.messages)) return { kind: 'enter', messages: [] }
         // Do not admit user prompts before the immutable scan input is ready.
         if (!ready) return { kind: 'reject' }
         return next()
@@ -217,6 +221,7 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
         }
       }))
       own(agentCtx.on('session/event', (_session, entry) => {
+        if (entry.type === 'turn/start' && ready && auditTurn === undefined) { auditTurn = entry.data.turn; turnStarted() }
         if (entry.type === 'step/start') metadata.steps++
         if (entry.type === 'assistant/message') {
           const usage = entry.data.usage
@@ -228,7 +233,7 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
             metadata.cacheWriteTokens += usage.cacheWriteTokens ?? 0
           }
         }
-        if (entry.type === 'turn/end' && !options.existingAgent) ended(entry.data.reason)
+        if (entry.type === 'turn/end' && !options.existingAgent && entry.data.turn === auditTurn) ended(entry.data.reason)
       }))
       for (const name of Object.keys(schemas) as Array<keyof typeof schemas>) {
         own(agentCtx.tools.register({ name, description: descriptions[name], parameters: z.toJSONSchema(schemas[name], { io: 'input' }),
@@ -251,7 +256,15 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
     })
     const agent = options.existingAgent ?? handle!.agent
     controller.signal.throwIfAborted()
-    await options.onSession?.(agent.session.id)
+    let exposed = false
+    if (options.existingAgent) { await options.onSession?.(agent.session.id); exposed = true }
+    else {
+      // Open the session's first turn before rules run so users can follow progress at once.
+      agent.followup(trigger.message)
+      await agent.whenIdle()
+      controller.signal.throwIfAborted()
+      if (agent.session.snapshotEvents().some(event => event.type === 'turn/start')) { await options.onSession?.(agent.session.id); exposed = true }
+    }
     if (options.prepare) reportFile = await options.prepare()
     controller.signal.throwIfAborted()
     report = await readReport(reportFile)
@@ -261,7 +274,12 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
     metadata.excludedCandidates = report.findings.length - eligible.length
     ready = true
     if (options.existingAgent) await reviewInSession(agent, prompt(), () => setup(agent.ctx, agent), release, controller.signal, ended)
-    else { agent.followup(prompt()); await agent.whenIdle() }
+    else {
+      agent.followup(prompt())
+      const idle = agent.whenIdle()
+      if (!exposed && await Promise.race([started.then(() => true), idle.then(() => false)])) await options.onSession?.(agent.session.id)
+      await idle
+    }
     await progress
     if (progressError) throw progressError
     if (!await native.sessions.flush(agent.session)) throw new Error('session-flush-failed')
@@ -277,7 +295,7 @@ export async function runAgentReview(options: AgentReviewOptions): Promise<Agent
     const completed = result(), saved = report ? await options.onComplete?.(completed) : undefined
     const session = options.existingAgent?.session ?? handle?.agent.session
     if (session && options.native.sessions.get(session.id) === session) {
-      session.append('user/message', createUserMessage({ source: { kind: 'plugin', plugin: 'security-scan', form: 'notice', summary: zh.scanReportNotice }, content: [{ type: 'text', text: [completed.audit.nativeEnd === 'completed' ? '安全扫描执行已结束。' : '安全扫描执行已停止，已保留取得的结果。', '源码候选已复核 ' + completed.audit.reviewedFindings + '/' + (completed.audit.eligibleCandidates ?? 0) + '；' + (completed.audit.status === 'completed' ? '详见报告中的发现与引擎覆盖范围。' : '仍有未覆盖部分，详见报告。'), ...(saved ? ['[查看 HTML 扫描报告](' + pathToFileURL(saved.html).href + ')', '报告 ID：' + saved.reportId] : ['尚未取得可发布的扫描结果。'])].join('\n\n') }] }), { surfaceOp: 'append' })
+      session.append('user/message', createUserMessage({ source: { kind: 'security-scan', form: 'notice', summary: zh.scanReportNotice }, content: [{ type: 'text', text: [completed.audit.nativeEnd === 'completed' ? '安全扫描执行已结束。' : '安全扫描执行已停止，已保留取得的结果。', '源码候选已复核 ' + completed.audit.reviewedFindings + '/' + (completed.audit.eligibleCandidates ?? 0) + '；' + (completed.audit.status === 'completed' ? '详见报告中的发现与引擎覆盖范围。' : '仍有未覆盖部分，详见报告。'), ...(saved ? ['[查看 HTML 扫描报告](' + pathToFileURL(saved.html).href + ')', '报告 ID：' + saved.reportId] : ['尚未取得可发布的扫描结果。'])].join('\n\n') }] }), { surfaceOp: 'append' })
       if (!await options.native.sessions.flush(session)) throw new Error('session-flush-failed')
     }
     return completed

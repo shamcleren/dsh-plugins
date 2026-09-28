@@ -1,25 +1,27 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { Config } from '../src/config.js'
+import { isValidElement, type ReactNode } from 'react'
+import { WeComCard } from '../src/client/Card.js'
 import { ChannelBadge } from '../src/client/index.js'
 import { WeComCardController } from '../src/client/controller.js'
 import { zh } from '../src/client/locales.js'
 
-interface StubSettingsScope<T> {
-  scope: SettingsScope<T>
+interface StubConfigForm<T> {
+  scope: ConfigForm<T>
   set: ReturnType<typeof vi.fn>
   unset: ReturnType<typeof vi.fn>
-  publish(patch: Partial<SettingsScopeSnapshot<T>>): void
+  publish(patch: Partial<ConfigFormSnapshot<T>>): void
 }
 
-function stubSettingsScope<T>(): StubSettingsScope<T> {
-  let snapshot: SettingsScopeSnapshot<T> = {
+function stubConfigForm<T>(): StubConfigForm<T> {
+  let snapshot: ConfigFormSnapshot<T> = {
     status: 'loading', value: undefined, base: undefined, user: undefined,
     revision: undefined, writable: false, mode: 'host',
   }
   const listeners = new Set<() => void>()
-  const set = vi.fn(async () => {})
-  const unset = vi.fn(async () => {})
+  const set = vi.fn(async () => true)
+  const unset = vi.fn(async () => true)
   return {
     set,
     unset,
@@ -28,7 +30,7 @@ function stubSettingsScope<T>(): StubSettingsScope<T> {
       for (const listener of listeners) listener()
     },
     scope: {
-      mutate: vi.fn(async () => {}),
+      mutate: vi.fn(async () => true),
       getSnapshot: () => snapshot,
       subscribe(listener) {
         listeners.add(listener)
@@ -40,7 +42,7 @@ function stubSettingsScope<T>(): StubSettingsScope<T> {
   }
 }
 
-function acceptWrites(host: StubSettingsScope<Config>): void {
+function acceptWrites(host: StubConfigForm<Config>): void {
   const value = (): Record<string, unknown> => ({ ...host.scope.getSnapshot().value as object })
   const user = (): Record<string, unknown> => ({ ...host.scope.getSnapshot().user as object })
   host.set.mockImplementation((field: string, next: unknown) => {
@@ -99,8 +101,21 @@ function credentialsApi(configured: boolean) {
 }
 
 describe('WeCom browser settings card', () => {
+  it('renders the form expanded on the plugin page without repeating the page title', async () => {
+    const host = stubConfigForm<Config>()
+    const credentials = credentialsApi(true)
+    const face = new WeComCardController(host.scope, credentials.api).inject()
+    host.publish({ status: 'ready', writable: true, value: {}, base: {}, user: {} })
+    await vi.waitFor(() => { expect(credentials.presets).toHaveBeenCalled() })
+    const snapshot = face.hooks.weComCard.getSnapshot()
+    const tags = intrinsicTags(WeComCard({ ...face, useWeComCard: (select: (value: typeof snapshot) => unknown) => select(snapshot), t: (key: string) => key } as never))
+    expect(tags).not.toContain('details')
+    expect(tags.filter(tag => tag === 'h3')).toHaveLength(4)
+    expect(tags.filter(tag => tag === 'input').length).toBeGreaterThanOrEqual(4)
+  })
+
   it('is available before the Bot credentials are configured', async () => {
-    const host = stubSettingsScope<Config>()
+    const host = stubConfigForm<Config>()
     const credentials = credentialsApi(false)
     const controller = new WeComCardController(host.scope, credentials.api)
     host.publish({
@@ -128,7 +143,7 @@ describe('WeCom browser settings card', () => {
   })
 
   it('keeps the preset picker closed when the roster cannot be read', async () => {
-    const host = stubSettingsScope<Config>()
+    const host = stubConfigForm<Config>()
     const credentials = credentialsApi(false)
     credentials.presets.mockImplementationOnce(() => Promise.resolve({
       rpcId: 'preset-list' as never,
@@ -144,7 +159,7 @@ describe('WeCom browser settings card', () => {
   })
 
   it('rejects edits to fields the card no longer exposes', () => {
-    const host = stubSettingsScope<Config>()
+    const host = stubConfigForm<Config>()
     const controller = new WeComCardController(host.scope, credentialsApi(false).api)
     host.publish({ status: 'ready', writable: true, value: {}, base: {}, user: {} })
 
@@ -153,7 +168,7 @@ describe('WeCom browser settings card', () => {
   })
 
   it('writes settings and credentials through their separate stores', async () => {
-    const host = stubSettingsScope<Config>()
+    const host = stubConfigForm<Config>()
     acceptWrites(host)
     const credentials = credentialsApi(false)
     const controller = new WeComCardController(host.scope, credentials.api)
@@ -187,7 +202,7 @@ describe('WeCom browser settings card', () => {
   })
 
   it('surfaces the deployment refusal that kept a credential unconfigured', async () => {
-    const host = stubSettingsScope<Config>()
+    const host = stubConfigForm<Config>()
     const credentials = credentialsApi(false)
     credentials.set.mockImplementation(() => Promise.resolve({
       rpcId: 'credential-write' as never,
@@ -210,7 +225,7 @@ describe('WeCom browser settings card', () => {
   })
 
   it('reports a credential the deployment accepted but still calls unconfigured', async () => {
-    const host = stubSettingsScope<Config>()
+    const host = stubConfigForm<Config>()
     const credentials = credentialsApi(false)
     const controller = new WeComCardController(host.scope, credentials.api)
     host.publish({ status: 'ready', writable: true, value: {}, base: {}, user: {} })
@@ -227,7 +242,7 @@ describe('WeCom browser settings card', () => {
   })
 
   it('names the settings fields a deployment did not accept', async () => {
-    const host = stubSettingsScope<Config>()
+    const host = stubConfigForm<Config>()
     const credentials = credentialsApi(true)
     const controller = new WeComCardController(host.scope, credentials.api)
     host.publish({ status: 'ready', writable: true, value: {}, base: {}, user: {} })
@@ -247,7 +262,7 @@ describe('WeCom browser settings card', () => {
   })
 
   it('clears a reported failure when the edits are discarded', async () => {
-    const host = stubSettingsScope<Config>()
+    const host = stubConfigForm<Config>()
     const credentials = credentialsApi(true)
     const controller = new WeComCardController(host.scope, credentials.api)
     host.publish({ status: 'ready', writable: true, value: {}, base: {}, user: {} })
@@ -262,7 +277,7 @@ describe('WeCom browser settings card', () => {
   })
 
   it('refreshes only credential references owned by the card', async () => {
-    const host = stubSettingsScope<Config>()
+    const host = stubConfigForm<Config>()
     const credentials = credentialsApi(false)
     const controller = new WeComCardController(host.scope, credentials.api)
     host.publish({ status: 'ready', writable: true, value: {}, user: {} })
@@ -285,3 +300,12 @@ describe('WeCom session badge', () => {
     expect(ChannelBadge({ sessionId: 'session-wechat-abc', t })).toBeNull()
   })
 })
+
+/** Expand function components (these cards use no React hooks) and list intrinsic tags. */
+function intrinsicTags(node: ReactNode): string[] {
+  if (Array.isArray(node)) return node.flatMap(intrinsicTags)
+  if (!isValidElement<{ children?: ReactNode }>(node)) return []
+  if (typeof node.type === 'function') return intrinsicTags((node.type as (props: unknown) => ReactNode)(node.props))
+  const own = typeof node.type === 'string' ? [node.type] : []
+  return [...own, ...intrinsicTags(node.props.children)]
+}

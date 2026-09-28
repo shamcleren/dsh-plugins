@@ -1,7 +1,7 @@
 /** WeCom settings scope and write-only credential projection for the browser card. */
 
 import type { CardApi as IApiClient, PresetOption } from './api.js'
-import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 type SnapshotStore<T> = { getSnapshot(): T; subscribe(listener: () => void): () => void; set(value: T): void; update(mutator: (value: T) => void): void }
 import type { Config } from '../config.js'
 import {
@@ -82,7 +82,7 @@ export class WeComCardController {
   private credentialFailure: CredentialFailure | undefined
 
   constructor(
-    private readonly scope: SettingsScope<Config>,
+    private readonly scope: ConfigForm<Config>,
     private readonly api: Pick<IApiClient, 'credentials' | 'workspace' | 'presets'>,
   ) {
     this.form = new CardForm(
@@ -237,7 +237,7 @@ export class WeComCardController {
   }
 }
 
-function refsOf(snapshot: SettingsScopeSnapshot<Config>): { botId: string; secret: string } {
+function refsOf(snapshot: ConfigFormSnapshot<Config>): { botId: string; secret: string } {
   return {
     botId: snapshot.value?.botIdEnv || DEFAULT_BOT_ID_REF,
     secret: snapshot.value?.secretEnv || DEFAULT_SECRET_REF,

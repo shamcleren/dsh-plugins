@@ -1,12 +1,13 @@
 import { fakeInstall } from './installer-fixture.mjs'
 import assert from 'node:assert/strict'
-import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { bootstrap } from '../bootstrap.mjs'
 import { readInstallationState, recoverInstallation } from '../update-installation.mjs'
+import { treeDigest } from '../installation-integrity.mjs'
 
 const repository = fileURLToPath(new URL('../../', import.meta.url))
 const json = async path => JSON.parse(await readFile(path, 'utf8'))
@@ -175,4 +176,116 @@ test('same-runtime updates install changed catalog plugins and then become a no-
   f.calls.length = 0
   assert.equal((await bootstrap(f.options)).reused, true)
   assert.equal(f.calls.length, 1)
+})
+
+for (const damage of ['runtime-file', 'runtime-directory', 'launcher-content', 'launcher-mode', 'launcher-directory', 'app-content']) {
+  test('repeat init repairs ' + damage + ' and the following run leaves files unchanged', async t => {
+    const f = await fixture(t)
+    const runtime = join(f.directory, 'runtime/node_modules/@deepseek-ai/dsh/lib/bin.js')
+    const launcher = join(f.directory, 'bin/dsh')
+    if (damage === 'runtime-file') await writeFile(runtime, 'damaged')
+    if (damage === 'runtime-directory') await rm(join(f.directory, 'runtime'), { recursive: true })
+    if (damage === 'launcher-content') await writeFile(launcher, 'damaged')
+    if (damage === 'launcher-mode') await chmod(launcher, 0o600)
+    if (damage === 'launcher-directory') await rm(join(f.directory, 'bin'), { recursive: true })
+    if (damage === 'app-content') await writeFile(join(f.directory, 'DeepSeek Harness.app/build'), 'damaged')
+    assert.equal((await bootstrap({ ...f.options, desktop: undefined })).updated, true)
+    assert.equal(f.calls.some(call => call.command === 'npm'), damage.startsWith('runtime'))
+    assert.equal(f.calls.some(call => call.args.includes('--output-dir')), damage === 'app-content')
+    assert.match(await readFile(launcher, 'utf8'), /^#!\/bin\/sh/)
+    assert.ok((await stat(launcher)).mode & 0o100)
+    const before = await readFile(join(f.directory, 'bootstrap-state.json'))
+    const launcherStat = await stat(launcher)
+    f.calls.length = 0
+    assert.equal((await bootstrap({ ...f.options, desktop: undefined })).reused, true)
+    assert.equal(f.calls.length, 1)
+    assert.deepEqual(await readFile(join(f.directory, 'bootstrap-state.json')), before)
+    assert.equal((await stat(launcher)).mtimeMs, launcherStat.mtimeMs)
+    assert.equal(await readFile(join(f.dshHome, 'settings.yaml'), 'utf8'), 'model: keep\n')
+  })
+}
+
+test('repair failures roll back and retry repairs the same damaged installation', async t => {
+  const f = await fixture(t)
+  const launcher = join(f.directory, 'bin/dsh')
+  await writeFile(launcher, 'damaged')
+  const before = await readFile(join(f.directory, 'bootstrap-state.json'))
+  await assert.rejects(bootstrap({ ...f.options, execute: async () => { throw new Error('verification failed') } }), /verification failed/)
+  assert.equal(await readFile(launcher, 'utf8'), 'damaged')
+  assert.deepEqual(await readFile(join(f.directory, 'bootstrap-state.json')), before)
+  assert.equal((await bootstrap(f.options)).updated, true)
+  assert.equal((await bootstrap(f.options)).reused, true)
+})
+
+test('missing declared catalog packages are reinstalled without touching user settings', async t => {
+  const f = await fixture(t)
+  const profile = join(f.dshHome, 'profiles/web')
+  const entry = (await json(join(f.repo, 'marketplace.json'))).plugins.find(item => item.id === 'trusted-marketplace')
+  const manifest = await json(join(profile, 'package.json'))
+  manifest.dependencies[entry.package] = entry.version
+  manifest.dsh = { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', entry.package] } }
+  await writeFile(join(profile, 'package.json'), JSON.stringify(manifest))
+  assert.equal((await bootstrap(f.options)).updated, true)
+  assert.equal((await json(join(profile, 'node_modules', entry.package, 'package.json'))).version, entry.version)
+  assert.equal((await bootstrap(f.options)).reused, true)
+})
+
+test('interrupted rollback cleanup can be repeated after staging has been removed', async t => {
+  const f = await fixture(t)
+  await writeFile(join(f.directory, '.update-transaction.json'), JSON.stringify({
+    owner: 'dsh-install-update-v1', stage: '.update-123abc', committed: false, recovered: true,
+    entries: [{ path: 'bootstrap-state.json', existed: true, hasNext: true }],
+  }))
+  await recoverInstallation(f.directory)
+  await recoverInstallation(f.directory)
+  assert.equal((await bootstrap(f.options)).reused, true)
+})
+
+test('private Node repair participates in rollback and publishes stable launcher paths', async t => {
+  const f = await fixture(t)
+  const source = join(f.scratch, 'verified-node'), node = join(f.directory, 'node')
+  await mkdir(join(source, 'bin'), { recursive: true })
+  await writeFile(join(source, 'bin/node'), '#!/bin/sh\nexit 0\n', { mode: 0o700 })
+  await cp(source, node, { recursive: true })
+  const marker = join(f.directory, 'bootstrap-state.json'), state = await json(marker)
+  state.integrity.node = await treeDigest(node)
+  await writeFile(marker, JSON.stringify(state))
+  await rm(join(node, 'bin/node'))
+  // Drive the transaction with a verified source directly, without network or user runtimes.
+  const { updateInstallation } = await import('../update-installation.mjs')
+  const { releaseInfo } = await import('../bootstrap.mjs')
+  const options = { root: f.directory, repo: f.repo, state, release: await releaseInfo(f.repo),
+    nodeSource: source, nodeExecutable: process.execPath, env: { ...process.env, DSH_HOME: f.dshHome },
+    desktop: true, log() {}, assertIdle: async () => {}, execute: f.execute }
+  await assert.rejects(updateInstallation({ ...options, execute: async (command, args, settings) => {
+    if (command === join(node, 'bin/node')) throw new Error('post-publish failure')
+    return f.execute(command, args, settings)
+  } }), /post-publish failure/)
+  await assert.rejects(readFile(join(node, 'bin/node')), { code: 'ENOENT' })
+  assert.equal(await updateInstallation(options), true)
+  assert.match(await readFile(join(f.directory, 'bin/dsh'), 'utf8'), /\/node\/bin\/node/)
+  assert.doesNotMatch(await readFile(join(f.directory, 'bin/dsh'), 'utf8'), /\.update-/)
+  assert.equal((await json(marker)).integrity.node, await treeDigest(source))
+  assert.equal((await bootstrap(f.options)).reused, true)
+})
+
+test('repair refuses launcher symlinks instead of overwriting external files', async t => {
+  const f = await fixture(t), outside = join(f.scratch, 'external-script')
+  await writeFile(outside, 'user-owned')
+  await rm(join(f.directory, 'bin/dsh'))
+  await symlink(outside, join(f.directory, 'bin/dsh'))
+  await assert.rejects(bootstrap(f.options), /Unsafe update target/)
+  assert.equal(await readFile(outside, 'utf8'), 'user-owned')
+})
+
+test('private Node download rejects mismatched bytes before extraction', async t => {
+  const f = await fixture(t), calls = []
+  const { preparePrivateNode } = await import('../private-node.mjs')
+  await assert.rejects(preparePrivateNode({ repo: f.repo, destination: join(f.scratch, 'node'), env: {},
+    execute: async (command, args) => {
+      calls.push(command)
+      if (command === 'curl') await writeFile(args.at(-1), 'corrupt archive')
+    },
+  }), /SHA-256 mismatch/)
+  assert.deepEqual(calls, ['curl'])
 })

@@ -2,7 +2,7 @@
 import { realpath } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { defaultDirectory, readInstallation, repositoryRoot } from './installation.mjs'
+import { defaultDirectory, repositoryRoot } from './installation.mjs'
 import { executePlugin, managePlugin, updateInstalledPlugins } from './plugins.mjs'
 import { run } from './process.mjs'
 import { controlService } from './service.mjs'
@@ -22,7 +22,7 @@ Commands:
   start [--web]                      open the macOS app, or Web with --web
   stop                               stop only this installation's App/Web
   restart [--web]                     restart the App Host, or Web with --web
-  status
+  status                             show installed versions and pending pinned updates (read-only)
   update [--rebuild]                  update pinned DSH, installed catalog plugins and app
   help
 
@@ -117,11 +117,9 @@ export async function runDhp(argv, hooks = {}) {
   if (command === 'update') {
     const flags = rest.slice(1)
     if (flags.some(flag => flag !== '--rebuild')) throw new Error('Usage: dhp update [--rebuild]')
-    const installation = await readInstallation(directory, repo)
     const execute = hooks.execute ?? run
     await execute(process.execPath, [
-      join(repo, 'scripts/bootstrap.mjs'), '--dir', installation.root,
-      ...(!installation.desktop ? ['--no-app'] : []),
+      join(repo, 'scripts/bootstrap.mjs'), '--dir', directory,
       ...(flags.includes('--rebuild') ? ['--rebuild-app'] : []),
     ], { cwd: repo, env: process.env })
     return 0

@@ -36,17 +36,8 @@ export function DesktopPetCard(props: DesktopPetCardProps) {
     if (event.key === 'Enter') commit()
   }
 
-  return <section style={styles.card}>
-    <details>
-      <summary style={styles.summary}>
-        <span style={styles.heading}>
-          <span style={styles.headText}>
-            <span style={styles.title}>{t('title')}</span>
-            <span style={styles.description}>{t('description')}</span>
-          </span>
-        </span>
-      </summary>
-      <div style={styles.body}>
+  return <div style={styles.form} aria-label={t('title')}>
+      <div style={styles.section}>
         {!state.writable ? <p style={styles.hint}>{t('readOnly')}</p> : null}
         <div style={styles.field}>
           <div style={styles.fieldHead}><label htmlFor="desktop-pet-enabled" style={styles.label}>{t('enabled')}</label></div>
@@ -84,6 +75,5 @@ export function DesktopPetCard(props: DesktopPetCardProps) {
           <p style={styles.hint}>{t('petSizeHint')}</p>
         </div>
       </div>
-    </details>
-  </section>
+  </div>
 }

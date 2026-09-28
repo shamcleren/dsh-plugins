@@ -6,13 +6,13 @@
 
 For a new installation, use the [repository bootstrap](../../README.md) with `make init MARKETPLACE=1`. For an existing installation, add the Marketplace tarball from this same repository; see the [plugin management guide](../../docs/plugin-management.md). The default bootstrap does not add this bundle. Other plugins can be installed through **Remote Market** or directly from local tarballs/built source directories without installing or authorizing this market. The canonical source is `plugins/marketplace`; no separate GitHub checkout is required.
 
-The tested runtime is the official DeepSeek Harness `0.1.6-alpha.2` npm distribution. Newer upstream releases require compatibility testing before updating this pin. Catalog compatibility uses the installed DSH version, not this plugin's version.
+The tested runtime is the official DeepSeek Harness `0.1.7-rc.2` npm distribution. Newer upstream releases require compatibility testing before updating this pin. Catalog compatibility uses the installed DSH version, not this plugin's version.
 
 ## Behavior
 
-The Host accepts one configured Gongfeng repository and ref, validates the catalog, verifies artifact byte length and SHA-256, rejects packages outside the catalog, disables package installation scripts, serializes profile mutations, and restores the profile manifest and lockfile when a mutation fails.
+The Host accepts one configured Gongfeng repository and ref, validates the catalog, verifies artifact byte length and SHA-256, rejects packages outside the catalog, serializes its operations, and uses the official current-profile plugin manager for installation, activation and removal. The Host retains package-script approval, compatibility checks, file locking and rollback ownership; the market never grants script or version exemptions.
 
-Profile mutations retain the pnpm store and node linker recorded by the original installation, so launching the desktop App outside the installer's shell does not require moving dependencies or changing global pnpm settings. Update counts include newer compatible releases, never an older remote release than the locally installed version. The local catalog cache is scoped to the trusted source, running DSH version, and installed profile package versions. A runtime or plugin update automatically refetches the catalog on its next use; unchanged installations reuse the cache until Refresh catalog is selected.
+The active `profileContext` supplies the actual directory and installation anchor. Web and official Desktop use their own Host package manager, including the Desktop-bundled Electron/pnpm invocation. The legacy `profile` setting is accepted for importing old configuration but never selects another profile. Missing Host services leave the plugin unactivated; no directory or executable is guessed. Update counts include newer compatible releases, never an older remote release than the locally installed version. The local catalog cache is scoped to the trusted source, running DSH version, and installed profile package versions. A runtime or plugin update automatically refetches the catalog on its next use; unchanged installations reuse the cache until Refresh catalog is selected.
 
 The browser UI adds a separate **Git repository marketplace / Git 仓库市场** tab (`trusted-marketplace`) without replacing the upstream plugin UI or claiming the `marketplace` tab ID. The pinned official rc.8 runtime provides plugin configuration and inventory tabs by default; a marketplace such as `dshmarket` needs separate installation. Source configuration and authorization are optional: without them, DSH and other installed marketplaces remain usable, the remote tab explains this choice, and its source form opens only when requested. No remote catalog is fetched until credentials are configured.
 
@@ -40,10 +40,12 @@ The plugin adds no model-facing prompt sections or tools. It changes the Host co
 
 - This repository owns the trusted-source implementation and its security updates; it is not an upstream built-in Marketplace package.
 - Only one trusted repository is active at a time. Public catalog aggregation belongs in a separate plugin such as `dshmarket`.
-- Web Host changes require a restart. The UI batches mutations and requests one restart but does not hot-load arbitrary package code.
+- The official manager reports whether a change is applied live or needs a restart. The UI only requests restart when required. The native restart button is available only with the existing custom-shell bridge; official Desktop users can quit and reopen the App when required.
 
 ## Verification
 
 `pnpm check` runs Host and browser type checks, tests for catalog validation, repository responses, OAuth state and refresh behavior, command bounds, cache integrity, view filters, and RPC validation, then builds both artifacts. Integration verification installs the tarball into an isolated official Web profile and checks that the settings tab reads its installed package list. Live Gongfeng authorization and private artifact installation require an authorized account.
 
 Invalid RPC requests return `bad-request` with structured validation issues, including an empty issue list for unknown operations; internal failures return bounded diagnostics without exposing credential values.
+
+The release smoke accepts `--desktop-app=/path/to/DeepSeek Harness.app` to run the signed official Host in an isolated profile. Its marketplace check verifies the active installed list and performs real package operations from a local verified artifact. No real repository credentials or user profiles are used.

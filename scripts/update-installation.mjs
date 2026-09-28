@@ -7,11 +7,13 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { quote, writeDhpLauncher } from './dhp-command.mjs'
 import { assertInstallationIdle } from './installation.mjs'
+import { launcherIntegrity, treeDigest } from './installation-integrity.mjs'
+import { preparePrivateNode } from './private-node.mjs'
 
 const capture = promisify(execFile)
 const marker = 'bootstrap-state.json'
 const journalName = '.update-transaction.json'
-const managed = /^(?:runtime|bin\/(?:dsh|dsh\.mjs|process\.mjs|dhp)|native-app\.json|bootstrap-state\.json|(?:apps\/)?[^/\\]+\.app)$/
+const managed = /^(?:node|runtime|bin\/(?:dsh|dsh\.mjs|process\.mjs|dhp)|native-app\.json|bootstrap-state\.json|(?:apps\/)?[^/\\]+\.app)$/
 
 export async function optionalStat(path) {
   try { return await lstat(path) } catch (error) { if (error.code !== 'ENOENT') throw error }
@@ -37,7 +39,7 @@ async function digestTree(repo, paths, extra) {
 }
 
 export async function installationDigests(repo, desktop, runtimeDigest, port = process.env.DSH_APP_PORT ?? '3080', signingEnv = process.env) {
-  const launcherDigest = await digestTree(repo, ['scripts/launch.mjs', 'scripts/process.mjs', 'scripts/dhp.mjs', 'scripts/dhp-command.mjs'], {})
+  const launcherDigest = await digestTree(repo, ['scripts/launch.mjs', 'scripts/process.mjs', 'scripts/dhp.mjs', 'scripts/dhp-command.mjs', 'scripts/dhp-recover.sh'], {})
   const appDigest = desktop ? await digestTree(repo, ['apps/macos/Sources', 'apps/macos/Control', 'apps/macos/Share', 'apps/macos/Resources', 'apps/macos/launcher',
     'apps/macos/build.mjs', 'apps/macos/share-build.mjs', 'apps/macos/build-options.mjs', 'apps/macos/build-output.mjs', 'apps/macos/package.json',
     'apps/macos/LICENSE', 'runtime/node-release.sha256'], { runtimeDigest, port, arch: process.arch, signing: signingEnv.CODESIGN_IDENTITY ?? '-', shareTeam: signingEnv.DSH_SHARE_TEAM_ID ?? null }) : null
@@ -71,11 +73,11 @@ async function readJournal(root) {
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Unsafe update journal')
   const journal = JSON.parse(await readFile(path, 'utf8'))
   if (journal.owner !== 'dsh-install-update-v1' || !/^\.update-[a-f0-9-]+$/.test(journal.stage) || !Array.isArray(journal.entries) ||
-    typeof journal.committed !== 'boolean' || !journal.entries.every(entry => typeof entry.path === 'string' && managed.test(entry.path) && typeof entry.existed === 'boolean' && typeof entry.hasNext === 'boolean') ||
+    typeof journal.committed !== 'boolean' || (journal.recovered !== undefined && typeof journal.recovered !== 'boolean') || !journal.entries.every(entry => typeof entry.path === 'string' && managed.test(entry.path) && typeof entry.existed === 'boolean' && typeof entry.hasNext === 'boolean') ||
     new Set(journal.entries.map(entry => entry.path)).size !== journal.entries.length) throw new Error('Invalid update journal')
   const stage = join(root, journal.stage)
   const stageStat = await optionalStat(stage)
-  if (!stageStat && journal.committed) return journal
+  if (!stageStat && (journal.committed || journal.recovered)) return journal
   if (!stageStat?.isDirectory() || stageStat.isSymbolicLink()) throw new Error('Unsafe update staging directory')
   for (const entry of journal.entries) {
     for (const path of [join(root, entry.path), join(stage, 'previous', entry.path), join(stage, 'next', entry.path)]) {
@@ -103,29 +105,40 @@ export async function recoverInstallation(root) {
   const journal = await readJournal(root)
   if (!journal) return
   const stage = join(root, journal.stage)
-  if (journal.committed !== true) {
+  if (journal.committed !== true && !journal.recovered) {
     for (const entry of [...journal.entries].reverse()) {
       const target = join(root, entry.path), backup = join(stage, 'previous', entry.path), next = join(stage, 'next', entry.path)
       if (await optionalStat(backup)) {
         await rm(target, { recursive: true, force: true }); await mkdir(dirname(target), { recursive: true }); await rename(backup, target)
       } else if (!entry.existed && entry.hasNext && !(await optionalStat(next))) await rm(target, { recursive: true, force: true })
     }
+    // Make cleanup restartable even if the process stops after removing staging.
+    await writeJson(join(root, journalName), { ...journal, recovered: true })
   }
   await rm(stage, { recursive: true, force: true })
   await rm(join(root, journalName))
 }
 
 export async function updateInstallation({ root, repo, state, release, nodeExecutable, env, desktop, rebuildApp = false, execute, log,
-  assertIdle = assertInstallationIdle }) {
-  const runtimeChanged = state.runtimeDigest !== release.runtimeDigest
+  marketplace = false, nodeSource, assertIdle = assertInstallationIdle }) {
+  const integrity = state.integrity
+  const runtimeChanged = state.status !== 'ready' || state.runtimeDigest !== release.runtimeDigest ||
+    !integrity?.runtime || integrity.runtime !== await treeDigest(join(root, 'runtime'))
+  const nodePresent = !!(await optionalStat(join(root, 'node')))
+  const nodeReleaseDigest = await treeDigest(join(repo, 'runtime/node-release.sha256'))
+  const nodeChanged = (!!nodeSource && !nodePresent) || ((nodePresent || !!integrity?.node) &&
+    (!integrity?.node || state.nodeReleaseDigest !== nodeReleaseDigest || integrity.node !== await treeDigest(join(root, 'node'))))
+  const finalNode = nodeChanged ? join(root, 'node/bin/node') : nodeExecutable
   const oldApp = await readApp(root)
-  const port = process.env.DSH_APP_PORT ?? (oldApp?.servicePort === undefined ? '3080' : String(oldApp.servicePort))
+  const port = process.env.DSH_APP_PORT ?? (oldApp?.servicePort === undefined ? env.DSH_APP_PORT ?? '3080' : String(oldApp.servicePort))
   const buildEnv = { ...env, DSH_APP_PORT: port,
     ...(oldApp?.shareSigning ? { DSH_SHARE_TEAM_ID: env.DSH_SHARE_TEAM_ID ?? oldApp.shareSigning.team, CODESIGN_IDENTITY: env.CODESIGN_IDENTITY ?? oldApp.shareSigning.identity } : {}) }
   const digests = await installationDigests(repo, desktop, release.runtimeDigest, port, buildEnv)
-  const appChanged = desktop && (rebuildApp || state.appDigest !== digests.appDigest || !oldApp || !(await optionalStat(join(root, oldApp.app))))
-  const launcherChanged = runtimeChanged || state.launcherDigest !== digests.launcherDigest
-  const pluginsChanged = await homeProfileNeedsUpdate({ home: env.DSH_HOME, repo, release })
+  const appChanged = desktop && (rebuildApp || state.appDigest !== digests.appDigest || !oldApp ||
+    !integrity?.app || integrity.app !== await treeDigest(join(root, oldApp.app)))
+  const launcherChanged = nodeChanged || runtimeChanged || state.launcherDigest !== digests.launcherDigest ||
+    JSON.stringify(integrity?.launchers) !== JSON.stringify(await launcherIntegrity(root))
+  const pluginsChanged = marketplace || await homeProfileNeedsUpdate({ home: env.DSH_HOME, repo, release })
   if (!runtimeChanged && !appChanged && !launcherChanged && !pluginsChanged && state.schemaVersion === 2) return false
   await assertIdle(root)
   const stageName = '.update-' + randomUUID(), stage = join(root, stageName), next = join(stage, 'next')
@@ -133,6 +146,13 @@ export async function updateInstallation({ root, repo, state, release, nodeExecu
   let publishing = false, committed = false, profileUpdate
   try {
     await mkdir(next, { mode: 0o700 })
+    if (nodeChanged) {
+      log('Restoring the verified private Node.js distribution…')
+      await preparePrivateNode({ repo, destination: join(next, 'node'), source: nodeSource, execute, env: buildEnv })
+      nodeExecutable = join(next, 'node/bin/node')
+      buildEnv.PATH = join(next, 'node/bin') + ':' + buildEnv.PATH
+      await execute(nodeExecutable, ['--version'], { cwd: next, env: buildEnv })
+    }
     const runtime = runtimeChanged ? join(next, 'runtime') : join(root, 'runtime')
     if (runtimeChanged) {
       await mkdir(runtime)
@@ -143,16 +163,17 @@ export async function updateInstallation({ root, repo, state, release, nodeExecu
       await execute(nodeExecutable, [join(runtime, 'node_modules/@deepseek-ai/dsh/lib/bin.js'), '--version'], { cwd: runtime, env: buildEnv })
     }
     if (runtimeChanged || pluginsChanged) {
-      profileUpdate = await prepareHomeProfile({ root, home: env.DSH_HOME, repo, runtime, release, nodeExecutable, env: buildEnv, execute, log })
+      profileUpdate = await prepareHomeProfile({ root, home: env.DSH_HOME, repo, runtime, release, nodeExecutable, env: buildEnv, execute, log, marketplace })
       if (profileUpdate) profileUpdate.updateId = stageName
     }
     const paths = []
+    if (nodeChanged) paths.push('node')
     if (runtimeChanged) paths.push('runtime')
     if (launcherChanged) {
       await mkdir(join(next, 'bin'))
       for (const file of ['launch.mjs', 'process.mjs']) await cp(join(repo, 'scripts', file), join(next, 'bin', file === 'launch.mjs' ? 'dsh.mjs' : file))
-      await writeFile(join(next, 'bin/dsh'), '#!/bin/sh\nexec ' + quote(nodeExecutable) + ' ' + quote(join(root, 'bin/dsh.mjs')) + ' "$@"\n', { mode: 0o700 })
-      await writeDhpLauncher({ root, repo, node: nodeExecutable, outputRoot: next })
+      await writeFile(join(next, 'bin/dsh'), '#!/bin/sh\nexec ' + quote(finalNode) + ' ' + quote(join(root, 'bin/dsh.mjs')) + ' "$@"\n', { mode: 0o700 })
+      await writeDhpLauncher({ root, repo, node: finalNode, outputRoot: next })
       paths.push('bin/dsh', 'bin/dsh.mjs', 'bin/process.mjs', 'bin/dhp')
     }
     if (appChanged) {
@@ -165,13 +186,20 @@ export async function updateInstallation({ root, repo, state, release, nodeExecu
       if ((!oldApp || oldApp.app !== app.app) && await optionalStat(join(root, app.app))) throw new Error('Refusing to replace an App not recorded by this installation')
       paths.push(app.app, 'native-app.json')
     }
-    await writeJson(join(next, marker), { ...state, schemaVersion: 2, dshHome: env.DSH_HOME, desktop,
+    const nextIntegrity = {
+      runtime: await treeDigest(runtime),
+      node: await treeDigest(join(nodeChanged ? next : root, 'node')),
+      launchers: await launcherIntegrity(launcherChanged ? next : root),
+      app: desktop ? await treeDigest(join(appChanged ? next : root, (await readApp(appChanged ? next : root)).app)) : null,
+    }
+    await writeJson(join(next, marker), { ...state, schemaVersion: 2, dshHome: env.DSH_HOME, desktop, integrity: nextIntegrity, nodeReleaseDigest,
+      ...(marketplace ? { marketplaceSha256: release.sha256 } : {}),
       dshVersion: release.dshVersion, runtimeDigest: release.runtimeDigest, profileUpdateId: profileUpdate?.updateId ?? state.profileUpdateId, ...digests, status: 'ready' })
     paths.push(marker)
     const entries = []
     for (const path of paths) {
       const stat = await optionalStat(join(root, path))
-      if (!managed.test(path) || stat?.isSymbolicLink() || (stat && ((path === 'runtime' || path.endsWith('.app')) ? !stat.isDirectory() : !stat.isFile()))) throw new Error('Unsafe update target: ' + path)
+      if (!managed.test(path) || stat?.isSymbolicLink() || (stat && ((['node', 'runtime'].includes(path) || path.endsWith('.app')) ? !stat.isDirectory() : !stat.isFile()))) throw new Error('Unsafe update target: ' + path)
       entries.push({ path, existed: !!stat, hasNext: !!(await optionalStat(join(next, path))) })
     }
     await assertIdle(root)
@@ -184,7 +212,7 @@ export async function updateInstallation({ root, repo, state, release, nodeExecu
       if (entry.existed) { await mkdir(dirname(backup), { recursive: true }); await rename(target, backup) }
       if (entry.hasNext) { await mkdir(dirname(target), { recursive: true }); await rename(join(next, entry.path), target) }
     }
-    await execute(nodeExecutable, [join(root, 'runtime/node_modules/@deepseek-ai/dsh/lib/bin.js'), '--version'], { cwd: join(root, 'runtime'), env })
+    await execute(finalNode, [join(root, 'runtime/node_modules/@deepseek-ai/dsh/lib/bin.js'), '--version'], { cwd: join(root, 'runtime'), env })
     await writeJson(join(root, journalName), { ...journal, committed: true })
     committed = true
     await recoverInstallation(root)

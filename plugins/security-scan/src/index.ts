@@ -1,8 +1,9 @@
+import './message-source.js'
 import { listAuditModels } from './models.js'
 import type { ModelCatalog } from './ui-contract.js'
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import { ensureSecurityPreset, SECURITY_PRESET } from './preset-install.js'
-import type {} from '@deepseek-ai/dsh-agent-presets'
+import { SECURITY_PRESET } from './preset-install.js'
+import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import { scanSession, type ScanSession } from './session.js'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session'
@@ -25,7 +26,7 @@ import { defaultReportsRoot, listReports, reportFile, reviewReport, ReviewSchema
 import { inside } from './repository.js'
 import { AuditQueue, DEFAULT_EDIT_TOOLS, isConfiguredEdit } from './hooks.js'
 import { z as jsonSchema } from 'zod'
-import type { Context } from '@deepseek-ai/cordis'
+import { type Volatile, type Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import * as SkillFilesystem from '@deepseek-ai/dsh-skill-filesystem'
@@ -36,11 +37,14 @@ import { registerHostRpc } from './host-rpc.js'
 export const name = 'security-scan'
 export const inject = ['skills', 'tools', 'settings', 'connection', 'webServer']
 export interface Config { semgrepPath?: string; gitleaksPath?: string; reportDirectory?: string; autoScan?: boolean; hookTools?: string[] }
-export const Config: z<Config> = z.object({ semgrepPath: z.string().default('semgrep'), gitleaksPath: z.string().default('gitleaks'), reportDirectory: z.string(), autoScan: z.boolean().default(false), hookTools: z.array(z.string()).default(DEFAULT_EDIT_TOOLS) })
+const ConfigSchema: z<Config> = z.object({ semgrepPath: z.string().default('semgrep'), gitleaksPath: z.string().default('gitleaks'), reportDirectory: z.string(), autoScan: z.boolean().default(false), hookTools: z.array(z.string()).default(DEFAULT_EDIT_TOOLS) })
+
+export const Config = ConfigSchema.volatile()
 
 /** Register the read-only scanner and a review workflow on public DSH extension points. */
-export function apply(ctx: Context, config: Config = {}): void {
-  const scope = ctx.settings.register(name, Config, { base: config })
+export function apply(ctx: Context, config: Config | Volatile<Config> = {}): void {
+  // Cloning detaches the validated readonly snapshot for existing mutable config consumers.
+  const scope = { get: (): Config => ('get' in config) ? structuredClone(config.get()) as Config : config }
   SkillFilesystem.apply(ctx, { providerName: name, includeDefaultRoots: false,
     bundledSkillDir: fileURLToPath(new URL('../skills', import.meta.url)), watch: false })
   const lifetime = new AbortController()
@@ -71,8 +75,6 @@ export function apply(ctx: Context, config: Config = {}): void {
   let native: Context | undefined
   let selection: (() => NonNullable<AgentReviewOptions['selection']>) | undefined
   ctx.inject(['agents', 'sessions', 'tools', 'systemPrompt', 'workspaceRegistry', 'sessionController', 'agentPresets'], nativeCtx => {
-    const preparation = ensureSecurityPreset(nativeCtx.agentPresets.roots).catch(() => { ctx.logger.warn('Security audit preset unavailable; existing preset files were preserved.') }).finally(() => { pending.delete(preparation) })
-    pending.add(preparation)
     native = nativeCtx
     nativeCtx.effect(() => () => { if (native === nativeCtx) native = undefined }, 'security-scan: native agent')
   })
@@ -82,8 +84,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     modelCtx.effect(() => () => { if (selection === owned) selection = undefined }, 'security-scan: default model')
   })
   let sessionMirror: ScanSession | undefined
-  ctx.inject(['sessionController', 'workspaceRegistry', 'sessions'], sessionCtx => {
-    const owned = scanSession(sessionCtx.sessionController, sessionCtx.workspaceRegistry, sessionCtx.sessions)
+  ctx.inject(['agents', 'sessions', 'workspaceRegistry', 'sessionController'], sessionCtx => {
+    const owned = scanSession(sessionCtx)
     sessionMirror = owned
     sessionCtx.effect(() => () => { if (sessionMirror === owned) sessionMirror = undefined }, 'security-scan: session synchronization')
   })
@@ -97,7 +99,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const taskReady = SecurityTasks.open({ models: () => models ? models() : Promise.resolve({ models: [], partial: true }), reportLink: id => reportOrigin ? reportOrigin() + '/#dsh-security-report=' + id : undefined, toolchains, session: () => sessionMirror, root: dirname(defaultReportsRoot()),
     agentContext: () => {
       const owned = native, presets = owned?.agentPresets
-      return { ...(owned && presets ? { native: owned, keepSession: true, preset: { id: SECURITY_PRESET, async mount(agentCtx: Context) { await ensureSecurityPreset(presets.roots); await presets.mount(agentCtx, SECURITY_PRESET) } } } : {}), ...(selection ? { selection: selection() } : {}) }
+      return { ...(owned && presets ? { native: owned, keepSession: true, preset: { id: SECURITY_PRESET, async mount(agentCtx: Context) { await presets.mount(agentCtx, SECURITY_PRESET) } } } : {}), ...(selection ? { selection: selection() } : {}) }
     },
     settings: () => ({ semgrepPath: scope.get().semgrepPath ?? 'semgrep', gitleaksPath: scope.get().gitleaksPath ?? 'gitleaks', reportDirectory: resolve(reportsRoot()), autoScan: scope.get().autoScan ?? false, hookTools: scope.get().hookTools ?? DEFAULT_EDIT_TOOLS }),
     writable: () => ctx.settings.writable,
@@ -144,6 +146,17 @@ export function apply(ctx: Context, config: Config = {}): void {
         const run = await service.start(task.id, task.revision, 'conversation', exec.agent!.session.id)
         return { result: JSON.stringify({ taskId: task.id, runId: run.id, status: run.status, sessionId: run.sessionId, instruction: 'Scan queued in this same session. End this reply now; the native audit will continue here after this turn. Do not wait or poll in a loop, and do not start a duplicate scan.' }) }
       })()
+      pending.add(operation)
+      try { return await operation } finally { pending.delete(operation) }
+    },
+  }))
+  ctx.tools.register(defineTool({
+    name: 'security_record_repair_delivery', description: 'Record the actual draft PR URL after successful creation by an authorized platform tool. Only the repair session can record its own repository URL. Does not create a PR or verify the remote PR status.',
+    parameters: { url: { type: 'string', required: true } }, output,
+    async execute(args, exec) {
+      if (!taskReady || !exec.agent) throw new Error('Repair session required')
+      exec.signal.throwIfAborted()
+      const operation = (async () => { await (await taskReady!).recordRepairDelivery(exec.agent!.session.id, args.url); return { result: JSON.stringify({ recorded: true }) } })()
       pending.add(operation)
       try { return await operation } finally { pending.delete(operation) }
     },

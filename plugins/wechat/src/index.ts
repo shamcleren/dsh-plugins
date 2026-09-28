@@ -1,12 +1,14 @@
+import type {} from '@deepseek-ai/cordis-plugin-loader'
+import type { Config as PlainConfig } from './config.js'
 import { join } from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
+import { type Volatile, type Context } from '@deepseek-ai/cordis'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-settings'
 import { installChannelApproval } from './approval.js'
 import { installChannelTitle } from './channel-title.js'
 import { ConversationBindings } from './bindings.js'
-import { Config, DEFAULT_WORKSPACE_NAME } from './config.js'
+import { Config as ConfigSchema, DEFAULT_WORKSPACE_NAME } from './config.js'
 import type { WeChatSettingsPatch } from './config.js'
 import { createHostApi } from './host-api.js'
 import { WeChatRuntimeController } from './runtime.js'
@@ -14,7 +16,8 @@ import { WeChatAccountStore } from './storage.js'
 import { WeChatLoginService } from './login.js'
 import { resolveDefaultWorkspace } from './workspace.js'
 
-export { Config, DEFAULT_BASE_URL, DEFAULT_CDN_BASE_URL, DEFAULT_MEDIA_MAX_BYTES,
+export const Config = ConfigSchema.volatile()
+export { DEFAULT_BASE_URL, DEFAULT_CDN_BASE_URL, DEFAULT_MEDIA_MAX_BYTES,
   DEFAULT_THINKING_TEXT, DEFAULT_TURN_TIMEOUT_MS, DEFAULT_WORKSPACE_NAME } from './config.js'
 export type { Config as WeChatConfig } from './config.js'
 
@@ -23,13 +26,13 @@ export const inject = ['sessionController', 'workspaceRegistry', 'sessions']
 export const WECHAT_SETTINGS_NAMESPACE = 'wechat'
 
 /** Mount the personal WeChat account runtime and its settings namespace. */
-export function apply(ctx: Context, config: Config): void {
+export function apply(ctx: Context, config: PlainConfig | Volatile<PlainConfig>): void {
   const api = createHostApi(ctx, sessionId => runtime?.routesSession(sessionId) === true)
   const logger = ctx.logger(name)
   installChannelTitle(ctx, logger)
   const channelHome = join(resolveDshHome(), 'channels', 'wechat')
   const bindings = ConversationBindings.open(join(channelHome, 'bindings.json'))
-  let settings = (): Config => config
+  const settings = (): PlainConfig => ('get' in config) ? ConfigSchema(config.get()) : config
   let runtime: WeChatRuntimeController | undefined
   // Commands that change channel policy write this plugin's own settings section
   // rather than any global default, so a chat-side switch stays inside WeChat.
@@ -77,11 +80,8 @@ export function apply(ctx: Context, config: Config): void {
       sessionId => runtime?.ownsSession(sessionId) === true,
       request => runtime?.requestApproval(request) ?? Promise.resolve(undefined))
   })
+  ctx.on('loader/volatile-update', () => { runtime?.update(settings()) })
   ctx.inject(['settings'], settingsCtx => {
-    settingsCtx.settings.installSection(settingsCtx, WECHAT_SETTINGS_NAMESPACE, Config, config, {
-    setSource: current => { settings = current },
-    onChange: () => { runtime?.update(settings()) },
-    })
     // Path ops rather than a wholesale replace: the caller only names the field it
     // changed and cannot drop settings it never read, which a merge patch also
     // cannot express for the reset-to-inherited case.

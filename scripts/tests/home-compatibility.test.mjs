@@ -1,14 +1,64 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { checkCredentials, lockDshHome, prepareHomeProfile, publishHomeProfile, recoverHomeProfile, discardHomeProfile, stabilizeProfileLock } from '../home-compatibility.mjs'
+import { backupLegacySettings, legacyPresetPatch, checkCredentials, homeProfileNeedsUpdate, lockDshHome, prepareHomeProfile, publishHomeProfile, recoverHomeProfile, discardHomeProfile, stabilizeProfileLock } from '../home-compatibility.mjs'
 import { releaseInfo } from '../bootstrap.mjs'
 import { fakeInstall } from './installer-fixture.mjs'
 const repo = fileURLToPath(new URL('../../', import.meta.url)), runtime = join(repo, 'runtime')
+
+test('legacy settings backup is private, repeatable and preserves the previous imported document', async t => {
+  const { home } = await fixture(t)
+  const current = 'desktop-pet:\n  petSize: 120\n', previous = 'desktop-pet:\n  petSize: 112\n'
+  await writeFile(join(home, 'settings.yaml'), current)
+  await writeFile(join(home, 'settings.yaml.imported'), previous)
+  const options = { home, runtime, log() {} }
+  await backupLegacySettings(options)
+  const folder = join(home, '.dhp-backups'), files = await readdir(folder)
+  assert.equal(files.length, 2)
+  const snapshots = await Promise.all(files.map(async file => {
+    const path = join(folder, file), info = await stat(path)
+    if (process.platform !== 'win32') assert.equal(info.mode & 0o777, 0o600)
+    return [await readFile(path, 'utf8'), info.mtimeMs]
+  }))
+  assert.deepEqual(snapshots.map(value => value[0]).sort(), [current, previous].sort())
+  await backupLegacySettings(options)
+  assert.deepEqual(await readdir(folder), files)
+  for (const [index, file] of files.entries()) assert.equal((await stat(join(folder, file))).mtimeMs, snapshots[index][1])
+  assert.equal(await readFile(join(home, 'settings.yaml'), 'utf8'), current)
+  assert.equal(await readFile(join(home, 'settings.yaml.imported'), 'utf8'), previous)
+})
+
+test('invalid legacy settings stop the upgrade without moving or changing the file', async t => {
+  const { home } = await fixture(t), path = join(home, 'settings.yaml'), text = 'invalid: [\n'
+  await writeFile(path, text)
+  await assert.rejects(backupLegacySettings({ home, runtime }), /settings.yaml is invalid/)
+  assert.equal(await readFile(path, 'utf8'), text)
+})
+
+test('preset namespace migration stages the selection, preserves JS tags and respects an existing new selection', async t => {
+  const { home } = await fixture(t), profile = join(home, 'profiles/web')
+  await mkdir(profile, { recursive: true })
+  const settings = 'agent-presets:\n  default: dsh-security-audit\n'
+  const patch = '- id: fixture\n  disabled: !!js "!process.env.FIXTURE"\n'
+  await writeFile(join(home, 'settings.yaml'), settings)
+  await writeFile(join(profile, 'cordis.patch.yml'), patch)
+  const next = await legacyPresetPatch({ home, profile, runtime })
+  assert.match(next, /selectedDefault: dsh-security-audit/)
+  assert.match(next, /default: dsh-security-audit/)
+  assert.match(next, /!!js/)
+  assert.equal(await readFile(join(profile, 'cordis.patch.yml'), 'utf8'), patch)
+  assert.equal(await readFile(join(home, 'settings.yaml'), 'utf8'), settings)
+  await writeFile(join(profile, 'cordis.patch.yml'), next)
+  assert.equal(await legacyPresetPatch({ home, profile, runtime }), undefined)
+  await writeFile(join(profile, 'cordis.patch.yml'), '- id: agent-preset-registry\n  config:\n    default: custom-fallback\n')
+  const retained = await legacyPresetPatch({ home, profile, runtime })
+  assert.match(retained, /default: custom-fallback/)
+  assert.match(retained, /selectedDefault: dsh-security-audit/)
+})
 
 test('staged lockfiles preserve local package identity and integrity after moving', async t => {
   const { root } = await fixture(t), profile = join(root, 'stage/profile'), target = join(root, 'source with spaces')
@@ -31,6 +81,18 @@ async function fixture(t) {
   t.after(() => rm(root, { recursive: true, force: true }))
   return { root, home }
 }
+
+test('profile recovery cleanup is repeatable after its staging directory has been removed', async t => {
+  const { root, home } = await fixture(t)
+  await mkdir(join(home, 'profiles/web'), { recursive: true })
+  await writeFile(join(home, 'profiles/web/keep'), 'user profile')
+  await writeFile(join(home, '.dhp-profile-update.json'), JSON.stringify({
+    owner: 'dhp-profile-update-v1', root, runtimeDigest: 'old', stageName: '.dhp-web-123abc', existed: false, cleanupReady: true,
+  }))
+  await recoverHomeProfile({ root, home, ready: false })
+  await recoverHomeProfile({ root, home, ready: false })
+  assert.equal(await readFile(join(home, 'profiles/web/keep'), 'utf8'), 'user profile')
+})
 
 test('the official provider reads existing versioned grants and refs without rewriting them', async t => {
   const { home } = await fixture(t)
@@ -159,6 +221,26 @@ test('external source links keep their meaning after staging and publication', a
   assert.equal(JSON.parse(await readFile(join(f.profile, 'node_modules/source-plugin/package.json'))).version, '1.0.0')
   const [backup] = await readdir(join(f.home, '.dhp-backups'))
   assert.equal(await readlink(join(f.home, '.dhp-backups', backup, 'node_modules/source-plugin')), originalLink)
+})
+
+test('repository source links are replaced by the catalog release even at the same version', async t => {
+  const f = await fixture(t), profile = join(f.home, 'profiles/web'), catalog = JSON.parse(await readFile(join(repo, 'marketplace.json')))
+  const entry = catalog.plugins.find(item => item.id === 'wecom-aibot')
+  const source = join(repo, 'plugins/wecom-aibot')
+  const sourceManifest = await readFile(join(source, 'package.json'))
+  await mkdir(join(profile, 'node_modules/@shamcleren'), { recursive: true })
+  await symlink(source, join(profile, 'node_modules', entry.package))
+  await writeFile(join(profile, 'package.json'), JSON.stringify({ dependencies: { [entry.package]: 'link:' + source }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', entry.package, '@deepseek-ai/dsh-web-app'] } } }))
+  const release = await releaseInfo(repo)
+  assert.equal(await homeProfileNeedsUpdate({ home: f.home, repo, release }), true)
+  const transaction = await prepareHomeProfile({ ...f, repo, runtime, release, nodeExecutable: process.execPath, env: { PATH: process.env.PATH }, execute: fakeInstall, log() {} })
+  await publishHomeProfile(transaction)
+  await recoverHomeProfile({ ...f, runtimeDigest: release.runtimeDigest, ready: true })
+  const next = JSON.parse(await readFile(join(profile, 'package.json')))
+  assert.match(next.dependencies[entry.package], new RegExp(entry.artifact.sha256 + '\\.tgz$'))
+  assert.equal((await lstat(join(profile, 'node_modules', entry.package))).isSymbolicLink(), false)
+  assert.deepEqual(await readFile(join(source, 'package.json')), sourceManifest)
+  assert.equal(await homeProfileNeedsUpdate({ home: f.home, repo, release }), false)
 })
 
 test('interrupted runtime publication restores the previous compatible profile', async t => {

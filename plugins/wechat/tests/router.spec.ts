@@ -117,7 +117,7 @@ describe('WeChatConversationRouter', () => {
       const owner = workspaces.find(workspace => workspace.sessionIds.includes(request.payload.sessionId))
       if (owner !== undefined && owner.workspaceId !== request.payload.workspaceId) {
         return { rpcId: request.rpcId, result: { ok: false as const,
-          error: { code: 'session-conflict', message: 'wrong workspace' } } }
+          error: { code: 'session/conflict', message: 'wrong workspace' } } }
       }
       workspaces.find(workspace => workspace.workspaceId === request.payload.workspaceId)
         ?.sessionIds.push(request.payload.sessionId)
