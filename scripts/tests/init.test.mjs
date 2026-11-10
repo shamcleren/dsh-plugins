@@ -18,7 +18,7 @@ async function fixture(t, { node = 'missing', npm = false, platform = 'Linux', a
   for (const dir of [join(repo, 'scripts'), join(repo, 'runtime'), bin, temporary]) await mkdir(dir, { recursive: true })
   await cp(new URL('../init.sh', import.meta.url), join(repo, 'scripts/init.sh'))
   await cp(new URL('Makefile', repository), join(repo, 'Makefile'))
-  for (const name of ['dirname', 'awk', 'tar', 'mktemp', 'rm', 'shasum']) await symlink(command(name), join(bin, name))
+  for (const name of ['dirname', 'awk', 'tar', 'gzip', 'mktemp', 'rm', 'shasum']) await symlink(command(name), join(bin, name))
   const script = (path, body) => writeFile(path, '#!/bin/sh\n' + body + '\n', { mode: 0o755 })
   await script(join(bin, 'uname'), 'case "$1" in -s) echo ' + platform + ' ;; -m) echo ' + architecture + ' ;; esac')
   if (node !== 'missing') await script(join(bin, 'node'), node === 'old' ? 'exit 1' : 'exec ' + quote(process.execPath) + ' "$@"')

@@ -51,10 +51,16 @@ it('saves tasks without running them; detects stale updates and retains data acr
   expect((await reopened.state()).tasks[0]?.config.name).toBe('Changed')
 })
 it.each(['0.2.0', '0.11.0', '0.11.1', '0.11.2', '0.11.3', '0.11.4'])('runs the shared workflow and preserves archived %s reports', async version => {
-  const f = await fixture(), task = await f.service.save(f.config)
-  const run = await f.service.start(task.id, task.revision)
-  await vi.waitFor(async () => { expect((await f.service.state()).runs.find(item => item.id === run.id)?.status).toBe('succeeded') })
+  let finish!: () => void
+  const completed = new Promise<void>(resolve => { finish = resolve })
+  const f = await fixture({ session: () => ({
+    start: async run => 'fixture-' + run.id,
+    publish: async (_id, run) => { if (run.phase === 'finished') finish() },
+  }) }), task = await f.service.save(f.config)
+  await f.service.start(task.id, task.revision)
+  await completed
   const state = await f.service.state(), finished = state.runs[0]!
+  expect(finished.status).toBe('succeeded')
   expect(finished.config).toEqual(f.config)
   expect(await f.service.report(finished.reportId!, 'html')).toContain('代码安全扫描报告')
   const reportFile = join(finished.reportRoot!, finished.reportId!, 'report.json')
