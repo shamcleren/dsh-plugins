@@ -399,19 +399,36 @@ it('fast-forwards a clean project and refuses dirty pull or a non-fast-forward p
   expect((await f.status()).head).toBe(local.head)
 })
 
-it('supports an empty repository, nested deletions and staged renames', async () => {
+it('creates and pushes the first commit of an empty repository', async () => {
   const f = await fixture(true)
   await mkdir(join(f.project.path, 'nested')); await writeFile(join(f.project.path, 'nested/file'), 'first\n')
   const review = await f.preview(['nested/file'])
   const first = await f.call<ProjectStatus>('commit', { id: review.id, message: 'Initial commit' })
   await f.call('push', { fullName: f.project.fullName, head: first.head })
-  await f.git(f.project.path, 'mv', 'nested/file', 'renamed')
+  expect(await f.git(f.base, '--git-dir=' + f.bare, 'show', 'main:nested/file')).toBe('first\n')
+  expect((await f.status()).changes).toEqual([])
+})
+
+it('commits both paths of a staged rename', async () => {
+  const f = await fixture()
+  await mkdir(join(f.project.path, 'nested'))
+  await f.git(f.project.path, 'mv', 'a.txt', 'nested/renamed')
   const changes = (await f.status()).changes
   const rename = await f.preview(changes.flatMap(change => change.paths))
   await f.call('commit', { id: rename.id, message: 'Rename file' })
-  await rm(join(f.project.path, 'renamed'))
-  const deletion = await f.preview(['renamed'])
+  expect(await f.git(f.project.path, 'show', 'HEAD:nested/renamed')).toBe('original a\n')
+  expect((await f.git(f.project.path, 'ls-tree', '-r', '--name-only', 'HEAD')).split('\n')).not.toContain('a.txt')
+  expect((await f.status()).changes).toEqual([])
+})
+
+it('commits a nested deletion after its parent directory disappears', async () => {
+  const f = await fixture()
+  await mkdir(join(f.project.path, 'nested')); await writeFile(join(f.project.path, 'nested/file'), 'delete fixture\n')
+  await f.git(f.project.path, 'add', 'nested/file'); await f.git(f.project.path, 'commit', '-m', 'Prepare nested fixture')
+  await rm(join(f.project.path, 'nested'), { recursive: true })
+  const deletion = await f.preview(['nested/file'])
   await f.call('commit', { id: deletion.id, message: 'Delete file' })
+  expect((await f.git(f.project.path, 'ls-tree', '-r', '--name-only', 'HEAD')).split('\n')).not.toContain('nested/file')
   expect((await f.status()).changes).toEqual([])
 })
 
