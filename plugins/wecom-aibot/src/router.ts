@@ -366,6 +366,9 @@ export class WeComConversationRouter {
     for (const pending of [...this.pendingApprovals.values()]) {
       this.withdrawApproval(pending)
     }
+    // A claimed question can still be queued in the mux or fail presentation.
+    const sessions = new Set([...this.activeTurns.keys(), ...[...this.pendingQuestions.values()].map(pending => pending.activeTurn.sessionId)])
+    for (const sessionId of sessions) this.api.releaseSession?.(sessionId)
     this.pendingQuestions.clear()
     this.settledCards.clear()
     for (const abort of this.turnAborts) abort.abort(new Error('wecom-aibot router stopped'))

@@ -108,6 +108,8 @@ export interface HostPreset {
 export type PromptContentPart = HostPromptContentPart | { type: 'file-bytes'; data: string; name: string }
 
 export interface HostApiProxy {
+  /** Release questions owned by a retiring channel router. */
+  releaseSession?(sessionId: string): void
   workspace: {
     list(request: RpcRequest<Record<string, never>>): Promise<RpcResponse<{
       items: HostWorkspace[]
@@ -226,6 +228,7 @@ export function createHostApi(
   const listeners = new Set<(frame: RpcRequest<HostMuxFrame>) => void>()
   const models = new ConversationModels(ctx)
   const pending = new Map<string, (answer: AskUserQuestionAnswer) => void>()
+  const cancellations = new Map<string, { sessionId: string; cancel(): void }>()
   const emit = (payload: HostMuxFrame, rpcId = randomUUID()) => { for (const listener of listeners) listener({ rpcId, payload }) }
   ctx.effect(() => () => lifetime.abort())
   ctx.on('session/event', (session, event) => { if (observesSession(session.id)) emit({ type: 'session/event', sessionId: session.id, event }) })
@@ -237,9 +240,10 @@ export function createHostApi(
     const rpcId = randomUUID(), signal = AbortSignal.any([lifetime.signal, ...(request.signal ? [request.signal] : [])])
     signal.throwIfAborted()
     return new Promise<AskUserQuestionAnswer>((resolve, reject) => {
-      const finish = (outcome: 'answered' | 'cancelled') => { pending.delete(rpcId); signal.removeEventListener('abort', cancel); emit({ type: 'question/resolved', sessionId, questionRpcId: rpcId, outcome }) }
-      const cancel = () => { finish('cancelled'); reject(signal.reason) }
+      const finish = (outcome: 'answered' | 'cancelled') => { pending.delete(rpcId); cancellations.delete(rpcId); signal.removeEventListener('abort', cancel); emit({ type: 'question/resolved', sessionId, questionRpcId: rpcId, outcome }) }
+      const cancel = () => { finish('cancelled'); reject(signal.reason ?? new Error('Channel session stopped')) }
       pending.set(rpcId, answer => { finish('answered'); resolve(answer) })
+      cancellations.set(rpcId, { sessionId, cancel })
       signal.addEventListener('abort', cancel, { once: true })
       emit({ type: 'question/requested', sessionId, questions: request.questions }, rpcId)
     })
@@ -250,6 +254,9 @@ export function createHostApi(
   }
   const workspace = (item: Workspace): HostWorkspace => ({ workspaceId: item.id, path: item.path, title: item.title, sessionIds: [...item.sessionIds] })
   return {
+    releaseSession(sessionId) {
+      for (const entry of cancellations.values()) if (entry.sessionId === sessionId) entry.cancel()
+    },
     workspace: {
       list: request => response(request, async () => ({ items: registry.list().map(workspace), archivedSessionIds: [...registry.archivedSessionIds] })),
       create: request => response(request, async () => { const previous = registry.list(); const item = await registry.create(request.payload.path); return { workspace: workspace(item), created: !previous.some(old => old.id === item.id) } }),

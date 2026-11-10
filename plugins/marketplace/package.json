@@ -1,6 +1,6 @@
 {
   "name": "@shamcleren/dsh-plugin-marketplace",
-  "version": "0.4.10-public.2",
+  "version": "0.4.12",
   "description": "External trusted Marketplace bundle with a focused DeepSeek Harness management UI",
   "type": "module",
   "main": "lib/index.js",

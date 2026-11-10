@@ -1,6 +1,6 @@
 {
   "name": "@shamcleren/dsh-desktop-share",
-  "version": "0.1.7",
+  "version": "0.1.9",
   "description": "Receive macOS shared files into a DeepSeek Harness conversation draft",
   "type": "module",
   "license": "MIT",

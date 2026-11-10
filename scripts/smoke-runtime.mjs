@@ -21,9 +21,10 @@ if (startupOnly && update) throw new Error('--startup-only cannot verify an upda
 const desktopArg = process.argv.find(arg => arg.startsWith('--desktop-app='))
 const desktopApp = desktopArg && resolve(desktopArg.slice('--desktop-app='.length))
 if (desktopApp && update) throw new Error('Desktop compatibility and managed Web update are separate checks')
+const previousRepoArg = process.argv.find(arg => arg.startsWith('--previous-repo='))
 const previousRuntimeArg = process.argv.find(arg => arg.startsWith('--previous-runtime='))
-if (update && !previousRuntimeArg) throw new Error('--update requires --previous-runtime=/path/to/old/runtime to install the old plugins with their compatible runtime')
-const runtimeOverride = process.argv.slice(2).find(arg => arg !== '--update' && arg !== '--startup-only' && arg !== previousRuntimeArg && arg !== desktopArg)
+if (update && (!previousRuntimeArg || !previousRepoArg)) throw new Error('--update requires --previous-runtime=/path/to/old/runtime and --previous-repo=/path/to/old/release-checkout')
+const runtimeOverride = process.argv.slice(2).find(arg => arg !== '--update' && arg !== '--startup-only' && arg !== previousRuntimeArg && arg !== previousRepoArg && arg !== desktopArg)
 const target = await smokeTarget({ repo, desktopApp, runtimeOverride })
 const { runtime, node: nodeExecutable, profileName } = target
 const officialDesktop = target.kind === 'electron'
@@ -56,12 +57,16 @@ try {
   await mkdir(home)
   if (target.kind === 'native') console.log('Native macOS bundle: Node ' + (await command(['--version'])).trim() + ', official DSH ' + target.version + ', isolated Web profile (native window not automated)')
   const catalog = JSON.parse(await readFile(join(repo, 'marketplace.json'), 'utf8'))
-  const hasAidev = catalog.plugins.some(entry => entry.id === 'aidev')
   env.DSH_SMOKE_ARTIFACT = join(repo, catalog.plugins.find(entry => entry.id === 'wecom-tools').artifact.path)
   for (const entry of catalog.plugins) await releaseArtifact(repo, entry)
-  const previous = { aidev: '0.3.6', 'trusted-marketplace': '0.4.8', 'security-scan': '0.13.1', wechat: '0.5.7', 'wecom-aibot': '0.6.11', 'dsh-pet': '0.2.5', 'desktop-share': '0.1.6', 'web-search': '0.1.3', 'wecom-tools': '0.2.4' }
-  const artifacts = catalog.plugins.map(entry => join(repo, update && previous[entry.id]
-    ? entry.artifact.path.replace(entry.version + '.tgz', previous[entry.id] + '.tgz') : entry.artifact.path))
+  const previousRepo = previousRepoArg ? resolve(previousRepoArg.slice('--previous-repo='.length)) : repo
+  const previousCatalog = update ? JSON.parse(await readFile(join(previousRepo, 'marketplace.json'), 'utf8')) : catalog
+  if (update) {
+    const version = JSON.parse(await readFile(join(previousRuntime, 'node_modules/@deepseek-ai/dsh/package.json'), 'utf8')).version
+    assert.ok(previousCatalog.plugins.every(entry => entry.dshVersion === version), 'Previous catalog must match the previous runtime')
+    for (const entry of previousCatalog.plugins) await releaseArtifact(previousRepo, entry)
+  }
+  const artifacts = previousCatalog.plugins.map(entry => join(previousRepo, entry.artifact.path))
   if (update) {
     // A disposable repository-owned retirement fixture; never read the user's installed profile.
     const retired = join(scratch, 'retired-plugin')
@@ -103,7 +108,9 @@ try {
     assert.ok(before.dependencies['@shamcleren/dsh-codex-controller'])
     assert.equal(after.dependencies['@shamcleren/dsh-codex-controller'], undefined)
     assert.deepEqual(Object.keys(after.dependencies).sort(), Object.keys(before.dependencies).filter(name => name !== '@shamcleren/dsh-codex-controller').sort())
-    for (const entry of catalog.plugins) {
+    const retained = catalog.plugins.filter(entry => Object.hasOwn(before.dependencies, entry.package))
+    const introduced = catalog.plugins.filter(entry => !Object.hasOwn(before.dependencies, entry.package))
+    for (const entry of retained) {
       const installed = JSON.parse(await readFile(join(profile, 'node_modules', entry.package, 'package.json'), 'utf8'))
       assert.equal(installed.version, entry.version, entry.id + ': dhp update installed release')
     }
@@ -111,7 +118,12 @@ try {
     assert.match(await readFile(join(profile, 'cordis.patch.yml'), 'utf8'), /selectedDefault: dsh-security-audit/)
     const again = await command([join(repo, 'scripts/dhp.mjs'), '--dir', installation, 'update'])
     assert.match(again, /Already up to date/)
-    console.log('dhp update: all ' + catalog.plugins.length + ' plugins retained, releases upgraded, settings preserved, repeat is a no-op')
+    for (const entry of introduced) assert.equal(after.dependencies[entry.package], undefined, entry.id + ': update must not install new optional plugins')
+    console.log('dhp update: all ' + retained.length + ' installed plugins retained, releases upgraded, settings preserved, repeat is a no-op; new optional plugins were not installed')
+    if (introduced.length) {
+      await command([cli, 'plugin', '--profile', profileName, '--config.ignore-scripts=true', 'add', ...introduced.map(entry => join(repo, entry.artifact.path)), '--save-exact'])
+      console.log('Explicitly installed ' + introduced.length + ' new optional plugins for the remaining isolated Host checks')
+    }
   }
   await verifyProfilePeers(profile, runtime)
   let migratedPreset = ''
@@ -140,8 +152,8 @@ try {
   await new Promise(resolve => portProbe.close(resolve))
   await writeFile(join(home, 'settings.yaml'), 'desktop-pet:\n  petSize: 120\nsecurity-scan:\n  gitleaksPath: /nonexistent/legacy-gitleaks\n')
   const probe = join(scratch, 'probe.mjs')
-  const requiredTools = ['wechat_recipients', 'wechat_notify', 'wechat_notification_status', 'wechat_notification_cancel', 'dsh_security_scan_record_repair_delivery', 'dsh_security_scan_repair_rescan', 'dsh_security_scan_findings', 'dsh_security_scan_exclude_findings', 'dsh_security_scan_start', 'dsh_security_scan_status', 'dsh_security_scan_rules', 'dsh_security_scan_audit', 'dsh_security_scan_reports', 'dsh_security_scan_read_evidence', 'dsh_security_scan_review_report', 'aidev_search', 'aidev_resource_list_installed', 'aidev_resource_install', 'aidev_resource_uninstall', 'aidev_knowledge_query', 'aidev_agent_detail', 'aidev_skill_sync', 'aidev_mcp_create', 'aidev_knowledgebase_manage', 'aidev_knowledge_upload', 'aidev_agent_manage'].filter(name => hasAidev || !name.startsWith('aidev_'))
-  await writeFile(probe, `import { writeFile } from 'node:fs/promises'; export const inject = ['connection', 'webServer', 'skills', 'tools', 'llm', 'wechatPush']; export async function apply(ctx) { await writeFile(${JSON.stringify(ready)}, JSON.stringify({skills: (await ctx.skills.list()).map(item => item.name), missingTools: ${JSON.stringify(requiredTools)}.filter(name => !ctx.tools.get(name)), codexProvider: ctx.llm.listProviders().some(item => item.id === 'codex'), url: ctx.connection.authenticatedUrl('http://127.0.0.1:' + ctx.webServer.port)}), {mode: 0o600}); }`)
+  const requiredTools = ['wechat_recipients', 'wechat_notify', 'wechat_notification_status', 'wechat_notification_cancel', 'dsh_security_scan_record_repair_delivery', 'dsh_security_scan_repair_rescan', 'dsh_security_scan_findings', 'dsh_security_scan_exclude_findings', 'dsh_security_scan_start', 'dsh_security_scan_status', 'dsh_security_scan_rules', 'dsh_security_scan_audit', 'dsh_security_scan_reports', 'dsh_security_scan_read_evidence', 'dsh_security_scan_review_report']
+  await writeFile(probe, `import { writeFile } from 'node:fs/promises'; export const inject = ['connection', 'webServer', 'skills', 'tools', 'llm']; export function apply(ctx) { ctx.inject(['wechatPush'], async ctx => { await writeFile(${JSON.stringify(ready)}, JSON.stringify({skills: (await ctx.skills.list()).map(item => item.name), missingTools: ${JSON.stringify(requiredTools)}.filter(name => !ctx.tools.get(name)), codexProvider: ctx.llm.listProviders().some(item => item.id === 'codex'), url: ctx.connection.authenticatedUrl('http://127.0.0.1:' + ctx.webServer.port)}), {mode: 0o600}); }); }`)
   // No external accounts, pet windows or search traffic in the fixture. Web Search's
   // protocol/transport lifecycle is exercised separately against its local mock server.
   await writeFile(join(profile, 'cordis.patch.yml'), `
@@ -150,11 +162,6 @@ ${migratedPreset}
   config:
     port: ${port}
     host: 127.0.0.1
-${hasAidev ? `- id: aidev
-  config:
-    enabled: true
-    spaceId: smoke
-    baseUrl: https://aidev.example.invalid/openapi/` : ''}
 - id: desktop-pet
   config:
     enabled: false
@@ -215,6 +222,21 @@ ${startupOnly ? '' : `    - id: upgrade-probe
       return page.status === 200 && /<html/i.test(await page.text())
     } catch { return false }
   }, 'authenticated Web page')
+  if (catalog.plugins.some(entry => entry.id === 'github-workspace')) {
+    const body = JSON.stringify({ type: 'client-request', rpcId: 'github-workspace-smoke', method: 'state', payload: {} })
+    const endpoint = `http://127.0.0.1:${port}/github-workspace/state`
+    const rejected = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(15000) })
+    assert.equal(rejected.status, 401)
+    const response = await fetch(endpoint, { method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(15000) })
+    assert.equal(response.status, 200)
+    const result = (await response.json()).result
+    assert.equal(result.ok, true)
+    assert.equal(result.value.account, null, 'isolated Host must not access the user account')
+    assert.deepEqual(result.value.projects, [])
+    const crossOrigin = await fetch(endpoint, { method: 'POST', headers: { cookie, origin: 'https://external.invalid', 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(5000) })
+    assert.equal(crossOrigin.status, 403)
+    console.log('GitHub Workspace packaged Host: authenticated RPC passed, anonymous and foreign-origin requests rejected; no live account used')
+  }
   if (startupOnly) {
     const response = await fetch(`http://127.0.0.1:${port}/security-scan/state`, { method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: 'startup', method: 'state', payload: {} }), signal: AbortSignal.timeout(5000) })
     assert.equal(response.status, 200)
@@ -228,27 +250,21 @@ ${startupOnly ? '' : `    - id: upgrade-probe
   const upgrade = await fetch(`http://127.0.0.1:${port}/smoke-upgrade/check`, { method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: 'upgrade', method: 'check', payload: {} }), signal: AbortSignal.timeout(15000) })
   const upgradeBody = await upgrade.text()
   assert.equal(upgrade.status, 200, upgradeBody)
-  assert.deepEqual(JSON.parse(upgradeBody).result, { ok: true, value: { forms: 6, presets: 2 } })
-  console.log('Legacy settings imported; 6 live forms, revision conflicts, static-field protection and 2 presets passed')
-  for (const channel of ['security-scan', 'trusted-marketplace', ...(hasAidev ? ['aidev'] : [])]) {
+  assert.deepEqual(JSON.parse(upgradeBody).result, { ok: true, value: { forms: 5, presets: 1 } })
+  console.log('Legacy settings imported; 5 live forms, revision conflicts, static-field protection and 1 preset passed')
+  for (const channel of ['security-scan', 'trusted-marketplace']) {
     const response = await fetch(`http://127.0.0.1:${port}/${channel}/state`, { method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: 'smoke', method: 'state', payload: {} }), signal: AbortSignal.timeout(5000) })
     const body = await response.text()
     assert.equal(response.status, 200, channel + ': ' + body)
     const result = JSON.parse(body).result
-    if (channel === 'aidev') {
-      // This plugin exposes remote resource operations only. An unknown method
-      // validates its real route/envelope without contacting an external account.
-      assert.equal(result.ok, false)
-      assert.equal(result.error.code, 'bad-request')
-    } else {
-      assert.equal(result.ok, true, channel + ': ' + body)
+
+    assert.equal(result.ok, true, channel + ': ' + body)
       if (channel === 'trusted-marketplace') assert.equal(result.value.ref, 'upgrade-fixture', 'marketplace reads the Profile live reference')
       if (officialDesktop && channel === 'trusted-marketplace') {
         const installed = result.value.installed.filter(item => catalog.plugins.some(entry => entry.package === item.packageName))
         console.log('Official Desktop: marketplace sees ' + installed.length + ' of ' + catalog.plugins.length + ' installed catalog packages')
         if (installed.length !== catalog.plugins.length) desktopIssues.push('Marketplace does not target the active Desktop profile')
       }
-    }
     console.log(channel + ' authenticated RPC: passed')
   }
   // Exercise the installed security release through its authenticated public RPC.

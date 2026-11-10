@@ -21,10 +21,10 @@ A security scanning workbench for [DeepSeek Harness](https://github.com/deepseek
 Requires official DSH **0.2.1-rc.5**. Other versions have not been verified.
 
 ```sh
-dsh plugin --profile web add @shamcleren/dsh-security-scan@0.18.0
+dsh plugin --profile web add @shamcleren/dsh-security-scan@0.18.1
 ```
 
-You can also enter `@shamcleren/dsh-security-scan@0.18.0` under **Plugins → Add plugin** in the DSH sidebar. The command pins the version because the pnpm used by DSH does not pick versions published less than a day ago; to upgrade, use the newest version from the [releases](https://github.com/shamcleren/dsh-security-scan/releases). The npm package and the Release `.tgz` are the same file, so the Release URL also works. For the official desktop app, replace `web` with the `desktop` profile you use. Restart DSH and open **Security Scan** in the upper sidebar. On first use the plugin downloads and verifies Semgrep, Gitleaks and a private Python into `~/.dsh/security-scan/toolchains/` without changing the system environment.
+You can also enter `@shamcleren/dsh-security-scan@0.18.1` under **Plugins → Add plugin** in the DSH sidebar. The command pins the version because the pnpm used by DSH does not pick versions published less than a day ago; to upgrade, use the newest version from the [releases](https://github.com/shamcleren/dsh-security-scan/releases). The npm package and the Release `.tgz` are the same file, so the Release URL also works. For the official desktop app, replace `web` with the `desktop` profile you use. Restart DSH and open **Security Scan** in the upper sidebar. On first use the plugin downloads and verifies Semgrep, Gitleaks and a private Python into `~/.dsh/security-scan/toolchains/` without changing the system environment.
 
 ## First scan
 

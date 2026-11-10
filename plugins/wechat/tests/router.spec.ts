@@ -430,3 +430,53 @@ it('sends file and video deliveries and reports partial failures', async () => {
     expect(sendVideo).toHaveBeenCalledWith('peer-a', Buffer.from('data'), 'context-a')
   } finally { await router.stop() }
 })
+
+it('releases reply ownership after prompt admission fails, then queues the next message', async () => {
+  const { api, prompt } = hostFixture('next-turn')
+  const { router, sendText } = routerFixture(api)
+  prompt.mockRejectedValueOnce(new Error('admission failed'))
+  try {
+    await expect(router.accept(inbound('first'))).rejects.toThrow('admission failed')
+    const sessionId = prompt.mock.calls[0]![0].payload.sessionId
+    expect(router.routesSession(sessionId)).toBe(false)
+    await router.accept(inbound('second', 'after-admission-failure'))
+    expect(prompt.mock.calls[1]![0].payload.mode).toBe('queue')
+    await vi.waitFor(() => expect(sendText).toHaveBeenCalledWith('peer-a', '最终回复', 'context-a'))
+  } finally { await router.stop() }
+})
+
+it('cleans up a turn when sending the initial thinking message fails', async () => {
+  const { api, prompt } = hostFixture('next-turn')
+  const { router, sendText } = routerFixture(api)
+  sendText.mockRejectedValueOnce(new Error('transport failed'))
+  try {
+    await router.accept(inbound('first'))
+    const sessionId = prompt.mock.calls[0]![0].payload.sessionId
+    await vi.waitFor(() => expect(router.routesSession(sessionId)).toBe(false))
+    await router.accept(inbound('second', 'after-send-failure'))
+    expect(prompt.mock.calls[1]![0].payload.mode).toBe('queue')
+    await vi.waitFor(() => expect(sendText).toHaveBeenCalledWith('peer-a', '最终回复', 'context-a'))
+  } finally { await router.stop() }
+})
+
+it('lists and cancels only this peer\'s active tasks without creating a model turn', async () => {
+  const { api, prompt } = hostFixture('next-turn')
+  prompt.mockImplementation(async request => ok(request.rpcId, { accepted: true as const, disposition: 'next-turn' as const }))
+  api.sessions.cancel = vi.fn(async request => ok(request.rpcId, { accepted: true as const }))
+  const { router, sendText } = routerFixture(api)
+  try {
+    await router.accept(inbound('long task'))
+    const sessionId = prompt.mock.calls[0]![0].payload.sessionId
+    await router.accept({ ...inbound('other peer task', 'other-peer-task'), userId: 'peer-b' })
+    const foreignSession = prompt.mock.calls[1]![0].payload.sessionId
+    await router.accept(inbound('/tasks', 'tasks'))
+    expect(sendText).toHaveBeenCalledWith('peer-a', expect.stringContaining(sessionId), 'context-a')
+    const listing = sendText.mock.calls.find(call => call[0] === 'peer-a' && call[1].startsWith('当前聊天的活动任务：'))![1]
+    expect(listing).not.toContain(foreignSession)
+    await router.accept(inbound('/cancel ' + foreignSession, 'foreign-cancel'))
+    expect(api.sessions.cancel).not.toHaveBeenCalled()
+    await router.accept(inbound('/cancel', 'cancel-current'))
+    expect(api.sessions.cancel).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ payload: { sessionId } }))
+    expect(prompt).toHaveBeenCalledTimes(2)
+  } finally { await router.stop() }
+})

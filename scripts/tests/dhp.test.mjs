@@ -42,9 +42,13 @@ test('listOwnedProcesses ignores other directories and non-DSH commands', async 
       '  13 /tmp/dsh-owned/DeepSeek Harness.app/Contents/MacOS/DeepSeekHarness',
       '  14 /usr/bin/node /tmp/dsh-owned/unrelated.js',
       '  15 /tmp/dsh-owned/DeepSeek Harness.app/Contents/MacOS/DeepSeekHarnessControl',
+      '  16 /usr/bin/node /tmp/backup/tmp/dsh-owned/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js web',
+      '  17 /usr/bin/node /tmp/other/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js --workspace /tmp/dsh-owned/project',
+      '  18 /tmp/backup/tmp/dsh-owned/DeepSeek Harness.app/Contents/MacOS/DeepSeekHarness',
+      '  19 /tmp/dsh-owned/node/bin/node /tmp/dsh-owned/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js web',
     ].join('\n') }),
   })
-  assert.deepEqual(processes.map(item => item.pid), [12, 13])
+  assert.deepEqual(processes.map(item => item.pid), [12, 13, 19])
 })
 
 async function installed(t, desktop = false) {
@@ -94,6 +98,7 @@ test('restart signals only this installation then starts Web detached', async t 
       stdout: live ? '  91 ' + f.directory + '/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js web\n' : '',
     }),
     kill(pid, signal) { signals.push({ pid, signal }); live = false },
+    waitReady: async () => {},
     spawnProcess(command, args, options) {
       spawned.push({ command, args, options })
       return { unref() {} }
@@ -172,6 +177,7 @@ test('restart --web explicitly switches a running native installation to Web', a
     ].join('\n') : '' }),
     kill(pid, signal) { signals.push({ pid, signal }); live = false },
     execute: async () => { throw new Error('--web reopened the native app') },
+    waitReady: async () => {},
     spawnProcess(command, args, options) { spawned.push({ command, args, options }); return { unref() {} } },
   })
   assert.deepEqual(signals, [{ pid: 90, signal: 'SIGTERM' }, { pid: 91, signal: 'SIGTERM' }])

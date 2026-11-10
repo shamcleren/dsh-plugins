@@ -1,4 +1,5 @@
 import type { Logger } from '@deepseek-ai/cordis'
+import { Context } from '@deepseek-ai/cordis'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { EventType, MessageType } from '@wecom/aibot-node-sdk'
 import type { TemplateCard, WsFrame } from '@wecom/aibot-node-sdk'
@@ -9,6 +10,7 @@ import type {
   RpcRequest,
   RpcResponse,
 } from '../src/host-api.js'
+import { createHostApi } from '../src/host-api.js'
 import { normalizeTextFrame, promptRpcIdFor } from '../src/inbound.js'
 import type { WeComTextFrame } from '../src/inbound.js'
 import { WeComConversationRouter } from '../src/router.js'
@@ -1238,4 +1240,40 @@ it('drains shutdown while prompt admission is still pending without an unhandled
   await new Promise<void>(resolve => setImmediate(resolve))
   release()
   await stopped
+})
+
+it('releases a claimed Host question when shutdown precedes its channel presentation', async () => {
+  const test = harness(), ctx = new Context()
+  test.prompt.mockImplementation(async request => success(request, { accepted: true as const, disposition: 'next-turn' as const }))
+  const router = new WeComConversationRouter(test.api, test.replies, logger(), {
+    allowedUsers: [], adminUsers: [], thinkingText: '处理中', turnTimeoutMs: 5000,
+  }, {
+    bindings: { current: (_key, fallback) => fallback, set: async () => undefined },
+    defaultWorkspace: { workspaceId: 'shutdown-question', path: '/tmp', title: 'Questions', sessionIds: [] },
+  })
+  ctx.provide('sessionController', {} as never)
+  ctx.provide('workspaceRegistry', {} as never)
+  let host!: HostApiProxy
+  await ctx.plugin({ apply(inner: Context) {
+    // Keep the Host question frame queued outside the retiring router's mux.
+    host = createHostApi(inner, id => router.routesSession(id))
+    test.api.releaseSession = sessionId => host.releaseSession?.(sessionId)
+  } })
+  const abort = new AbortController(), stream = host.events.mux({ rpcId: 'questions', payload: {} }, abort.signal)[Symbol.asyncIterator]()
+  router.start()
+  try {
+    router.accept(textFrame())
+    await vi.waitFor(() => expect(test.prompt).toHaveBeenCalledOnce())
+    const sessionId = test.prompt.mock.calls[0]![0].payload.sessionId as string
+    await vi.waitFor(() => expect(router.routesSession(sessionId)).toBe(true))
+    const frame = stream.next()
+    const question = ctx.waterfall('user-questions/request', {
+      agent: { id: sessionId }, questions: [{ id: 'confirm', question: 'Continue?' }],
+    } as never, async () => { throw new Error('Owned question must stay in channel') })
+    const rejection = expect(question).rejects.toThrow('Channel session stopped')
+    expect((await frame).value).toMatchObject({ payload: { type: 'question/requested', sessionId } })
+    expect(test.sentCards).toEqual([])
+    await router.stop()
+    await rejection
+  } finally { abort.abort(); await stream.return?.(); await router.stop(); await ctx.fiber.dispose() }
 })

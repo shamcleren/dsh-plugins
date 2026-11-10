@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { pluginSourceDigest } from '../release-inputs.mjs'
 import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -21,7 +23,9 @@ async function source(t, { readme = '# Security scan\n', withLib = true } = {}) 
   const root = join(await scratch(t), 'source')
   const plugin = 'plugins/security-scan/'
   await put(root, 'tsconfig.base.json', '{ "compilerOptions": { "strict": true } }\n')
-  await put(root, plugin + 'package.json', '{ "name": "@shamcleren/dsh-security-scan" }\n')
+  await put(root, plugin + 'package.json', JSON.stringify({ name: '@shamcleren/dsh-security-scan', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } } }))
+  await put(root, plugin + 'cordis.patch.yml', '[]\n')
+  await put(root, 'pnpm-lock.yaml', 'lockfileVersion: 9.0\n')
   await put(root, plugin + 'tsconfig.json', JSON.stringify({ extends: '../../tsconfig.base.json', include: ['src'] }))
   await put(root, plugin + 'README.md', readme)
   await put(root, plugin + 'src/index.ts', 'export {}\n')
@@ -32,8 +36,25 @@ async function source(t, { readme = '# Security scan\n', withLib = true } = {}) 
   await put(root, 'plugins/other/secret.md', 'other plugin\n')
   if (withLib) for (const file of ['index.js', 'index.d.ts', 'cli.js', 'client.js', 'client/app.js']) await put(root, plugin + 'lib/' + file, '// built\n')
   await put(root, '.gitignore', 'node_modules/\nlib/\n')
+  await syncRelease(root)
   execFileSync('git', ['init', '-q', root])
   return root
+}
+
+async function syncRelease(root) {
+  const plugin = join(root, 'plugins/security-scan'), stage = await mkdtemp(join(tmpdir(), 'dsh-export-release-'))
+  try {
+    await cp(plugin, join(stage, 'package'), { recursive: true, filter: path => !path.includes('node_modules') })
+    const sourceDigest = await pluginSourceDigest(plugin, root)
+    const manifest = JSON.parse(await readFile(join(plugin, 'package.json')))
+    await put(stage, 'package/package.json', JSON.stringify({ ...manifest, dshPluginRelease: { schemaVersion: 1, sourceDigest } }))
+    const path = 'artifacts/security.tgz'
+    await mkdir(join(root, 'artifacts'), { recursive: true })
+    execFileSync('tar', ['-czf', join(root, path), '-C', stage, 'package'])
+    const bytes = await readFile(join(root, path))
+    await put(root, 'marketplace.json', JSON.stringify({ plugins: [{ id: 'security-scan', package: manifest.name, version: manifest.version, sourceDigest,
+      artifact: { path, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } }] }))
+  } finally { await rm(stage, { recursive: true, force: true }) }
 }
 
 test('exports a standalone tree with built lib, repository files and a local tsconfig base', async t => {
@@ -41,7 +62,7 @@ test('exports a standalone tree with built lib, repository files and a local tsc
   const dest = join(await scratch(t), 'public')
   const result = await exportSecurityScan({ source: from, dest, log: () => {} })
   assert.deepEqual(result.files, [
-    '.github/workflows/ci.yml', '.gitignore', 'README.md', 'lib/cli.js', 'lib/client.js', 'lib/client/app.js', 'lib/index.d.ts', 'lib/index.js',
+    '.github/workflows/ci.yml', '.gitignore', 'README.md', 'cordis.patch.yml', 'lib/cli.js', 'lib/client.js', 'lib/client/app.js', 'lib/index.d.ts', 'lib/index.js',
     'package.json', 'pnpm-lock.yaml', 'src/index.ts', 'tsconfig.base.json', 'tsconfig.json',
   ])
   assert.equal(JSON.parse(await readFile(join(dest, 'tsconfig.json'), 'utf8')).extends, './tsconfig.base.json')
@@ -58,6 +79,7 @@ test('removes only files from the previous export and keeps the destination Git 
   await put(dest, 'NOTES.md', 'maintainer notes\n')
   await rm(join(from, 'plugins/security-scan/src/index.ts'))
   await put(from, 'plugins/security-scan/src/main.ts', 'export {}\n')
+  await syncRelease(from)
   const result = await exportSecurityScan({ source: from, dest, log: () => {} })
   assert.deepEqual(result.removed, ['src/index.ts'])
   await assert.rejects(readFile(join(dest, 'src/index.ts')), { code: 'ENOENT' })

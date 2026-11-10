@@ -111,27 +111,38 @@ export async function checkCredentials({ home, runtime, log = console.log }) {
 }
 
 /** Check every installed direct dependency, including third-party plugins, against the new runtime. */
-export async function verifyProfilePeers(profile, runtime, ignored = new Set()) {
+export async function profilePeerIssues(profile, runtime, ignored = new Set(), targetVersion) {
   const bytes = await regular(join(profile, 'package.json'))
-  if (!bytes) return
+  if (!bytes) return []
   const manifest = JSON.parse(bytes), semver = createRequire(join(runtime, 'package.json'))('semver')
+  const issues = []
   for (const name of Object.keys(manifest.dependencies ?? {})) {
-    if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name)) throw new Error('Invalid installed package name')
     if (ignored.has(name)) continue
-    const plugin = await json(join(profile, 'node_modules', name, 'package.json'))
-    const engine = plugin.engines?.dsh
-    if (engine !== undefined) {
-      const actual = (await json(join(runtime, 'node_modules/@deepseek-ai/dsh/package.json'))).version
-      if (typeof engine !== 'string' || !semver.valid(actual) || !semver.satisfies(actual, engine)) throw new Error('Runtime update is incompatible with installed ' + name + ': engines.dsh requires ' + engine + ', new runtime has ' + actual + '. Update/remove that plugin with the old installation first, or use an isolated DSH_HOME.')
-    }
-    for (const [peer, range] of Object.entries(plugin.peerDependencies ?? {})) {
-      if (!/^@deepseek-ai\/dsh(?:-[a-z0-9-]+)?$/.test(peer)) continue
-      const actualBytes = await regular(join(runtime, 'node_modules', peer, 'package.json'))
-      if (!actualBytes && plugin.peerDependenciesMeta?.[peer]?.optional) continue
-      const actual = actualBytes ? JSON.parse(actualBytes).version : 'unavailable'
-      if (typeof range !== 'string' || !semver.valid(actual) || !semver.satisfies(actual, range)) throw new Error('Runtime update is incompatible with installed ' + name + ': ' + peer + ' requires ' + range + ', new runtime has ' + actual + '. Update/remove that plugin with the old installation first, or use an isolated DSH_HOME.')
+    if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name)) { issues.push('Invalid installed package name'); continue }
+    try {
+      const plugin = await json(join(profile, 'node_modules', name, 'package.json'))
+      const requirements = Object.entries(plugin.peerDependencies ?? {}).filter(([peer]) => /^@deepseek-ai\/dsh(?:-[a-z0-9-]+)?$/.test(peer))
+      if (plugin.engines?.dsh !== undefined) requirements.unshift(['engines.dsh', plugin.engines.dsh])
+      for (const [peer, range] of requirements) {
+        const packageName = peer === 'engines.dsh' ? '@deepseek-ai/dsh' : peer
+        const actualBytes = await regular(join(runtime, 'node_modules', packageName, 'package.json'))
+        if (!actualBytes && plugin.peerDependenciesMeta?.[peer]?.optional) continue
+        const actual = targetVersion ?? (actualBytes ? JSON.parse(actualBytes).version : 'unavailable')
+        if (typeof range !== 'string' || !semver.valid(actual) || !semver.satisfies(actual, range)) issues.push(
+          'Runtime update is incompatible with installed ' + name + ': ' + peer + ' requires ' + range + ', new runtime has ' + actual +
+          '. Update/remove that plugin with the old installation first, or use an isolated DSH_HOME.')
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error
+      issues.push('Installed plugin metadata is missing or invalid: ' + name)
     }
   }
+  return issues
+}
+
+export async function verifyProfilePeers(profile, runtime, ignored = new Set()) {
+  const issues = await profilePeerIssues(profile, runtime, ignored)
+  if (issues.length) throw new Error(issues.join('\n'))
 }
 
 async function profileFingerprint(profile) {

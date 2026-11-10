@@ -45,8 +45,8 @@ export { parseMarketplaceCatalog } from './catalog.ts'
 /** Stable Cordis service name. */
 export const name = 'trusted-marketplace'
 
-const DEFAULT_BASE_URL = 'https://gitlab.example.com/'
-const DEFAULT_REPOSITORY = 'shamcleren/dsh-plugin'
+const DEFAULT_BASE_URL = 'https://github.com/'
+const DEFAULT_REPOSITORY = 'shamcleren/dsh-plugins'
 const DEFAULT_REF = 'main'
 const DEFAULT_CATALOG_PATH = 'marketplace.json'
 const DEFAULT_OAUTH_CLIENT_ID = '78a69ee90433425fbd1cad0fe687c2e6'
@@ -308,15 +308,14 @@ export class MarketplaceService extends Service {
   }
 
   /**
-   * Remove one installed Catalog package from the configured profile.
-   * @param packageName Exact package identity present in the current Catalog.
+   * Remove a direct dependency owned by the active profile, including delisted packages.
+   * @param packageName Exact installed package identity.
    * @returns Mutation identity and restart requirement.
    */
   async deletePackage(packageName: string): Promise<MarketplaceMutationResult> {
     return await this.serializeMutation(async () => {
-      const catalog = await this.catalog()
-      if (!catalog.plugins.some(entry => entry.packageName === packageName)) {
-        throw new Error(`marketplace package "${packageName}" is not in the catalog`)
+      if (!(await this.installed()).some(entry => entry.packageName === packageName)) {
+        throw new Error('Package is not installed in the active profile')
       }
       const result = await this.ctx.pluginManager.removeBundle(packageName)
       this.requireApplied(result)

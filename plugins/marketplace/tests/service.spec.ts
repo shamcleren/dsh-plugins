@@ -17,7 +17,7 @@ vi.mock('../src/command.ts', () => ({ runCommand: vi.fn() }))
 
 afterEach(async () => { vi.clearAllMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); if (paths.home) await rm(paths.home, { recursive: true, force: true }) })
 
-async function fixture(profileName = 'web') {
+async function fixture(profileName = 'web', source = 'gongfeng') {
   paths.home = await mkdtemp(join(tmpdir(), 'marketplace-source-'))
   const dir = join(paths.home, 'profiles', profileName)
   await mkdir(dir, { recursive: true })
@@ -27,7 +27,7 @@ async function fixture(profileName = 'web') {
     removeBundle: vi.fn(async () => ({ application: 'applied', stage: 'remove' })),
     setBundleEnabled: vi.fn(async () => ({ application: 'applied', stage: 'enable' })),
   }
-  const config: Record<string, unknown> = {}
+  const config: Record<string, unknown> = source === 'gongfeng' ? { baseUrl: 'https://gitlab.example.com/', repository: 'shamcleren/dsh-plugin' } : {}
   const update = vi.fn(async (_ns, value) => { Object.assign(config, value) })
   const describe = vi.fn(async () => ({ configured: false, writable: true }))
   const ctx = {
@@ -106,14 +106,24 @@ it('does not inspect or accept legacy private tokens as OAuth authorization', as
 it.each(['web', 'desktop'])('uses the %s Host manager for removal and propagates its lifecycle', async profile => {
   const f = await fixture(profile)
   f.config.profile = 'some-other-profile'
-  vi.spyOn(f.service, 'catalog').mockResolvedValue({ repository: 'team/plugins', ref: 'main', plugins: [{ packageName: '@example/test' } as never] })
+  await mkdir(join(f.dir, 'node_modules/@example/test'), { recursive: true })
+  await writeFile(join(f.dir, 'package.json'), JSON.stringify({ dependencies: { '@example/test': '1.0.0' } }))
+  await writeFile(join(f.dir, 'node_modules/@example/test/package.json'), JSON.stringify({ name: '@example/test', version: '1.0.0' }))
+  const catalog = vi.spyOn(f.service, 'catalog').mockRejectedValue(new Error('offline'))
   await expect(f.service.deletePackage('@example/test')).resolves.toEqual({ packageName: '@example/test', restartRequired: false })
   expect(f.manager.removeBundle).toHaveBeenCalledExactlyOnceWith('@example/test')
+  expect(catalog).not.toHaveBeenCalled()
   expect(runCommand).not.toHaveBeenCalled()
   f.manager.removeBundle.mockResolvedValue({ application: 'restart-required', stage: 'remove' })
   expect((await f.service.deletePackage('@example/test')).restartRequired).toBe(true)
   f.manager.removeBundle.mockResolvedValue({ application: 'failed', stage: 'remove' })
   await expect(f.service.deletePackage('@example/test')).rejects.toThrow('failed')
+})
+
+it('refuses to remove packages outside the active profile even if a catalog names them', async () => {
+  const f = await fixture()
+  await expect(f.service.deletePackage('@example/foreign')).rejects.toThrow('not installed')
+  expect(f.manager.removeBundle).not.toHaveBeenCalled()
 })
 
 it('lists the active Desktop dependencies even when legacy config points at Web', async () => {
@@ -172,4 +182,10 @@ it.each(['web', 'desktop'])('installs verified artifacts with the %s manager and
   f.manager.installBundle.mockResolvedValue({ application: 'cancelled', stage: 'install' })
   await expect(f.service.add('@example/test')).rejects.toThrow('cancelled')
   expect(f.manager.setBundleEnabled).toHaveBeenCalledTimes(1)
+})
+
+
+it('defaults new workbenches to the public GitHub main repository', async () => {
+  const f = await fixture('web', 'github')
+  expect(await f.service.state()).toMatchObject({ host: 'github', repository: 'shamcleren/dsh-plugins', ref: 'main' })
 })

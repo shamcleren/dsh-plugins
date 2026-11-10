@@ -5,6 +5,7 @@ import { access, mkdir, open } from 'node:fs/promises'
 import { join } from 'node:path'
 import { installationBusy, listOwnedProcesses, readInstallation, readNativeApp } from './installation.mjs'
 import { run } from './process.mjs'
+import { waitForWeb } from './web-ready.mjs'
 
 async function waitUntil(check, attempts, waitMs) {
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -17,6 +18,7 @@ async function waitUntil(check, attempts, waitMs) {
 export async function controlService({
   action, web = false, directory, repo, log = console.log, execute = run,
   inspect, spawnProcess = spawn, kill = (pid, signal) => process.kill(pid, signal),
+  waitReady = waitForWeb,
   waitMs = ms => new Promise(resolve => setTimeout(resolve, ms)),
 }) {
   if (!['start', 'stop', 'restart', 'status'].includes(action)) throw new Error('Unknown service command')
@@ -85,11 +87,24 @@ export async function controlService({
   }
   const port = (desktop ? await readNativeApp(root).catch(() => undefined) : undefined)?.port ?? 3080
   await mkdir(join(root, 'logs'), { recursive: true, mode: 0o700 })
-  const logFile = await open(join(root, 'logs/launcher.log'), 'a', 0o600)
+  const logPath = join(root, 'logs/launcher.log')
+  const logFile = await open(logPath, 'a', 0o600)
   try {
+    const offset = (await logFile.stat()).size
     const child = spawnProcess(launcher, ['web', '--host', '127.0.0.1', '--port', String(port), '--no-open'], {
       cwd: root, detached: true, stdio: ['ignore', logFile.fd, logFile.fd],
     })
+    try { await waitReady({ child, logPath, offset, port }) }
+    catch (error) {
+      // This command owns this new child; never signal a process found by port alone.
+      if (child.pid && child.exitCode == null && child.signalCode == null) {
+        const closed = new Promise(resolve => child.once('close', resolve))
+        child.kill('SIGTERM')
+        const timeout = setTimeout(() => child.kill('SIGKILL'), 5000)
+        try { await closed } finally { clearTimeout(timeout) }
+      }
+      throw error
+    }
     if (typeof child.unref === 'function') child.unref()
   } finally { await logFile.close() }
   log('Started web: ' + launcher + ' web --host 127.0.0.1 --port ' + port)

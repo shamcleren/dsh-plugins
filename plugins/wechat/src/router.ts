@@ -38,6 +38,8 @@ const COMMAND_HELP = [
   '可用命令：',
   '/help - 查看命令',
   '/status - 查看当前模型与 effort',
+  '/tasks - 查看当前聊天的活动任务',
+  '/cancel [会话 ID] - 请求取消当前聊天的活动任务',
   '/new - 新建并切换会话',
   '/workspace [名称或 ID|reset] - 查看或切换工作区',
   '/preset [<id>|reset] - 查看或切换本渠道的 Agent 预设',
@@ -193,6 +195,7 @@ export class WeChatConversationRouter {
     if (this.stopping) return
     this.stopping = true
     this.deliveryAbort.abort()
+    for (const sessionId of this.activeTurns.keys()) this.api.releaseSession?.(sessionId)
     for (const pending of this.pendingApprovals.values()) this.withdrawApproval(pending)
     for (const abort of this.turnAborts) abort.abort()
     this.muxAbort?.abort()
@@ -332,6 +335,8 @@ export class WeChatConversationRouter {
     switch (command) {
       case '/help': return COMMAND_HELP
       case '/status': return await this.status(sessionId)
+      case '/tasks': return args.length === 0 ? this.taskStatus(conversationKey) : '用法：/tasks'
+      case '/cancel': return await this.cancelTask(conversationKey, sessionId, args)
       case '/new': return args.length === 0 ? await this.newSession(conversationKey, sessionId) : '用法：/new'
       case '/workspace': return await this.workspace(conversationKey, sessionId, args)
       case '/preset': return await this.preset(conversationKey, sessionId, args)
@@ -339,6 +344,24 @@ export class WeChatConversationRouter {
       case '/effort': return await this.effort(sessionId, args)
       default: return `未知命令：${command}\n\n${COMMAND_HELP}`
     }
+  }
+
+  private taskStatus(key: string): string {
+    const tasks = [...this.activeTurns.values()].filter(turn => turn.conversationKey === key)
+    if (tasks.length === 0) return '当前聊天没有活动任务。'
+    return ['当前聊天的活动任务：', ...tasks.map(turn => {
+      const phase = this.pendingApprovals.has(turn.sessionId) ? '等待审批' : this.pendingQuestions.has(turn.sessionId) ? '等待回答' : '执行中'
+      return `${turn.sessionId}：${phase}`
+    })].join('\n')
+  }
+
+  private async cancelTask(key: string, currentSessionId: string, args: readonly string[]): Promise<string> {
+    if (args.length > 1) return '用法：/cancel [会话 ID]'
+    const sessionId = args[0] ?? currentSessionId
+    const task = this.activeTurns.get(sessionId)
+    if (!task || task.conversationKey !== key) return '当前聊天中没有这个活动任务。'
+    unwrap(await this.api.sessions.cancel(apiRequest({ sessionId })))
+    return '已请求取消任务；最终状态以任务结束消息为准。'
   }
 
   private async status(sessionId: string): Promise<string> {
@@ -518,11 +541,18 @@ export class WeChatConversationRouter {
     const previousActiveTurn = this.activeTurns.get(sessionId)
     if (previousActiveTurn === undefined) this.activeTurns.set(sessionId, activeTurn)
     const pendingOutcome = this.turnOutcome(sessionId, rpcId, baselineSeq)
-    const response = unwrap(await submitChannelPrompt(this.api, apiRequest({
-      sessionId,
-      mode: previousActiveTurn === undefined ? 'queue' : 'steer',
-      content: message.content,
-    }, rpcId)))
+    let response
+    try {
+      response = unwrap(await submitChannelPrompt(this.api, apiRequest({
+        sessionId,
+        mode: previousActiveTurn === undefined ? 'queue' : 'steer',
+        content: message.content,
+      }, rpcId)))
+    } catch (error) {
+      this.cancelTurnOutcome(pendingOutcome.abort)
+      if (previousActiveTurn === undefined && this.activeTurns.get(sessionId) === activeTurn) this.activeTurns.delete(sessionId)
+      throw error
+    }
     if (response.command?.text !== undefined) {
       this.cancelTurnOutcome(pendingOutcome.abort)
       this.activeTurns.delete(sessionId)
@@ -538,7 +568,7 @@ export class WeChatConversationRouter {
       return
     }
     this.activeTurns.set(sessionId, activeTurn)
-    this.track(this.observeTurn(activeTurn, pendingOutcome.promise))
+    this.track(this.observeTurn(activeTurn, pendingOutcome.promise).finally(() => this.cancelTurnOutcome(pendingOutcome.abort)))
   }
 
   private async baselineSeqUnlessDuplicate(sessionId: string, rpcId: string): Promise<number | undefined> {
@@ -658,10 +688,10 @@ export class WeChatConversationRouter {
     activeTurn: ActiveTurn,
     outcome: Promise<TurnOutcome>,
   ): Promise<void> {
-    await this.replies.sendText(activeTurn.userId, this.config.thinkingText, activeTurn.contextToken)
+    try {
+      await this.replies.sendText(activeTurn.userId, this.config.thinkingText, activeTurn.contextToken)
     if (this.config.sendTyping) void this.replies.typing(activeTurn.userId, 1, activeTurn.contextToken)
       .catch((error: unknown) => { this.logger.warn(`wechat: typing failed: ${String(error)}`) })
-    try {
       const completed = await outcome
       await this.replies.sendText(
         activeTurn.userId,

@@ -1,6 +1,8 @@
-# DeepSeek Harness 插件
+# DeepSeek Harness 个人 AI 工作台
 
-一键安装官方 DSH 与 macOS 桌面版，按需添加安全扫描、微信等插件。无需修改或编译 DSH 官方源码，远端市场可选。
+基于官方 DeepSeek Harness 的个人 AI 工作台，连接桌面与微信，提供开发、安全扫描、资料整理和任务结果交付。按需启用独立插件，通过公开扩展点接入，无需修改 DSH 官方源码。
+
+日常可以在桌面处理项目，在微信中发起任务、处理审批并接收结果。`dhp mode list` 提供远程开发与资料简报的组合入口，`dhp mode plan <场景 ID>` 查看准备步骤和任务示例。
 
 ## 安装与启动
 
@@ -28,6 +30,7 @@ Linux 安装后使用 `./dist/bin/dsh` 启动 Web 版。首次打开 DSH，按�
 ```sh
 ./dhp plugin list                     # 查看插件、安装状态和版本
 ./dhp status                          # 查看运行状态、DSH/App 版本和待更新项
+./dhp doctor                          # 只读检查安装、升级兼容性、端口与备份
 ./dhp plugin install security-scan    # 安装或更新安全扫描
 ./dhp plugin install wechat           # 安装或更新微信插件
 ./dhp plugin install web-search       # 免费联网搜索，无需 API Key
@@ -41,6 +44,7 @@ Linux 安装后使用 `./dist/bin/dsh` 启动 Web 版。首次打开 DSH，按�
 | --- | --- |
 | `security-scan` | [Python、Go、JS/TS 安全扫描与 AI 审计](plugins/security-scan/README.md) |
 | `web-search` | [免费 Exa 网页搜索与正文读取，无需 API Key](plugins/web-search/README.md) |
+| `github-workspace` | [自动准备 GitHub CLI，按组织接入仓库，解锁 git-crypt 并按项目同步](plugins/github-workspace/README.md) |
 | `desktop-share` | [macOS 分享与微信转发文件导入草稿](plugins/desktop-share/README.md) |
 | `dsh-pet` | [macOS 桌面悬浮宠物与任务状态卡](plugins/dsh-pet/README.md) |
 | `wechat` | [扫码绑定个人微信，接收对话与跨会话、定时任务主动通知](plugins/wechat/README.md) |
@@ -78,7 +82,7 @@ Git 仓库市场与 DSH 原生插件管理并存；本地命令安装不需要�
 
 ## 更新
 
-退出 DSH 后，在仓库中执行：
+先执行 `./dhp update --check` 查看兼容性和准备情况；退出 DSH 后，在仓库中执行：
 
 ```sh
 git pull --ff-only
@@ -98,6 +102,7 @@ git pull --ff-only
 
 ```sh
 pnpm install --frozen-lockfile --ignore-scripts
+pnpm --dir runtime install --frozen-lockfile --ignore-scripts
 pnpm typecheck
 pnpm test
 pnpm build

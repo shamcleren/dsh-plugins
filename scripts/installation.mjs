@@ -32,8 +32,17 @@ export async function readInstallation(directory, repo = repositoryRoot) {
 }
 
 function ownsCommand(command, roots) {
-  return roots.some(path => command.includes(path + '/') &&
-    (/\/Contents\/MacOS\/DeepSeekHarness(?:\s|$)/.test(command) || /\/dsh\/lib\/bin\.js(?:\s|$)/.test(command)))
+  const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return roots.some(root => {
+    const path = escape(root)
+    const app = path + '/(?:apps/)?[^/\\r\\n]+\\.app/Contents/'
+    if (new RegExp('^' + app + 'MacOS/DeepSeekHarness(?:\\s|$)').test(command)) return true
+    const script = '(?:' + path + '/runtime|' + app + 'Resources/runtime)/node_modules/@deepseek-ai/dsh/lib/bin\\.js'
+    // ps does not quote paths containing spaces. Match known private Node paths
+    // before the generic system-Node form, then anchor the script argument.
+    const node = '(?:' + path + '/node/bin/node|' + app + 'Resources/node/bin/node|[^\\s]+/node|node)'
+    return new RegExp('^(?:' + node + '\\s+(?:--[^\\s]+\\s+)*)?' + script + '(?:\\s|$)').test(command)
+  })
 }
 
 export async function listOwnedProcesses(root, { inspect = capture, pid = process.pid, canonicalize = realpath } = {}) {

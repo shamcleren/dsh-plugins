@@ -1,6 +1,6 @@
 {
   "name": "@shamcleren/dsh-wechat",
-  "version": "0.6.0",
+  "version": "0.7.1",
   "description": "Personal WeChat channel plugin for DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",

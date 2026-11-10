@@ -189,7 +189,12 @@ export function MarketplacePanel({ remote, t }: Props): ReactNode {
           if (window.confirm(t('confirmRemove'))) void mutate(row.plugin.packageName, () => remote.deletePackage(row.plugin.packageName))
         }}>{busy === row.plugin.packageName ? t('removing') : t('remove')}</button></div>
       </li>)}
-      {unknownInstalled.map(entry => <li key={entry.packageName}><div><strong>{entry.packageName}</strong><code>{entry.version ?? entry.specifier}</code></div></li>)}
+      {unknownInstalled.map(entry => <li key={entry.packageName}>
+        <div><strong>{entry.packageName}</strong><code>{entry.version ?? entry.specifier}</code></div>
+        <div className={css.actions}><button className={css.danger} type="button" disabled={busy !== undefined} onClick={() => {
+          if (window.confirm(t('confirmRemove'))) void mutate(entry.packageName, () => remote.deletePackage(entry.packageName))
+        }}>{busy === entry.packageName ? t('removing') : t('remove')}</button></div>
+      </li>)}
     </ul>}
   </section>
 }

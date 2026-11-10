@@ -85,3 +85,25 @@ it('promotes inbound file bytes to a receipt owned by the receiving Session', as
       content: [{ type: 'file', receiptId: 'receipt-owned' }] }), expect.any(AbortSignal))
   } finally { await ctx.fiber.dispose() }
 })
+
+
+it.each(['owned', 'foreign'])('releases only questions belonging to the retired %s channel session', async retired => {
+  const ctx = new Context()
+  ctx.provide('sessionController', {} as never); ctx.provide('workspaceRegistry', {} as never)
+  let api!: ReturnType<typeof createHostApi>
+  const fiber = await ctx.plugin({ apply(inner: Context) { api = createHostApi(inner, id => id === 'owned') } })
+  const abort = new AbortController(), stream = api.events.mux({ rpcId: 'stream', payload: {} }, abort.signal)[Symbol.asyncIterator]()
+  try {
+    const frame = stream.next()
+    const cancelled = ctx.waterfall('user-questions/request', { agent: { id: 'owned' }, questions: [{ id: 'q', question: 'Continue?' }] } as never,
+      async () => { throw new Error('question must stay in channel') })
+    const rejection = retired === 'owned' ? expect(cancelled).rejects.toThrow('Channel session stopped') : undefined
+    const item = (await frame).value!
+    api.releaseSession?.(retired)
+    if (rejection) await rejection
+    const receipt = await api.respond({ type: 'client-response', rpcId: item.rpcId, result: { ok: true, value: { answer: { answers: [] } } } })
+    if (retired === 'owned') expect(receipt).toEqual({ accepted: false, reason: 'not-pending' })
+    else { expect(receipt).toEqual({ accepted: true }); await expect(cancelled).resolves.toEqual({ answers: [] }) }
+    expect((await stream.next()).value).toMatchObject({ payload: { sessionId: 'owned', outcome: retired === 'owned' ? 'cancelled' : 'answered' } })
+  } finally { abort.abort(); await stream.return?.(); await fiber.dispose(); await ctx.fiber.dispose() }
+})

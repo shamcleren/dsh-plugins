@@ -3,6 +3,8 @@ import { spawnSync } from 'node:child_process'
 import { copyFile, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { releaseArtifact } from './plugins.mjs'
+import { pluginSourceDigest } from './release-inputs.mjs'
 
 export const sourceRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 export const PLUGIN_DIR = 'plugins/security-scan'
@@ -74,9 +76,23 @@ export async function collectFiles(source = sourceRoot, { allowMissingLock = fal
     if (rel.startsWith('standalone/') || rel.startsWith('node_modules/') || rel.startsWith('lib/')) continue
     if (await regularFile(join(source, name))) files.set(rel, await readFile(join(source, name)))
   }
-  // Git installs consume lib/ directly, so the export carries the current release build.
-  for (const required of REQUIRED_LIB) if (!await regularFile(join(plugin, required))) throw new Error('Build the plugin before exporting; missing ' + required)
-  for (const rel of await walk(plugin, 'lib')) files.set(rel, await readFile(join(plugin, rel)))
+  const catalog = JSON.parse(await readFile(join(source, 'marketplace.json'), 'utf8'))
+  const entry = catalog.plugins.find(entry => entry.id === 'security-scan')
+  if (!entry || entry.sourceDigest !== await pluginSourceDigest(plugin, source)) throw new Error('Prepare a fresh catalog release before exporting')
+  await releaseArtifact(source, entry)
+  const archive = join(source, entry.artifact.path)
+  const tar = args => {
+    const result = spawnSync('tar', args, { maxBuffer: 16 * 1024 * 1024 })
+    if (result.status !== 0) throw new Error('Could not read verified release archive')
+    return result.stdout
+  }
+  const names = tar(['-tf', archive]).toString('utf8').trim().split('\n')
+  for (const required of REQUIRED_LIB) if (!names.includes('package/' + required)) throw new Error('Build the plugin before exporting; missing ' + required)
+  // Distribution consumes the exact catalog build, independent of local lib/ leftovers.
+  for (const name of names.filter(name => name.startsWith('package/lib/') && !name.endsWith('/'))) {
+    if (name.includes('\\') || name.split('/').includes('..')) throw new Error('Unsafe release path')
+    files.set(name.slice('package/'.length), tar(['-xOf', archive, name]))
+  }
   for (const [from, to] of TEMPLATES) {
     if (!await regularFile(join(plugin, from))) {
       // The first --refresh-lock run creates the lockfile from the exported manifest.

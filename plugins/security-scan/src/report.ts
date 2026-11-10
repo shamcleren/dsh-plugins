@@ -29,7 +29,7 @@ export const FindingSchema = z.object({
   /** Present when a saved user exclusion matched this finding during the scan. */
   suppression: z.object({ id: z.string().uuid(), reason: z.string().max(500), createdAt: z.string().datetime() }).strict().optional(),
 }).strict()
-export const PLUGIN_VERSION = '0.18.0' as const
+export const PLUGIN_VERSION = '0.18.2' as const
 export const ReportSchema = z.object({
   schemaVersion: z.literal(1), pluginVersion: z.string().regex(/^\d+\.\d+\.\d+$/u), id: z.string().uuid(), createdAt: z.string().datetime(),
   source: z.object({ identity: z.string(), label: text, revision: z.enum(['working-tree', 'index', 'commit']), scope: z.enum(['full', 'diff', 'staged']), commit: z.string().optional(), baseCommit: z.string().optional(), digest: z.string(), files: z.record(path, z.string()), changed: z.array(path).max(10000), skipped: z.number().int().nonnegative() }).strict(),

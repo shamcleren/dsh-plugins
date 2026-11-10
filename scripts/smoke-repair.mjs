@@ -39,7 +39,8 @@ try {
   await rm(join(installation, 'runtime/node_modules/@deepseek-ai/dsh/lib/bin.js'))
   if (privateNode) await rm(join(installation, 'node/bin/node'))
   await command(join(installation, 'bin/dhp'), ['update'])
-  assert.match(await command(join(installation, 'bin/dsh'), ['--version']), /0\.1\./)
+  const expectedVersion = JSON.parse(await readFile(join(repo, 'runtime/package.json'))).dependencies['@deepseek-ai/dsh']
+  assert.equal((await command(join(installation, 'bin/dsh'), ['--version'])).trim(), expectedVersion)
   const repaired = await readFile(marker)
   assert.match(await command(join(installation, 'bin/dhp'), ['update']), /Already up to date/)
   assert.deepEqual(await readFile(marker), repaired)
@@ -78,9 +79,23 @@ export async function apply(ctx) {
   const page = await fetch(url, { headers: { cookie }, signal: AbortSignal.timeout(5000) })
   assert.equal(page.status, 200)
   assert.match(await page.text(), /<html/i)
+  // The official Host moves the legacy document on its first successful boot.
+  const importedSettings = settings + '.imported', importDeadline = Date.now() + 5000
+  let imported
+  while (imported === undefined && Date.now() < importDeadline) {
+    assert.equal(host.exitCode, null, hostOutput)
+    try { imported = await readFile(importedSettings, 'utf8') }
+    catch (error) { if (error.code !== 'ENOENT') throw error }
+    if (imported === undefined) await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  assert.equal(imported, sentinel, 'The official legacy import must preserve the original document')
+  await assert.rejects(readFile(settings), { code: 'ENOENT' })
   host.kill('SIGTERM'); await hostDone; host = undefined
+  const importedPatch = await readFile(join(profile, 'cordis.patch.yml'))
   assert.match(await command(join(installation, 'bin/dhp'), ['update']), /Already up to date/)
-  assert.equal(await readFile(settings, 'utf8'), sentinel)
+  assert.equal(await readFile(importedSettings, 'utf8'), sentinel)
+  assert.deepEqual(await readFile(join(profile, 'cordis.patch.yml')), importedPatch)
+  await assert.rejects(readFile(settings), { code: 'ENOENT' })
   console.log('Repaired launcher serves authenticated Web UI; normal Host startup does not trigger another repair.')
 } finally {
   if (host) { host.kill('SIGTERM'); await hostDone }

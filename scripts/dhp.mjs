@@ -23,6 +23,10 @@ Commands:
   stop                               stop only this installation's App/Web
   restart [--web]                     restart the App Host, or Web with --web
   status                             show installed versions and pending pinned updates (read-only)
+  doctor                             check installation and target plugin compatibility (read-only)
+  update --check                     preview upgrade checks without changing the installation
+  mode list                          list reviewed workbench compositions
+  mode plan <id>                     preview plugins, setup and a task prompt (read-only)
   update [--rebuild]                  update pinned DSH, installed catalog plugins and app
   help
 
@@ -58,6 +62,17 @@ export async function runDhp(argv, hooks = {}) {
   if (command === 'help') {
     if (rest.length !== 1) throw new Error('help does not accept arguments')
     ;(hooks.log ?? console.log)(helpText)
+    return 0
+  }
+  if (command === 'doctor' || (command === 'update' && rest.includes('--check'))) {
+    if (rest.length !== (command === 'doctor' ? 1 : 2)) throw new Error('Usage: dhp doctor | dhp update --check')
+    const { doctor } = await import('./doctor.mjs')
+    return (await doctor({ directory, repo, log: hooks.log, inspect: hooks.inspect, probe: hooks.probe })).ok ? 0 : 1
+  }
+  if (command === 'mode') {
+    if (rest.length > 3) throw new Error('Usage: dhp mode list | dhp mode plan <id>')
+    const { describeModes } = await import('./modes.mjs')
+    await describeModes({ action: rest[1], id: rest[2], directory, repo, log: hooks.log })
     return 0
   }
   if (command === 'plugin' || command === 'p') {
@@ -111,6 +126,7 @@ export async function runDhp(argv, hooks = {}) {
     await controlService({
       action: command, web, directory, repo, log: hooks.log, execute: hooks.execute,
       inspect: hooks.inspect, spawnProcess: hooks.spawnProcess, kill: hooks.kill, waitMs: hooks.waitMs,
+      waitReady: hooks.waitReady,
     })
     return 0
   }

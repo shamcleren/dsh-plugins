@@ -40,7 +40,6 @@ export function apply(ctx) {
       'security-scan': { semgrepPath: '/nonexistent/upgrade-semgrep', hookTools: ['edit'] },
       'trusted-marketplace': { ref: 'upgrade-fixture' },
       'desktop-pet': { petSize: 128 },
-      aidev: { requestTimeoutMs: 31000 },
       wechat: { thinkingText: 'upgrade fixture' },
       'wecom-aibot': { thinkingText: 'upgrade fixture' },
     }
@@ -56,10 +55,10 @@ export function apply(ctx) {
       await assert.rejects(ctx.settings.update(ns, patch, before.revision), /changed|revision|conflict/i)
     }
     await assert.rejects(ctx.settings.update('desktop-pet', { sourceDir: '/tmp/not-owned' }), /live|volatile|editable/i)
-    for (const id of ['aidev', 'dsh-security-audit']) {
+    for (const id of ['dsh-security-audit']) {
       const preset = await ctx.agentPresets.resolve(id)
       assert.equal(preset.broken, undefined, id + ': ' + preset.broken)
     }
-    return { ok: true, value: { forms: Object.keys(changes).length, presets: 2 } }
+    return { ok: true, value: { forms: Object.keys(changes).length, presets: 1 } }
   })
 }

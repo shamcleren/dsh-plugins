@@ -262,7 +262,7 @@ test('update --all --source still rebuilds a plugin already at the catalog versi
 test('./dhp plugin list works with private Node and a quoted --dir, without Node on PATH', async t => {
   const f = await fixture(t)
   await mkdir(join(f.repo, 'scripts'))
-  for (const file of ['dhp.mjs', 'plugins.mjs', 'retired-plugins.mjs', 'process.mjs', 'installation.mjs', 'service.mjs']) {
+  for (const file of ['dhp.mjs', 'plugins.mjs', 'retired-plugins.mjs', 'process.mjs', 'installation.mjs', 'service.mjs', 'web-ready.mjs']) {
     await cp(join(repository, 'scripts', file), join(f.repo, 'scripts', file))
   }
   await cp(join(repository, 'dhp'), join(f.repo, 'dhp'))

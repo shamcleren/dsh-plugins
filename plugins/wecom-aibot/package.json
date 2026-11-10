@@ -1,6 +1,6 @@
 {
   "name": "@shamcleren/dsh-wecom-aibot",
-  "version": "0.7.2",
+  "version": "0.7.5",
   "description": "WeCom AI Bot channel plugin for DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",

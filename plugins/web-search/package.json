@@ -1,6 +1,6 @@
 {
   "name": "@shamcleren/dsh-web-search",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "description": "Free, keyless Exa web search through the official DSH MCP client",
   "type": "module",
   "main": "lib/index.js",

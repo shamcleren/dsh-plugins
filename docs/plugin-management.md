@@ -6,7 +6,7 @@
 
 插件安装使用 `dhp plugin install <插件名>`：未安装则安装，已安装则更新到当前仓库的发布版本。`dhp plugin update --all` 只更新 profile 里已经声明的 catalog 插件，不会把未安装的也装上。`dhp update` 更新 DSH 运行时和 App，并同步升级已安装的本仓库插件；运行时版本不变时仍检查插件更新。市场目录缓存随运行时或已安装插件版本变化而失效，下次打开市场自动从已配置的可信来源刷新。
 
-DSH `0.2.1-rc.5` 的侧栏提供官方「插件」页面，可管理插件安装、配置与启停。微信、企微机器人、AIDEV 和桌宠的配置表单位于各自的已安装插件页面，打开即显示，样式与官方配置页一致；「设置 → 插件」只保留只读的插件列表和 Git 仓库市场；本仓库的远端市场继续负责私有 catalog。MCP 仍使用官方 MCP Client 配置条目，OAuth 授权由对应服务或 transport 处理；该页面不等同于专门的 MCP 登录与连接管理中心。
+DSH `0.2.1-rc.5` 的侧栏提供官方「插件」页面，可管理插件安装、配置与启停。微信、企微机器人和桌宠的配置表单位于各自的已安装插件页面，打开即显示，样式与官方配置页一致；GitHub 项目工作区也从已安装插件的详情页进入。「设置 → 插件」保留只读的插件列表和 Git 仓库市场；仓库市场支持已配置的公开或私有 catalog。MCP 仍使用官方 MCP Client 配置条目，OAuth 授权由对应服务或 transport 处理；该页面不等同于专门的 MCP 登录与连接管理中心。
 
 该版本发布包对配置求值异常仍可能整体启动失败；MCP 配置应在缺少必需凭据时条件禁用，并保持 `failOnStartupError: false`。普通连接失败允许 Host 继续启动，但等待授权或慢连接仍可能延迟就绪。实测边界见 [0.1.6 兼容验证](verification/dsh-0.1.6-compatibility.md)。
 
@@ -16,13 +16,14 @@ DSH `0.2.1-rc.5` 的侧栏提供官方「插件」页面，可管理插件安装
 | 已有 DSH，补装远端市场 | `dhp plugin install marketplace` |
 | 安装或更新微信插件发布包 | `dhp plugin install wechat` |
 | 安装免费联网搜索 | `dhp plugin install web-search` |
+| 安装 GitHub 项目工作区 | `dhp plugin install github-workspace` |
 | 构建并安装微信插件源码 | `dhp plugin install wechat --source` |
 | 更新所有已安装的本仓库插件 | `dhp plugin update --all` |
 | 查看本仓库插件、安装状态和版本 | `dhp plugin list` |
 | 卸载微信插件 | `dhp plugin remove wechat` |
 | 执行插件提供的 CLI | `dhp plugin exec security-scan -- --help` |
 
-插件名使用 catalog 的 `id` 或完整包名；`marketplace` 是 `trusted-marketplace` 的简写。当前其他短名有 `wecom-aibot`、`wecom-tools`、`security-scan`、`desktop-share`、`dsh-pet` 和 `web-search`。不支持的名称会列出可用选项，不会当作任意安装路径执行。
+插件名使用 catalog 的 `id` 或完整包名；`marketplace` 是 `trusted-marketplace` 的简写。当前其他短名有 `wecom-aibot`、`wecom-tools`、`security-scan`、`desktop-share`、`dsh-pet`、`web-search` 和 `github-workspace`。不支持的名称会列出可用选项，不会当作任意安装路径执行。
 
 如果初始化时指定过 `DIR`，后续命令也指定同一目录，例如：
 

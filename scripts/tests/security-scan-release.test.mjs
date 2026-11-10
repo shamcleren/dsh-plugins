@@ -98,3 +98,21 @@ globalThis.fetch = async (url, options) => {
   assert.ok(seen.length > 0 && seen.length <= 12 && seen.every(method => method === 'GET'))
   assert.doesNotMatch(runtimeJson, /packaged-cookie-value|packaged-body-marker/)
 })
+
+test('the delivered security CLI no longer advertises or implements the removed evaluation command', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-security-cli-contract-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const entry = JSON.parse(await readFile(join(repo, 'marketplace.json'), 'utf8')).plugins.find(item => item.id === 'security-scan')
+  await releaseArtifact(repo, entry)
+  const archive = join(repo, entry.artifact.path)
+  const listing = (await exec('tar', ['-tf', archive])).stdout
+  assert.doesNotMatch(listing, /package\/(?:evaluation\/|lib\/evaluation\.)/)
+  await exec('tar', ['-xf', archive, '-C', root])
+  const pkg = join(root, 'package')
+  await symlink(join(repo, 'plugins/security-scan/node_modules'), join(pkg, 'node_modules'), 'dir')
+  const cli = join(pkg, 'lib/cli.js'), env = { PATH: process.env.PATH, HOME: root, DSH_HOME: join(root, 'home') }
+  const help = await exec(process.execPath, [cli, 'help'], { env, timeout: 10000 })
+  assert.doesNotMatch(help.stdout, /evaluate/)
+  await assert.rejects(exec(process.execPath, [cli, 'evaluate'], { env, timeout: 10000 }), error => /Unknown command: evaluate/.test(error.stderr))
+  await assert.rejects(readFile(join(root, 'home/security-scan/toolchains/ready.json')), { code: 'ENOENT' })
+})

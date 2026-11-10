@@ -107,6 +107,8 @@ export interface HostWorkspace {
 }
 
 export interface HostApiProxy {
+  /** Release questions owned by a retiring channel router. */
+  releaseSession?(sessionId: string): void
   workspace: {
     list(request: RpcRequest<Record<string, never>>): Promise<RpcResponse<{
       items: HostWorkspace[]
@@ -145,6 +147,7 @@ export interface HostApiProxy {
       accepted: true
       command?: { kind: 'success'; text?: string }
     }>>
+    cancel(request: RpcRequest<{ sessionId: string }>): Promise<RpcResponse<{ accepted: true }>>
     models(request: RpcRequest<{ sessionId: string }>): Promise<RpcResponse<{
       current: { provider: string; model: string; reasoningEffort?: string }
       groups: Array<{
@@ -214,6 +217,7 @@ export function createHostApi(ctx: Context, routesSession: (sessionId: string) =
   const listeners = new Set<(frame: RpcRequest<HostMuxFrame>) => void>()
   const models = new ConversationModels(ctx)
   const pending = new Map<string, (answer: AskUserQuestionAnswer) => void>()
+  const cancellations = new Map<string, { sessionId: string; cancel(): void }>()
   const emit = (payload: HostMuxFrame, rpcId = randomUUID()) => { for (const listener of listeners) listener({ rpcId, payload }) }
   ctx.effect(() => () => lifetime.abort())
   ctx.on('session/event', (session, event) => { if (routesSession(session.id)) emit({ type: 'session/event', sessionId: session.id, event }) })
@@ -225,9 +229,10 @@ export function createHostApi(ctx: Context, routesSession: (sessionId: string) =
     const rpcId = randomUUID(), signal = AbortSignal.any([lifetime.signal, ...(request.signal ? [request.signal] : [])])
     signal.throwIfAborted()
     return new Promise<AskUserQuestionAnswer>((resolve, reject) => {
-      const finish = (outcome: 'answered' | 'cancelled') => { pending.delete(rpcId); signal.removeEventListener('abort', cancel); emit({ type: 'question/resolved', sessionId, questionRpcId: rpcId, outcome }) }
-      const cancel = () => { finish('cancelled'); reject(signal.reason) }
+      const finish = (outcome: 'answered' | 'cancelled') => { pending.delete(rpcId); cancellations.delete(rpcId); signal.removeEventListener('abort', cancel); emit({ type: 'question/resolved', sessionId, questionRpcId: rpcId, outcome }) }
+      const cancel = () => { finish('cancelled'); reject(signal.reason ?? new Error('Channel session stopped')) }
       pending.set(rpcId, answer => { finish('answered'); resolve(answer) })
+      cancellations.set(rpcId, { sessionId, cancel })
       signal.addEventListener('abort', cancel, { once: true })
       emit({ type: 'question/requested', sessionId, questions: request.questions }, rpcId)
     })
@@ -238,6 +243,9 @@ export function createHostApi(ctx: Context, routesSession: (sessionId: string) =
   }
   const workspace = (item: Workspace): HostWorkspace => ({ workspaceId: item.id, path: item.path, title: item.title, sessionIds: [...item.sessionIds] })
   return {
+    releaseSession(sessionId) {
+      for (const entry of cancellations.values()) if (entry.sessionId === sessionId) entry.cancel()
+    },
     workspace: {
       list: request => response(request, async () => ({ items: registry.list().map(workspace), archivedSessionIds: [...registry.archivedSessionIds] })),
       create: request => response(request, async () => { const previous = registry.list(); const item = await registry.create(request.payload.path); return { workspace: workspace(item), created: !previous.some(old => old.id === item.id) } }),
@@ -257,6 +265,7 @@ export function createHostApi(ctx: Context, routesSession: (sessionId: string) =
       create: request => response(request, async () => { const { sessionId, workspaceId, agentPreset } = request.payload; const result = await controller.create({ sessionId: SessionId(sessionId), ...(workspaceId ? { workspaceId: WorkspaceId(workspaceId) } : {}), ...(agentPreset ? { agentPreset } : {}) }); return result }),
       history: request => response(request, async () => { const history = await controller.inspect(SessionId(request.payload.sessionId), lifetime.signal); const before = request.payload.beforeSeq ?? Infinity; const events = history.events.filter(event => event.seq < before); const count = Math.max(1, Math.min(1000, request.payload.maxMessages ?? 100)); return { events: events.slice(-count).map(event => ({ event })), hasMore: events.length > count } }),
       prompt: request => response(request, async () => { const content = await promoteFiles(ctx, request.payload.sessionId, request.payload.content, lifetime.signal); return controller.prompt({ ...request.payload, content, sessionId: SessionId(request.payload.sessionId), requestId: request.rpcId as SessionRequestId }, lifetime.signal) }),
+      cancel: request => response(request, async () => controller.cancel({ sessionId: SessionId(request.payload.sessionId) })),
       models: request => response(request, async () => {
         const catalog = await controller.modelCatalog(), resolved = await controller.resolveAgent(SessionId(request.payload.sessionId))
         if ('error' in resolved) throw new Error('session-unavailable')

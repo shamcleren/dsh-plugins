@@ -102,6 +102,10 @@ export async function releaseArtifact(repo, entry) {
   if (manifest.name !== entry.package || manifest.version !== entry.version || typeof manifest.dsh?.bundle?.patch !== 'string') {
     throw new Error('Artifact package identity/version/bundle does not match the catalog')
   }
+  if (entry.sourceDigest !== undefined && (!/^[a-f0-9]{64}$/.test(entry.sourceDigest) ||
+      manifest.dshPluginRelease?.schemaVersion !== 1 || manifest.dshPluginRelease.sourceDigest !== entry.sourceDigest)) {
+    throw new Error('Artifact build provenance does not match the catalog')
+  }
   return bytes
 }
 

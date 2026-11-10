@@ -1,4 +1,4 @@
-.PHONY: help init export-public
+.PHONY: help init
 
 .DEFAULT_GOAL := help
 
@@ -14,17 +14,12 @@ help:
 		'make init [DIR=/new/path] [WEB_ONLY=1] [MARKETPLACE=1] [RESUME=1] [REBUILD=1]' \
 		'Initialize or repair an installation. Daily commands:' \
 		'  dhp help' \
+		'  dhp doctor' \
 		'  dhp plugin list' \
 		'  dhp plugin install wechat' \
 		'  dhp plugin update --all' \
 		'  dhp restart' \
-		'  dhp update' \
-		'make export-public DEST=/path/to/dsh-plugins' \
-		'Copy the working tree to a public GitHub checkout without AIDEV or the internal Git host.'
-
-export-public:
-	@test -n "$(DEST)" || { printf '%s\n' 'usage: make export-public DEST=/path/to/dsh-plugins'; exit 1; }
-	@node scripts/export-public.mjs --dest "$(DEST)"
+		'  dhp update'
 
 init:
 	@/bin/sh scripts/init.sh

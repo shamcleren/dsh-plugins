@@ -14,10 +14,14 @@ Install through **Remote Market** or from this repository's local release tarbal
 - Direct text, image, file and video intake; voice transcription and available inline quote text are preserved. Files use Session-owned upload receipts, and image bytes follow the Host attachment path.
 - Durable account-and-peer Session routing and callback deduplication. Messages steer an active channel-owned turn; otherwise they queue through the upstream Host API. A rejected steer retries once as queued input.
 - Final assistant output accumulated across model steps, Unicode-safe outbound chunking, and typing indicators.
-- `/help`, `/status`, `/new`, `/workspace`, `/preset`, `/model`, `/effort`, `/compact`, `/approve`, `/reject`, and `/answer`. `/preset` is channel-local; `/model` and `/effort` change only the current conversation through public Agent hooks.
+- `/help`, `/status`, `/tasks`, `/cancel`, `/new`, `/workspace`, `/preset`, `/model`, `/effort`, `/compact`, `/approve`, `/reject`, and `/answer`. `/preset` is channel-local; `/model` and `/effort` change only the current conversation through public Agent hooks.
 - Channel-owned approvals use the upstream approval waterfall and canonical audit id; unrelated sessions delegate to the Host UI. Questions use the Host interaction API. Web and WeChat do not present the same approval concurrently. Ask and approve requests for an active WeChat turn stay on WeChat even though DSH scopes those events to the Agent fiber.
 - Channel sessions keep a `【微信】` title prefix after DSH generates a title, and the session header shows a WeChat badge. The sidebar has no public row-icon slot, so list identity is the title prefix.
 - Durable text notifications from other sessions, scheduled turns, and Host plugins, with explicit multi-account routing, shared outbound budgets, receipts, cancellation, and restart recovery.
+
+## Remote task controls
+
+The scanning owner can send `/tasks` to list active turns owned by this account/peer conversation, including turns in an earlier conversation after `/new`. `/cancel` requests cancellation of the current active turn; `/cancel <session-id>` selects an active turn shown by `/tasks`. Unknown or other peers' sessions are rejected. These commands use the public Session controller without starting a model turn. Cancellation admission is not completion; the final turn message remains authoritative. This initial task view shows channel-owned active turns, not every desktop task or a scheduler dashboard.
 
 ## Proactive notifications
 
@@ -76,7 +80,7 @@ Credentials, poll cursors and peer context tokens remain under `<dsh-home>/chann
 
 ## Automatic defaults
 
-New sessions use the managed “微信机器人” workspace and inherit the DSH default agent preset and model when the channel has not pinned a preset. The settings card and `/preset` write the same channel-wide `agentPreset`; leaving it unset follows the deployment default, and a pin rebuilds only the current conversation's session. See [channel default policy](../../docs/decisions/channel-default-policy.md). Defaults are a five-minute turn observation limit, 20 MiB inbound image limit, a thinking message and typing indicators. The card does not collect user IDs or expose a channel model picker: `/model` and `/effort` also change the DSH default model. Channel access does not bypass DSH tool permissions or approval policies.
+New sessions use the managed “微信机器人” workspace and inherit the DSH default agent preset and model when the channel has not pinned a preset. The settings card and `/preset` write the same channel-wide `agentPreset`; leaving it unset follows the deployment default, and a pin rebuilds only the current conversation's session. See [channel default policy](../../docs/decisions/channel-default-policy.md). Defaults are a five-minute turn observation limit, 20 MiB inbound image limit, a thinking message and typing indicators. The card does not collect user IDs or expose a channel model picker: `/model` and `/effort` change only the current conversation. Channel access does not bypass DSH tool permissions or approval policies.
 
 ## Protocol limits
 
