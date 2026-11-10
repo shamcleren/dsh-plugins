@@ -9,6 +9,7 @@ import type { ChannelApprovalAnswer, ChannelApprovalRequest, RouterRuntimeContex
 import type { WeChatAccountStore } from './storage.js'
 import type { WeChatAccountCredentials } from './protocol.js'
 import { IdleSleepAssertion } from './wake.js'
+import type { WeChatDelivery } from './delivery.js'
 
 interface ActiveAccount {
   account: WeChatAccount
@@ -25,6 +26,7 @@ export interface WeChatRuntimeOptions {
   api: HostApiProxy
   logger: Logger
   store: WeChatAccountStore
+  delivery?: WeChatDelivery
   prepareContext(config: Config): Promise<RouterRuntimeContext>
   /** Persist a channel policy change made from a chat command. */
   writeSettings(section: WeChatSettingsPatch): Promise<void>
@@ -61,6 +63,8 @@ export class WeChatRuntimeController {
   state(): WeChatReceiverView {
     return { status: this.failed ? 'failed' : this.active ? 'running' : this.options.store.accounts([]).length ? 'starting' : 'waiting', accounts: this.active?.accounts.length ?? 0 }
   }
+
+  accountIds(): string[] { return this.active?.accounts.map(active => active.account.credentials.accountId) ?? [] }
 
   routesSession(sessionId: string): boolean {
     return this.active?.accounts.some(active => active.router.routesSession(sessionId)) === true
@@ -129,6 +133,8 @@ export class WeChatRuntimeController {
           {
             sendText: (userId, text, token) => account.sendText(userId, text, token),
             sendImage: (userId, bytes, token) => account.sendImage(userId, bytes, token),
+            sendFile: (userId, bytes, name, token) => account.sendFile(userId, bytes, name, token),
+            sendVideo: (userId, bytes, token) => account.sendVideo(userId, bytes, token),
             typing: (userId, status, token) => account.typing(userId, status, token),
           },
           this.options.logger,
@@ -142,6 +148,7 @@ export class WeChatRuntimeController {
           this.options.logger,
           runtimeConfig.mediaMaxBytes,
           message => router.accept(message),
+          this.options.delivery,
         )
         router.start()
         account.start()
@@ -153,9 +160,11 @@ export class WeChatRuntimeController {
       throw error
     }
     this.active = { key, accounts, wake }
+    this.options.delivery?.resume()
   }
 
   private async stopActive(): Promise<void> {
+    await this.options.delivery?.pause()
     const active = this.active
     if (active === undefined) return
     this.active = undefined

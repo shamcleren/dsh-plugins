@@ -1,12 +1,15 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
+import type {} from '@deepseek-ai/dsh-client-file-upload'
+import type { PromptContentPart as HostPromptContentPart } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { SessionRequestId } from '@deepseek-ai/dsh-api-session-controller/types'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { WorkspaceId, type Workspace } from '@deepseek-ai/dsh-workspace'
 import type { AskUserQuestionAnswer } from '@deepseek-ai/dsh-user-questions'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import { ConversationModels } from './models.js'
 /** Minimal same-process Host API used by the channel plugin. */
 
 export interface RpcRequest<T> {
@@ -84,9 +87,7 @@ export interface HistoryEntry {
   event: HostSessionEvent
 }
 
-export type PromptContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'image'; mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'; data: string; name?: string }
+export type PromptContentPart = HostPromptContentPart | { type: 'file-bytes'; data: string; name: string }
 
 /** Agent preset row projected for channel command output. */
 export interface HostPreset {
@@ -211,6 +212,7 @@ export function createHostApi(ctx: Context, routesSession: (sessionId: string) =
   const controller = ctx.sessionController, registry = ctx.workspaceRegistry
   const lifetime = new AbortController()
   const listeners = new Set<(frame: RpcRequest<HostMuxFrame>) => void>()
+  const models = new ConversationModels(ctx)
   const pending = new Map<string, (answer: AskUserQuestionAnswer) => void>()
   const emit = (payload: HostMuxFrame, rpcId = randomUUID()) => { for (const listener of listeners) listener({ rpcId, payload }) }
   ctx.effect(() => () => lifetime.abort())
@@ -254,14 +256,14 @@ export function createHostApi(ctx: Context, routesSession: (sessionId: string) =
     sessions: {
       create: request => response(request, async () => { const { sessionId, workspaceId, agentPreset } = request.payload; const result = await controller.create({ sessionId: SessionId(sessionId), ...(workspaceId ? { workspaceId: WorkspaceId(workspaceId) } : {}), ...(agentPreset ? { agentPreset } : {}) }); return result }),
       history: request => response(request, async () => { const history = await controller.inspect(SessionId(request.payload.sessionId), lifetime.signal); const before = request.payload.beforeSeq ?? Infinity; const events = history.events.filter(event => event.seq < before); const count = Math.max(1, Math.min(1000, request.payload.maxMessages ?? 100)); return { events: events.slice(-count).map(event => ({ event })), hasMore: events.length > count } }),
-      prompt: request => response(request, async () => { return controller.prompt({ ...request.payload, sessionId: SessionId(request.payload.sessionId), requestId: request.rpcId as SessionRequestId }, lifetime.signal) }),
+      prompt: request => response(request, async () => { const content = await promoteFiles(ctx, request.payload.sessionId, request.payload.content, lifetime.signal); return controller.prompt({ ...request.payload, content, sessionId: SessionId(request.payload.sessionId), requestId: request.rpcId as SessionRequestId }, lifetime.signal) }),
       models: request => response(request, async () => {
         const catalog = await controller.modelCatalog(), resolved = await controller.resolveAgent(SessionId(request.payload.sessionId))
         if ('error' in resolved) throw new Error('session-unavailable')
         const options = resolved.agent.options
-        return { current: { provider: options.provider ?? catalog.default.provider, model: options.model ?? catalog.default.model, ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}) }, groups: catalog.groups.map(group => ({ ...group, models: group.models.map(model => ({ id: model.id, name: model.name, ...(model.reasoning ? { reasoning: { ...model.reasoning, efforts: [...model.reasoning.efforts] } } : {}) })) })) }
+        return { current: await models.describe(request.payload.sessionId) ?? { provider: options.provider ?? catalog.default.provider, model: options.model ?? catalog.default.model, ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}) }, groups: catalog.groups.map(group => ({ ...group, models: group.models.map(model => ({ id: model.id, name: model.name, ...(model.reasoning ? { reasoning: { ...model.reasoning, efforts: [...model.reasoning.efforts] } } : {}) })) })) }
       }),
-      selectModel: request => response(request, () => controller.selectModel({ ...request.payload, sessionId: SessionId(request.payload.sessionId) })),
+      selectModel: request => response(request, async () => ({ selected: await models.select(request.payload.sessionId, request.payload) })),
     },
     events: {
       async *mux(_request, callerSignal) {
@@ -284,4 +286,17 @@ export function createHostApi(ctx: Context, routesSession: (sessionId: string) =
       return { accepted: true }
     },
   }
+}
+
+/** File receipts belong to the receiving Session and are consumed by the public prompt API. */
+async function promoteFiles(ctx: Context, sessionId: string, content: readonly PromptContentPart[], signal: AbortSignal): Promise<HostPromptContentPart[]> {
+  const result: HostPromptContentPart[] = []
+  for (const part of content) {
+    if (part.type !== 'file-bytes') { result.push(part); continue }
+    const resolved = await ctx.sessionController.resolveAgent(SessionId(sessionId))
+    if ('error' in resolved) throw resolved.error
+    const uploaded = await ctx.fileUploads.upload(resolved.agent, { name: part.name, data: part.data }, signal)
+    result.push({ type: 'file', receiptId: uploaded.receiptId })
+  }
+  return result
 }

@@ -2,6 +2,10 @@
 
 export const en = {
   title: 'WeCom AI Bot',
+  bots: 'Bots', botMissing: 'This Bot was removed; discard changes and select another Bot.', addBot: 'Add Bot', removeBot: 'Disconnect Bot', legacyBot: 'Existing Bot',
+  botsHint: 'Each Bot has independent credentials, access rules, Workspace and model. Disconnecting keeps credentials and conversations. Save changes before switching Bots.',
+  botName: 'Bot name', botNameHint: 'A label to distinguish your Bots.',
+  model: 'Default model', modelHint: 'provider model [effort]; leave blank to inherit. Applies to new conversations; /model changes only the current conversation.',
   description: 'Direct messages and group chats through a WeCom AI Bot. The Bot connects once its ID and secret are configured.',
   on: 'On',
   off: 'Off',
@@ -32,7 +36,7 @@ export const en = {
   sectionConversation: 'Conversations',
   advanced: 'Advanced settings',
   agentPreset: 'Agent preset',
-  agentPresetHint: 'The first option follows the deployment default. An unavailable preset cannot be selected. Admins can also switch it from chat with /preset. /model and /effort are not channel-local: selecting a model also changes the deployment-wide default.',
+  agentPresetHint: 'The first option follows the deployment default. An unavailable preset cannot be selected. Admins can also switch it from chat with /preset. /model and /effort change only the current conversation.',
   presetInherit: 'Follow the deployment default',
   presetLoading: 'Loading presets…',
   presetLoadFailed: 'The preset list is unavailable. This channel keeps following the deployment default until the list can be read.',
@@ -57,6 +61,10 @@ export const en = {
 
 export const zh: Record<keyof typeof en, string> = {
   title: '企业微信 AI Bot',
+  bots: '机器人', botMissing: '该机器人已被移除；请放弃修改后选择其他机器人。', addBot: '添加机器人', removeBot: '断开机器人', legacyBot: '现有机器人',
+  botsHint: '每个机器人独立配置凭据、权限、工作区和模型。断开后保留凭据与会话；切换机器人前请先保存修改。',
+  botName: '机器人名称', botNameHint: '用于区分多个机器人。',
+  model: '默认模型', modelHint: '填写 provider model [effort]；留空跟随默认。对新会话生效，/model 只切换当前会话。',
   description: '通过企业微信 AI Bot 接入单聊和群聊；填好 Bot ID 与 Secret 后自动连接。',
   on: '已开启',
   off: '已关闭',
@@ -87,7 +95,7 @@ export const zh: Record<keyof typeof en, string> = {
   sectionConversation: '会话',
   advanced: '高级设置',
   agentPreset: 'Agent 预设',
-  agentPresetHint: '第一项表示跟随部署默认预设；不可用的预设不能选择。管理员也可在企微里发 /preset 切换。/model 与 /effort 不是渠道级的：选模型会同时改掉全局默认模型。',
+  agentPresetHint: '第一项表示跟随部署默认预设；不可用的预设不能选择。管理员也可在企微里发 /preset 切换。/model 与 /effort 只修改当前会话的模型。',
   presetInherit: '跟随全局默认',
   presetLoading: '正在加载预设…',
   presetLoadFailed: '预设列表不可用。在列表能够读取之前，本渠道继续跟随部署默认预设。',

@@ -1,4 +1,4 @@
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { HostSessionEvent } from './host-api.js'
 
 /** WeCom's documented UTF-8 limit for a stream reply body. */
@@ -126,9 +126,41 @@ export function fallbackReply(reason: unknown): string {
   }
 }
 
+export type OutboundFile = { kind: 'attachment'; attachment: FileAttachmentRef } | { kind: 'presented'; path: string }
+
+/** Only explicit delivered files are sent; prose links never trigger filesystem reads. */
+export function deliveredFiles(event: HostSessionEvent): OutboundFile[] {
+  if (event.type === 'deliverables/presented') {
+    const data = record(event.data)
+    if (typeof data?.callId !== 'string' || !Array.isArray(data.files)) return []
+    return data.files.flatMap(value => {
+      const file = record(value)
+      return typeof file?.path === 'string' && file.path.trim() !== ''
+        ? [{ kind: 'presented' as const, path: file.path }] : []
+    })
+  }
+  if (event.type !== 'assistant/message') return []
+  const content = record(record(event.data)?.message)?.content
+  if (!Array.isArray(content)) return []
+  return content.flatMap(value => {
+    const block = record(value), attachment = record(block?.attachment)
+    if (block?.type !== 'file' || typeof attachment?.attachmentId !== 'string'
+      || typeof attachment.name !== 'string' || typeof attachment.bytes !== 'number'
+      || !Number.isSafeInteger(attachment.bytes) || attachment.bytes < 0) return []
+    return [{ kind: 'attachment' as const, attachment: attachment as unknown as FileAttachmentRef }]
+  })
+}
+
+export interface TurnOutcome {
+  text: string
+  images: readonly ImageAttachmentRef[]
+  files: readonly OutboundFile[]
+  reason: unknown
+}
+
 export interface TurnProjectionUpdate {
   partial?: string
-  outcome?: { text: string; images: readonly ImageAttachmentRef[]; reason: unknown }
+  outcome?: TurnOutcome
 }
 
 /** Fold one admitted prompt's durable events into reply updates. */
@@ -139,6 +171,7 @@ export class TurnProjection {
   private readonly completedText: string[] = []
   private stepText = new Map<number, string>()
   private readonly images: ImageAttachmentRef[] = []
+  private readonly files = new Map<string, OutboundFile>()
 
   constructor(private readonly promptRpcId: string) {}
 
@@ -164,11 +197,15 @@ export class TurnProjection {
       partial = this.fullText()
     }
     this.images.push(...assistantImages(event))
+    for (const file of deliveredFiles(event)) {
+      const key = file.kind === 'presented' ? `path:${file.path}` : `attachment:${file.attachment.attachmentId}:${file.attachment.name}`
+      this.files.set(key, file)
+    }
     if (event.type !== 'turn/end') return partial === undefined ? {} : { partial }
     const data = record(event.data) ?? {}
     return {
       ...partial === undefined ? {} : { partial },
-      outcome: { text: this.fullText(), images: [...this.images], reason: data.reason },
+      outcome: { text: this.fullText(), images: [...this.images], files: [...this.files.values()], reason: data.reason },
     }
   }
 

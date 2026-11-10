@@ -4,9 +4,8 @@ import { downloadMedia } from './media.js'
 import { MessageItemType } from './protocol.js'
 import type { MessageItem, WeixinMessage } from './protocol.js'
 
-export type PromptContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'image'; mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'; data: string; name?: string }
+export type { PromptContentPart } from './host-api.js'
+import type { PromptContentPart } from './host-api.js'
 
 export interface WeChatInboundMessage {
   accountId: string
@@ -21,8 +20,9 @@ function digest(parts: readonly string[]): string {
 }
 
 function messageIdentity(message: WeixinMessage): string {
+  if (typeof message.message_id === 'number' && !Number.isSafeInteger(message.message_id)) throw new Error('wechat: numeric message id lost precision')
   const identity = message.client_id ?? message.message_id?.toString()
-  if (identity === undefined) throw new Error('wechat: inbound message has no stable id')
+  if (typeof identity !== 'string' || identity === '') throw new Error('wechat: inbound message has no stable id')
   return identity
 }
 
@@ -45,16 +45,28 @@ function textFor(item: MessageItem): string | undefined {
 async function contentParts(
   message: WeixinMessage,
   mediaMaxBytes: number,
+  signal?: AbortSignal,
 ): Promise<PromptContentPart[]> {
   const content: PromptContentPart[] = []
   for (const item of message.item_list ?? []) {
+    const quote = item.ref_msg
+    if (quote !== undefined) {
+      const text = quote.message_item === undefined ? quote.title : textFor(quote.message_item) ?? quote.title
+      content.push({ type: 'text', text: `引用消息：${text || '原消息内容暂不可用'}` })
+    }
     const text = textFor(item)
     if (text !== undefined && text !== '') content.push({ type: 'text', text })
+    const file = item.type === MessageItemType.FILE ? item.file_item?.media
+      : item.type === MessageItemType.VIDEO ? item.video_item?.media : undefined
+    if (file !== undefined) {
+      const bytes = await downloadMedia(file, file.aes_key, DEFAULT_CDN_BASE_URL, mediaMaxBytes, signal)
+      content.push({ type: 'file-bytes', name: item.file_item?.file_name ?? 'video.mp4', data: bytes.toString('base64') })
+    }
     if (item.type !== MessageItemType.IMAGE || item.image_item?.media === undefined) continue
     const key = item.image_item.aeskey === undefined
       ? item.image_item.media.aes_key
       : Buffer.from(item.image_item.aeskey, 'hex').toString('base64')
-    const bytes = await downloadMedia(item.image_item.media, key, DEFAULT_CDN_BASE_URL, mediaMaxBytes)
+    const bytes = await downloadMedia(item.image_item.media, key, DEFAULT_CDN_BASE_URL, mediaMaxBytes, signal)
     content.push({ type: 'image', mediaType: imageMediaType(bytes), data: bytes.toString('base64') })
   }
   if (content.length === 0) content.push({ type: 'text', text: '[微信消息没有可读取的内容]' })
@@ -66,8 +78,9 @@ export async function normalizeInboundMessage(
   accountId: string,
   message: WeixinMessage,
   mediaMaxBytes: number,
+  signal?: AbortSignal,
 ): Promise<WeChatInboundMessage> {
-  if (message.from_user_id === undefined || message.from_user_id === '') {
+  if (typeof message.from_user_id !== 'string' || message.from_user_id === '') {
     throw new Error('wechat: inbound message has no sender')
   }
   return {
@@ -75,7 +88,7 @@ export async function normalizeInboundMessage(
     messageId: messageIdentity(message),
     userId: message.from_user_id,
     ...message.context_token === undefined ? {} : { contextToken: message.context_token },
-    content: await contentParts(message, mediaMaxBytes),
+    content: await contentParts(message, mediaMaxBytes, signal),
   }
 }
 

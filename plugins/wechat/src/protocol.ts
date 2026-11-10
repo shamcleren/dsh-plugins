@@ -26,14 +26,15 @@ export interface MessageItem {
   type?: number
   msg_id?: string
   text_item?: { text?: string }
+  ref_msg?: { message_item?: MessageItem; title?: string; svr_id?: string }
   image_item?: { media?: CdnMedia; aeskey?: string; mid_size?: number }
   voice_item?: { media?: CdnMedia; text?: string }
-  file_item?: { media?: CdnMedia; file_name?: string }
-  video_item?: { media?: CdnMedia }
+  file_item?: { media?: CdnMedia; file_name?: string; len?: string }
+  video_item?: { media?: CdnMedia; video_size?: number }
 }
 
 export interface WeixinMessage {
-  message_id?: number
+  message_id?: number | string
   client_id?: string
   from_user_id?: string
   create_time_ms?: number

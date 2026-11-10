@@ -6,9 +6,9 @@ The default [repository bootstrap](../../README.md) (`make init`, which also han
 
 For a standalone shell build, run `pnpm build:macos` at the repository root. It uses the shared `runtime/` lock and produces `apps/macos/dist/DeepSeek Harness.app`. Node archives are pinned by SHA-256; the final application is signed locally unless `CODESIGN_IDENTITY` selects a distribution identity.
 
-The runtime is pinned to official DSH `0.1.7-rc.2`; the native shell version is `0.2.14`. Upgrading DSH requires updating the runtime lockfile and verifying every installed plugin against that official version. New installations reuse credentials and plugin data from `~/.dsh`. Existing installed apps keep their originally configured data directory.
+The runtime is pinned to official DSH `0.2.1-rc.5`; the native shell version is `0.2.16`. Upgrading DSH requires updating the runtime lockfile and verifying every installed plugin against that official version. New installations reuse credentials and plugin data from `~/.dsh`. Existing installed apps keep their originally configured data directory.
 
-Optionally install the trusted Marketplace, WeChat, WeCom Bot, WeCom Tools, Codex Controller and AIDEV as separate profile bundles. The native application provides window/menu behavior, Host startup/restart, and an origin-restricted browser bridge for OAuth handoff. macOS signing and notarization are distribution responsibilities of this repository.
+Optionally install the trusted Marketplace, WeChat, WeCom Bot, WeCom Tools and AIDEV as separate profile bundles. The native application provides window/menu behavior, Host startup/restart, and an origin-restricted browser bridge for OAuth handoff. macOS signing and notarization are distribution responsibilities of this repository.
 
 `pnpm test:macos` at the repository root validates the official runtime lock, compiles the native launcher, and executes its shared-profile path selection. The bootstrap tests and a fresh installation verify the actual official package installation. No live channel is enabled and no model prompt is sent.
 

@@ -6,7 +6,7 @@
 
 插件安装使用 `dhp plugin install <插件名>`：未安装则安装，已安装则更新到当前仓库的发布版本。`dhp plugin update --all` 只更新 profile 里已经声明的 catalog 插件，不会把未安装的也装上。`dhp update` 更新 DSH 运行时和 App，并同步升级已安装的本仓库插件；运行时版本不变时仍检查插件更新。市场目录缓存随运行时或已安装插件版本变化而失效，下次打开市场自动从已配置的可信来源刷新。
 
-DSH `0.1.7-rc.2` 的侧栏提供官方「插件」页面，可管理插件安装、配置与启停。微信、企微机器人、AIDEV 和桌宠的配置表单位于各自的已安装插件页面，打开即显示，样式与官方配置页一致；「设置 → 插件」只保留只读的插件列表和 Git 仓库市场；本仓库的远端市场继续负责私有 catalog。MCP 仍使用官方 MCP Client 配置条目，OAuth 授权由对应服务或 transport 处理；该页面不等同于专门的 MCP 登录与连接管理中心。
+DSH `0.2.1-rc.5` 的侧栏提供官方「插件」页面，可管理插件安装、配置与启停。微信、企微机器人、AIDEV 和桌宠的配置表单位于各自的已安装插件页面，打开即显示，样式与官方配置页一致；「设置 → 插件」只保留只读的插件列表和 Git 仓库市场；本仓库的远端市场继续负责私有 catalog。MCP 仍使用官方 MCP Client 配置条目，OAuth 授权由对应服务或 transport 处理；该页面不等同于专门的 MCP 登录与连接管理中心。
 
 该版本发布包对配置求值异常仍可能整体启动失败；MCP 配置应在缺少必需凭据时条件禁用，并保持 `failOnStartupError: false`。普通连接失败允许 Host 继续启动，但等待授权或慢连接仍可能延迟就绪。实测边界见 [0.1.6 兼容验证](verification/dsh-0.1.6-compatibility.md)。
 
@@ -22,7 +22,7 @@ DSH `0.1.7-rc.2` 的侧栏提供官方「插件」页面，可管理插件安装
 | 卸载微信插件 | `dhp plugin remove wechat` |
 | 执行插件提供的 CLI | `dhp plugin exec security-scan -- --help` |
 
-插件名使用 catalog 的 `id` 或完整包名；`marketplace` 是 `trusted-marketplace` 的简写。当前其他短名有 `wecom-aibot`、`wecom-tools`、`codex-controller`、`security-scan`、`desktop-share`、`dsh-pet` 和 `web-search`。不支持的名称会列出可用选项，不会当作任意安装路径执行。
+插件名使用 catalog 的 `id` 或完整包名；`marketplace` 是 `trusted-marketplace` 的简写。当前其他短名有 `wecom-aibot`、`wecom-tools`、`security-scan`、`desktop-share`、`dsh-pet` 和 `web-search`。不支持的名称会列出可用选项，不会当作任意安装路径执行。
 
 如果初始化时指定过 `DIR`，后续命令也指定同一目录，例如：
 
@@ -97,10 +97,12 @@ dhp plugin install wecom-tools --source
 
 `dhp plugin remove …` 使用包名卸载，兼容 pnpm 的脚本禁用配置；无论插件最初由远端还是本地安装都可以使用。它移除依赖和 bundle 启用记录，不清空设置、凭据、会话或插件数据。
 
-远端和本地按包名识别同一个插件，不需要安装两份。远端目录包含该包时，远端市场能识别本地安装的版本；选择远端更新后，DSH 改用 catalog 中的发布包，本地源码改动不会自动上传或合并。
+远端和本地按包名识别同一个插件，不需要安装两份。远端目录包含该包时，远端市场能识别本地安装的版本。DSH 0.2.1 的公开 Host 接口在热重载开启时拒绝覆盖已安装包，因此市场的“升级说明”会引导退出 DSH 后执行 `dhp update`；不会自动卸载重装来绕过该限制。其他安装方式按其安装说明升级，本地源码改动不会自动上传或合并。
 
 短命令仅管理本仓库 catalog 中的插件。对于其他 npm 包或自定义路径，仍可使用安装器生成的 `bin/dsh plugin --profile web …` 官方 CLI。直接调用官方 CLI 不会自动处理本仓库 catalog 的摘要和加载位置。
 
 `dhp plugin exec <name> -- <args...>` 只负责查找已安装插件在 `package.json` 中声明的唯一 `bin`，并使用该安装记录的 Node.js 与 `DSH_HOME` 执行。命令语义、参数和退出码仍由插件自己定义；没有 CLI、声明多个 CLI 或尚未安装的插件会被拒绝。因此安全扫描不是 `dhp` 的内置能力，而是 `security-scan` 插件自己的 `dsh-security` CLI。
 
 安装和卸载命令会通过 profile 中的 `.local-plugin.lock` 串行保护，遇到已有锁时拒绝执行。正常结束或失败会释放锁；异常退出遗留的锁需确认原进程已结束后再处理。失败时会恢复 profile manifest 和 lockfile，但不删除插件数据，也不承诺撤销已经产生的开发构建文件或所有依赖目录变动。
+
+明确退役的 `codex-controller` 不再发布或安装。`dhp update` 在可回滚的 profile 暂存事务内经官方 CLI 卸载旧包，保留配置、凭据与会话；也可以在退出 DSH 后执行 `dhp plugin remove codex-controller`。仅从 catalog 消失而没有退役声明的其他插件不会自动删除。

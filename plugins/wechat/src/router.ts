@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Logger } from '@deepseek-ai/cordis'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { ConversationBindings } from './bindings.js'
 import type {
@@ -19,6 +19,9 @@ import { HostApiError, unwrap, submitChannelPrompt } from './host-api.js'
 import { conversationKeyFor, promptRpcIdFor, sessionIdFor } from './inbound.js'
 import type { WeChatInboundMessage } from './inbound.js'
 import { admittedPromptRpcIds, fallbackReply, TurnProjection } from './reply.js'
+import type { TurnOutcome } from './reply.js'
+import { collectFileBytes } from './files.js'
+import type { OutboundFileBytes } from './files.js'
 import type { WeChatRuntimeConfig, WeChatSettingsPatch } from './config.js'
 
 const HISTORY_PAGE_MESSAGES = 100
@@ -30,14 +33,7 @@ function replacesExistingSession(code: string): boolean {
   return code === 'session-conflict' || code === 'session/conflict'
     || code === 'agent-preset-conflict' || code === 'agent-preset/conflict'
 }
-/**
- * Selecting a model is deployment-wide upstream: `sessions.selectModel` installs
- * the Session choice and then saves it as the default for every future Agent,
- * and the desktop client's own `/model` runs the same code. No public API sets a
- * Session model without that save, so the channel states the reach instead of
- * implying an isolation it cannot provide.
- */
-const GLOBAL_MODEL_NOTICE = '注意：这会同时改变 DSH 的全局默认模型，桌面端之后新建的对话也会用它。'
+const LOCAL_MODEL_NOTICE = '此选择仅作用于当前微信会话。'
 const COMMAND_HELP = [
   '可用命令：',
   '/help - 查看命令',
@@ -45,8 +41,8 @@ const COMMAND_HELP = [
   '/new - 新建并切换会话',
   '/workspace [名称或 ID|reset] - 查看或切换工作区',
   '/preset [<id>|reset] - 查看或切换本渠道的 Agent 预设',
-  '/model [provider model [effort]] - 查看或切换模型（会改全局默认）',
-  '/effort [level] - 查看或调整推理强度（会改全局默认）',
+  '/model [provider model [effort]] - 查看或切换模型（仅当前会话）',
+  '/effort [level] - 查看或调整推理强度（仅当前会话）',
   '/compact - 压缩当前会话',
   '/answer <答案> - 回答当前交互问题',
 ].join('\n')
@@ -54,6 +50,8 @@ const COMMAND_HELP = [
 interface WeChatReplies {
   sendText(userId: string, text: string, contextToken?: string): Promise<void>
   sendImage(userId: string, bytes: Buffer, contextToken?: string): Promise<void>
+  sendFile(userId: string, bytes: Buffer, name: string, contextToken?: string): Promise<void>
+  sendVideo(userId: string, bytes: Buffer, contextToken?: string): Promise<void>
   typing(userId: string, status: 1 | 2, contextToken?: string): Promise<void>
 }
 
@@ -62,6 +60,8 @@ export interface RouterRuntimeContext {
   defaultWorkspace: HostWorkspace
   /** Absent on deployments without an attachment store; images then fall back to text. */
   readImage?: (ref: ImageAttachmentRef) => Promise<Uint8Array>
+  readFile?: (ref: FileAttachmentRef, signal: AbortSignal) => AsyncIterable<Uint8Array>
+  readPresentedFile?: (sessionId: string, path: string, maxBytes: number, signal: AbortSignal) => Promise<OutboundFileBytes>
 }
 
 export interface ChannelApprovalRequest {
@@ -124,8 +124,9 @@ function undeliveredImageNotice(failed: number, total: number): string {
   return `${scope}未能发送到微信，已保存在 DSH 会话中。`
 }
 
-function finalReply(completed: { text: string; images: readonly ImageAttachmentRef[]; reason: unknown }): string {
+function finalReply(completed: TurnOutcome): string {
   if (completed.text !== '') return completed.text
+  if (completed.files.length > 0) return '附件如下：'
   return completed.images.length > 0 ? IMAGE_LEAD_IN : fallbackReply(completed.reason)
 }
 
@@ -142,6 +143,7 @@ export class WeChatConversationRouter {
   private muxAbort: AbortController | undefined
   private muxTask: Promise<void> | undefined
   private stopping = false
+  private deliveryAbort = new AbortController()
   /** Live channel preset; `/preset` moves it without reopening the accounts. */
   private agentPreset: string | undefined
 
@@ -166,6 +168,7 @@ export class WeChatConversationRouter {
   start(): void {
     if (this.muxTask !== undefined) return
     this.stopping = false
+    this.deliveryAbort = new AbortController()
     this.muxAbort = new AbortController()
     this.muxTask = this.consumeMux(this.muxAbort.signal)
   }
@@ -189,6 +192,7 @@ export class WeChatConversationRouter {
   async stop(): Promise<void> {
     if (this.stopping) return
     this.stopping = true
+    this.deliveryAbort.abort()
     for (const pending of this.pendingApprovals.values()) this.withdrawApproval(pending)
     for (const abort of this.turnAborts) abort.abort()
     this.muxAbort?.abort()
@@ -465,7 +469,7 @@ export class WeChatConversationRouter {
     if (reasoningEffort !== undefined && !target.reasoning?.efforts.some(entry => entry.id === reasoningEffort)) return '该模型不支持指定的 effort；发送 /model 查看可选项。'
     const selected = unwrap(await this.api.sessions.selectModel(apiRequest({ sessionId, provider, model,
       ...reasoningEffort === undefined ? {} : { reasoningEffort } }))).selected
-    return `已切换到 ${selected.provider} / ${selected.model}，Effort：${selected.reasoningEffort ?? '默认'}。\n${GLOBAL_MODEL_NOTICE}`
+    return `已切换到 ${selected.provider} / ${selected.model}，Effort：${selected.reasoningEffort ?? '默认'}。\n${LOCAL_MODEL_NOTICE}`
   }
 
   private async effort(sessionId: string, args: readonly string[]): Promise<string> {
@@ -477,7 +481,7 @@ export class WeChatConversationRouter {
     if (args.length !== 1 || reasoningEffort === undefined || !efforts.some(entry => entry.id === reasoningEffort)) return '该模型不支持指定的 effort；发送 /effort 查看可选项。'
     const selected = unwrap(await this.api.sessions.selectModel(apiRequest({ sessionId,
       provider: models.current.provider, model: models.current.model, reasoningEffort }))).selected
-    return `Effort 已切换为 ${selected.reasoningEffort ?? reasoningEffort}。\n${GLOBAL_MODEL_NOTICE}`
+    return `Effort 已切换为 ${selected.reasoningEffort ?? reasoningEffort}。\n${LOCAL_MODEL_NOTICE}`
   }
 
   private async ensureSession(key: string, requestedSessionId: string): Promise<string> {
@@ -558,7 +562,7 @@ export class WeChatConversationRouter {
     rpcId: string,
     baselineSeq: number,
   ): {
-    promise: Promise<{ text: string; images: readonly ImageAttachmentRef[]; reason: unknown }>
+    promise: Promise<TurnOutcome>
     abort: AbortController
   } {
     const projection = new TurnProjection(rpcId)
@@ -566,9 +570,7 @@ export class WeChatConversationRouter {
     this.turnAborts.add(abort)
     let listener: EventListener | undefined
     let timer: ReturnType<typeof setTimeout> | undefined
-    const promise = new Promise<{
-      text: string; images: readonly ImageAttachmentRef[]; reason: unknown
-    }>((resolve, reject) => {
+    const promise = new Promise<TurnOutcome>((resolve, reject) => {
       listener = event => {
         if (event.seq <= baselineSeq) return
         const update = projection.push(event)
@@ -615,9 +617,46 @@ export class WeChatConversationRouter {
     ).catch((error: unknown) => { this.logger.error(error) })
   }
 
+  private async sendFiles(activeTurn: ActiveTurn, files: TurnOutcome['files']): Promise<void> {
+    let failed = 0
+    const signal = this.deliveryAbort.signal
+    for (const file of files) {
+      if (this.stopping) return
+      try {
+        let loaded: OutboundFileBytes
+        if (file.kind === 'presented') {
+          if (this.runtime.readPresentedFile === undefined) throw new Error('presented file reader unavailable')
+          loaded = await this.runtime.readPresentedFile(activeTurn.sessionId, file.path, this.config.mediaMaxBytes, signal)
+        } else {
+          if (file.attachment.bytes > this.config.mediaMaxBytes) throw new Error('file exceeds mediaMaxBytes')
+          if (this.runtime.readFile === undefined) throw new Error('file attachment store unavailable')
+          const bytes = await collectFileBytes(this.runtime.readFile(file.attachment, signal), this.config.mediaMaxBytes, signal)
+          if (bytes.length !== file.attachment.bytes) throw new Error('file attachment length mismatch')
+          loaded = { name: file.attachment.name, bytes }
+        }
+        signal.throwIfAborted()
+        if (loaded.bytes.length > this.config.mediaMaxBytes) throw new Error('file exceeds mediaMaxBytes')
+        const name = loaded.name.split(/[\\/]/u).at(-1) || 'attachment'
+        if (/\.(mp4|m4v|mov)$/iu.test(name)) {
+          await this.replies.sendVideo(activeTurn.userId, loaded.bytes, activeTurn.contextToken)
+        } else {
+          await this.replies.sendFile(activeTurn.userId, loaded.bytes, name, activeTurn.contextToken)
+        }
+      } catch {
+        failed += 1
+        // Signed CDN parameters and local paths must not enter channel logs.
+        this.logger.warn('wechat: file/video delivery failed')
+      }
+    }
+    if (failed === 0 || this.stopping) return
+    await this.replies.sendText(activeTurn.userId,
+      `本轮 ${files.length} 个文件或视频中的 ${failed} 个未能发送到微信，请在 DSH 会话中查看；可能超过媒体大小限制或上传失败。`,
+      activeTurn.contextToken)
+  }
+
   private async observeTurn(
     activeTurn: ActiveTurn,
-    outcome: Promise<{ text: string; images: readonly ImageAttachmentRef[]; reason: unknown }>,
+    outcome: Promise<TurnOutcome>,
   ): Promise<void> {
     await this.replies.sendText(activeTurn.userId, this.config.thinkingText, activeTurn.contextToken)
     if (this.config.sendTyping) void this.replies.typing(activeTurn.userId, 1, activeTurn.contextToken)
@@ -630,6 +669,7 @@ export class WeChatConversationRouter {
         activeTurn.contextToken,
       )
       await this.sendImages(activeTurn, completed.images)
+      await this.sendFiles(activeTurn, completed.files)
     } finally {
       if (this.config.sendTyping) void this.replies.typing(activeTurn.userId, 2, activeTurn.contextToken)
         .catch((error: unknown) => { this.logger.warn(`wechat: typing cancellation failed: ${String(error)}`) })

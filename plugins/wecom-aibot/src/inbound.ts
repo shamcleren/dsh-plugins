@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto'
-import type { TextMessage, WsFrame } from '@wecom/aibot-node-sdk'
+import type { BaseMessage, TextMessage, WsFrame } from '@wecom/aibot-node-sdk'
 
-export type WeComTextFrame = WsFrame<TextMessage>
+export type WeComTextFrame = WsFrame<BaseMessage>
 
 export interface WeComInboundText {
+  media?: readonly InboundMedia[]
+  quote?: string
   messageId: string
   userId: string
   text: string
@@ -11,6 +13,8 @@ export interface WeComInboundText {
   conversationId: string
   botId: string
 }
+
+export interface InboundMedia { kind: 'image' | 'file' | 'video'; url: string; key?: string }
 
 /** Routing fields recovered from a WeCom template-card callback. */
 export interface WeComTemplateCardClick {
@@ -36,14 +40,40 @@ export function normalizeTextFrame(frame: WeComTextFrame): WeComInboundText {
   const messageId = requiredString(message.msgid, 'msgid')
   const botId = requiredString(message.aibotid, 'aibotid')
   const userId = requiredString(message.from?.userid, 'from.userid')
-  const text = requiredString(message.text?.content, 'text.content')
+  const fields = objectFields(body) ?? {}
+  const media: InboundMedia[] = []
+  const texts: string[] = []
+  const readPart = (part: Record<string, unknown>): void => {
+    const kind = part.msgtype
+    if (kind === 'text' || kind === 'voice') {
+      const text = stringField(objectFields(part[kind])?.content)
+      if (text !== undefined) texts.push(text)
+    }
+    if (kind === 'image' || kind === 'file' || kind === 'video') {
+      const value = objectFields(part[kind]), url = stringField(value?.url), key = stringField(value?.aeskey)
+      if (url === undefined) throw new Error('wecom-aibot: media callback has no URL')
+      media.push({ kind, url, ...key === undefined ? {} : { key } })
+    }
+  }
+  if (fields.msgtype === 'mixed') {
+    const items = objectFields(fields.mixed)?.msg_item
+    if (!Array.isArray(items)) throw new Error('wecom-aibot: malformed mixed callback')
+    for (const item of items) { const part = objectFields(item); if (part !== undefined) readPart(part) }
+  } else readPart(fields)
+  // Programmatic text callers predating msgtype remain supported.
+  if (fields.msgtype === undefined && message.text?.content) texts.push(message.text.content)
+  const text = texts.join('\n') || (media.length ? '[企微附件]' : '')
+  requiredString(text, 'message content')
+  const quote = objectFields(fields.quote)
+  const quoteText = stringField(objectFields(quote?.text)?.content) ?? stringField(objectFields(quote?.voice)?.content)
   if (message.chattype !== 'single' && message.chattype !== 'group') {
     throw new Error('wecom-aibot: text frame has invalid chattype')
   }
   const conversationId = message.chattype === 'group'
     ? requiredString(message.chatid, 'chatid')
     : userId
-  return { messageId, userId, text, chatType: message.chattype, conversationId, botId }
+  return { messageId, userId, text, chatType: message.chattype, conversationId, botId,
+    ...media.length ? { media } : {}, ...quoteText === undefined ? {} : { quote: quoteText } }
 }
 
 function objectFields(value: unknown): Record<string, unknown> | undefined {

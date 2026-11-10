@@ -17,7 +17,7 @@ interface StubConfigForm<T> {
 function stubConfigForm<T>(): StubConfigForm<T> {
   let snapshot: ConfigFormSnapshot<T> = {
     status: 'loading', value: undefined, base: undefined, user: undefined,
-    revision: undefined, writable: false, mode: 'host',
+    revision: undefined, writable: false,
   }
   const listeners = new Set<() => void>()
   const set = vi.fn(async () => true)
@@ -110,7 +110,7 @@ describe('WeCom browser settings card', () => {
     const snapshot = face.hooks.weComCard.getSnapshot()
     const tags = intrinsicTags(WeComCard({ ...face, useWeComCard: (select: (value: typeof snapshot) => unknown) => select(snapshot), t: (key: string) => key } as never))
     expect(tags).not.toContain('details')
-    expect(tags.filter(tag => tag === 'h3')).toHaveLength(4)
+    expect(tags.filter(tag => tag === 'h3')).toHaveLength(5)
     expect(tags.filter(tag => tag === 'input').length).toBeGreaterThanOrEqual(4)
   })
 
@@ -309,3 +309,44 @@ function intrinsicTags(node: ReactNode): string[] {
   const own = typeof node.type === 'string' ? [node.type] : []
   return [...own, ...intrinsicTags(node.props.children)]
 }
+
+it('writes only the selected Bot and fences roster edits by revision', async () => {
+  const host = stubConfigForm<Config>(), credentials = credentialsApi(false)
+  const alpha = { id: 'alpha', workspaceId: 'workspace-a' }, beta = { id: 'beta', workspaceId: 'workspace-b' }
+  host.publish({ status: 'ready', writable: true, revision: 7, value: { bots: [alpha, beta] }, user: { bots: [alpha, beta] }, base: {} })
+  const controller = new WeComCardController(host.scope, credentials.api), face = controller.inject()
+  face.selectBot('beta')
+  expect(face.hooks.weComCard.getSnapshot().workspaceId.text).toBe('workspace-b')
+  face.edit('workspaceId', 'workspace-c'); face.save()
+  await vi.waitFor(() => expect(host.scope.mutate).toHaveBeenCalledWith([
+    { op: 'set', path: ['bots', '1', 'workspaceId'], value: 'workspace-c' },
+  ], 7))
+  controller.dispose()
+})
+
+it('refuses a draft for a removed Bot instead of saving it onto the next Bot', async () => {
+  const host = stubConfigForm<Config>(), credentials = credentialsApi(false)
+  const alpha = { id: 'alpha' }, beta = { id: 'beta' }
+  host.publish({ status: 'ready', writable: true, revision: 1, value: { bots: [alpha, beta] }, user: { bots: [alpha, beta] }, base: {} })
+  const controller = new WeComCardController(host.scope, credentials.api), face = controller.inject()
+  face.edit('workspaceId', 'alpha-only')
+  host.publish({ revision: 2, value: { bots: [beta] }, user: { bots: [beta] } })
+  face.save()
+  await vi.waitFor(() => expect(face.hooks.weComCard.getSnapshot().writable).toBe(false))
+  expect(host.scope.mutate).not.toHaveBeenCalled()
+  expect(face.hooks.weComCard.getSnapshot().selectedBotId).toBe('alpha')
+  expect(face.hooks.weComCard.getSnapshot().botIdWritable).toBe(false)
+  controller.dispose()
+})
+
+it('keeps rejected edits visible when the settings transport throws', async () => {
+  const host = stubConfigForm<Config>(), credentials = credentialsApi(false)
+  host.publish({ status: 'ready', writable: true, value: {}, user: {}, base: {} })
+  host.set.mockRejectedValue(new Error('transport disconnected'))
+  const controller = new WeComCardController(host.scope, credentials.api), face = controller.inject()
+  face.edit('thinkingText', '保留这次修改'); face.save()
+  await vi.waitFor(() => expect(face.hooks.weComCard.getSnapshot()).toMatchObject({
+    saving: false, failed: true, dirty: true, thinkingText: { text: '保留这次修改' },
+  }))
+  controller.dispose()
+})

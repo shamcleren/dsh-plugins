@@ -90,7 +90,10 @@ describe('outbound media', () => {
       cdnBaseUrl: 'https://cdn.example.test/c2c',
     })
 
-    expect(String(fetchMock.mock.calls[1]![0])).toBe('https://cdn.example.test/c2c/upload?signed=abc')
+    const url = new URL(String(fetchMock.mock.calls[1]![0]))
+    expect(url.origin + url.pathname).toBe('https://cdn.example.test/c2c/upload')
+    expect(url.searchParams.get('encrypted_query_param')).toBe('signed=abc')
+    expect(url.searchParams.get('filekey')).toMatch(/^[a-f0-9]{32}$/u)
   })
 
   it.each([
@@ -131,4 +134,24 @@ describe('outbound media', () => {
       cdnBaseUrl: 'https://cdn.example.test/c2c',
     })).rejects.toThrow(message)
   })
+})
+
+it.each([2, 3] as const)('uses the independent upload media enum %s for video and files', async mediaType => {
+  const { uploadMedia } = await import('../src/media.js')
+  const fetchMock = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ upload_param: 'signed' })))
+    .mockResolvedValueOnce(cdnResponse())
+  vi.stubGlobal('fetch', fetchMock)
+  await uploadMedia({ baseUrl: 'https://example.test', token: 'test', userId: 'peer', bytes: Buffer.from('file'), cdnBaseUrl: 'https://cdn.example.test', mediaType })
+  expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ media_type: mediaType, rawsize: 4, filesize: 16 })
+})
+
+it('bounds downloads without a content-length header', async () => {
+  const { downloadMedia } = await import('../src/media.js')
+  let cancelled = false
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({
+    pull(controller) { controller.enqueue(new Uint8Array(128)) }, cancel() { cancelled = true },
+  }))))
+  await expect(downloadMedia({ full_url: 'https://cdn.example.test/file' }, undefined, 'https://cdn.example.test', 256)).rejects.toThrow('exceeds')
+  expect(cancelled).toBe(true)
 })

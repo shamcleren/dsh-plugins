@@ -179,7 +179,9 @@ export class CardForm<T> {
     this.publish()
     const rejected: string[] = []
     for (const write of plan) {
-      if (write.run !== undefined && !await write.run()) rejected.push(write.field)
+      try {
+        if (write.run !== undefined && !await write.run()) rejected.push(write.field)
+      } catch { rejected.push(write.field) }
     }
     if (rejected.length === 0) this.staged.clear()
     this.saving = false

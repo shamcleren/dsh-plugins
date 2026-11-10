@@ -42,3 +42,10 @@ describe('iLink API', () => {
     await expect(requestQrStatus('https://ilink.example.test', 'opaque-code')).resolves.toEqual({ status: 'wait' })
   })
 })
+
+
+it('preserves recent WeChat message ids without numeric rounding', async () => {
+  const { parseProtocolJson } = await import('../src/api.js')
+  expect(parseProtocolJson('{"message_id":9223372036854775807,"svr_id":9223372036854775806,"other":1}'))
+    .toEqual({ message_id: '9223372036854775807', svr_id: '9223372036854775806', other: 1 })
+})

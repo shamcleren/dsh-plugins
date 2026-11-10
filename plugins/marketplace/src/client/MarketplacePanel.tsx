@@ -67,7 +67,7 @@ export function MarketplacePanel({ remote, t }: Props): ReactNode {
       setNotice(t(needsRestart ? 'restartPending' : 'changesApplied'))
       await load(false)
     } catch (failure) {
-      setError(errorMessage(failure))
+      setError(errorMessage(failure).includes('marketplace-update-offline') ? t('updateOffline') : errorMessage(failure))
     } finally {
       setBusy(undefined)
     }
@@ -85,27 +85,9 @@ export function MarketplacePanel({ remote, t }: Props): ReactNode {
     }
   }
 
-  const updateAll = async (): Promise<void> => {
-    setBusy('update-all')
+  const showUpdateInstructions = (): void => {
     setError(undefined)
-    let completed = 0
-    let needsRestart = restartPending
-    try {
-      for (const row of updates) {
-        const result = await remote.add(row.plugin.packageName)
-        needsRestart ||= result.restartRequired
-        completed += 1
-      }
-    } catch (failure) {
-      setError(`${t('partialUpdate')} ${errorMessage(failure)}`)
-    } finally {
-      if (completed > 0) {
-        setRestartPending(needsRestart)
-        setNotice(t(needsRestart ? 'restartPending' : 'changesApplied'))
-        await load(false).catch((failure: unknown) => { setError(errorMessage(failure)) })
-      }
-      setBusy(undefined)
-    }
+    setNotice(t('updateOffline'))
   }
 
   const connect = async (authorize: boolean): Promise<void> => {
@@ -186,7 +168,7 @@ export function MarketplacePanel({ remote, t }: Props): ReactNode {
         <select value={filter} onChange={event => { setFilter(event.currentTarget.value as CatalogFilter) }} aria-label={t('compatible')}>
           <option value="all">{t('all')}</option><option value="compatible">{t('compatible')}</option><option value="updates">{t('updates')}</option>
         </select>
-        <button type="button" disabled={updates.length === 0 || busy !== undefined} onClick={() => { void updateAll() }}>{busy === 'update-all' ? t('working') : `${t('updateAll')} (${updates.length})`}</button>
+        <button type="button" disabled={updates.length === 0 || busy !== undefined} onClick={showUpdateInstructions}>{`${t('updateInstructions')} (${updates.length})`}</button>
       </div>
       {visible.length === 0 ? <p className={css.empty}>{t('empty')}</p> : <ul className={css.grid}>{visible.map(row => <li key={row.plugin.packageName} className={css.pluginCard}>
         <div className={css.pluginHeader}><strong>{row.plugin.name}</strong>{row.installed === undefined ? null : <span className={css.badge}>{t('installedTag')}</span>}</div>
@@ -195,15 +177,15 @@ export function MarketplacePanel({ remote, t }: Props): ReactNode {
         <div className={css.meta}><span>v{row.plugin.version}</span><span>{row.plugin.dshVersion}</span></div>
         <div className={css.cardFooter}>
           {row.plugin.compatible ? null : <span className={css.incompatible}>{t('incompatible')}</span>}
-          <button type="button" disabled={!row.plugin.compatible || (row.installed !== undefined && !row.updateAvailable) || busy !== undefined} onClick={() => { void mutate(row.plugin.packageName, () => remote.add(row.plugin.packageName)) }}>
-            {busy === row.plugin.packageName ? t('working') : row.installed === undefined ? t('install') : t('update')}
+          <button type="button" disabled={!row.plugin.compatible || (row.installed !== undefined && !row.updateAvailable) || busy !== undefined} onClick={() => { if (row.installed !== undefined) showUpdateInstructions(); else void mutate(row.plugin.packageName, () => remote.add(row.plugin.packageName)) }}>
+            {busy === row.plugin.packageName ? t('working') : row.installed === undefined ? t('install') : t('updateInstructions')}
           </button>
         </div>
       </li>)}</ul>}
     </> : installedRows.length === 0 && unknownInstalled.length === 0 ? <p className={css.empty}>{t('emptyInstalled')}</p> : <ul className={css.list}>
       {installedRows.map(row => <li key={row.plugin.packageName}>
         <div><strong>{row.plugin.name}</strong><code>{row.plugin.packageName} · {row.installed?.version ?? row.installed?.specifier}</code></div>
-        <div className={css.actions}>{row.updateAvailable ? <button type="button" disabled={busy !== undefined} onClick={() => { void mutate(row.plugin.packageName, () => remote.add(row.plugin.packageName)) }}>{t('update')}</button> : null}<button className={css.danger} type="button" disabled={busy !== undefined} onClick={() => {
+        <div className={css.actions}>{row.updateAvailable ? <button type="button" disabled={busy !== undefined} onClick={showUpdateInstructions}>{t('updateInstructions')}</button> : null}<button className={css.danger} type="button" disabled={busy !== undefined} onClick={() => {
           if (window.confirm(t('confirmRemove'))) void mutate(row.plugin.packageName, () => remote.deletePackage(row.plugin.packageName))
         }}>{busy === row.plugin.packageName ? t('removing') : t('remove')}</button></div>
       </li>)}

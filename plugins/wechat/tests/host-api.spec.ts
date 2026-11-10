@@ -67,3 +67,21 @@ it('answers an agent-scoped question from a sibling plugin fiber', async () => {
     expect(await answered).toEqual({ answers: [{ id: 'confirm', selected: [], custom: '继续' }] })
   } finally { abort.abort(); await stream.return?.(); await fiber.dispose(); await ctx.fiber.dispose() }
 })
+
+it('promotes inbound file bytes to a receipt owned by the receiving Session', async () => {
+  const ctx = new Context(), agent = { id: 'owned' }, prompt = vi.fn(async () => ({ accepted: true as const }))
+  const upload = vi.fn(async () => ({ receiptId: 'receipt-owned', file: {} }))
+  ctx.provide('sessionController', { prompt, resolveAgent: async () => ({ agent }) } as never)
+  ctx.provide('workspaceRegistry', {} as never)
+  ctx.provide('fileUploads', { upload } as never)
+  let api!: ReturnType<typeof createHostApi>
+  await ctx.plugin({ apply(inner: Context) { api = createHostApi(inner, () => true) } })
+  try {
+    await expect(api.sessions.prompt({ rpcId: 'file-prompt', payload: {
+      sessionId: 'owned', mode: 'queue', content: [{ type: 'file-bytes', name: 'report.txt', data: 'ZGF0YQ==' }],
+    } })).resolves.toMatchObject({ result: { ok: true } })
+    expect(upload).toHaveBeenCalledWith(agent, { name: 'report.txt', data: 'ZGF0YQ==' }, expect.any(AbortSignal))
+    expect(prompt).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'owned',
+      content: [{ type: 'file', receiptId: 'receipt-owned' }] }), expect.any(AbortSignal))
+  } finally { await ctx.fiber.dispose() }
+})

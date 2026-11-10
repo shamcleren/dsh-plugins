@@ -85,7 +85,7 @@ export async function scanWorkspace(options: ScanOptions) {
     const base = { coverage, rules: Object.keys(RULES).length, findings: [] as Finding[], llmReviewRequired: true }
     if (options.mode === 'inventory' || files.length === 0) return { ...base, status: 'inventory-only' as const }
     const binary = await executable(options.semgrepPath ?? 'semgrep', workspace)
-    if (!binary) return { ...base, status: 'scanner-unavailable' as const, guidance: `Use DSH security-review for LLM review, or configure semgrepPath for Semgrep ${SEMGREP_VERSION}. No static scan was performed.` }
+    if (!binary) return { ...base, status: 'scanner-unavailable' as const, guidance: `Use DSH dsh-security-review for LLM review, or configure semgrepPath for Semgrep ${SEMGREP_VERSION}. No static scan was performed.` }
     const version = await runScanner(binary, ['--version'], scratch, options.signal)
     if (version.code !== 0 || version.stdout.trim() !== SEMGREP_VERSION) return { ...base, status: 'unsupported-scanner' as const, guidance: `This plugin is verified with Semgrep ${SEMGREP_VERSION}. No static scan was performed.` }
     const findings: Finding[] = [], scannedPaths = new Set<string>()

@@ -18,7 +18,7 @@ All sessions on one Host process share the operating-system account's `wecom-cli
 
 ## Upstream ownership
 
-The packaged content is pinned to `wecomTeam/wecom-unified` commit `33aaa7155b0d1584828bc143a3877c4b5ec438fe`; only trailing Markdown whitespace is normalized for repository checks. The package carries the upstream MIT license and notice. Updating the snapshot requires an explicit source review, test run, version bump, and new Marketplace artifact hash.
+The packaged content follows the upstream snapshot and local CLI preflight override recorded in [THIRD_PARTY_NOTICES.md](../../plugins/wecom-tools/THIRD_PARTY_NOTICES.md). The package carries the upstream MIT license. Updating it requires source review, tests, a version bump, and a new catalog artifact hash.
 
 ## Acceptance criteria
 

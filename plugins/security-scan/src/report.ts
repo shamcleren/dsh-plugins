@@ -21,16 +21,19 @@ export const FindingSchema = z.object({
   file: path, line: z.number().int().positive(), title: text, cwe: z.string().max(100),
   severity: z.enum(['critical', 'high', 'medium', 'low', 'info']), status: z.enum(['confirmed', 'needs-review', 'dismissed']),
   change: z.enum(['new', 'existing', 'unknown', 'not-observed']), evidence: text, recommendation: text, verification: text, citations: CitationsSchema.optional(),
+  endpoint: z.object({ url: z.string().max(2000), method: z.literal('GET'), status: z.number().int().min(0).max(999) }).strict().optional(),
   dependency: z.object({ name: z.string().max(300), version: z.string().max(200), ecosystem: z.string().max(100),
     advisoryId: z.string().max(150), aliases: z.array(z.string().max(150)).max(100), fixedVersions: z.array(z.string().max(200)).max(100),
     summary: text, references: z.array(z.string().max(2000)).max(30), metadataAvailable: z.boolean(), locationExact: z.boolean(),
   }).strict().optional(),
+  /** Present when a saved user exclusion matched this finding during the scan. */
+  suppression: z.object({ id: z.string().uuid(), reason: z.string().max(500), createdAt: z.string().datetime() }).strict().optional(),
 }).strict()
-export const PLUGIN_VERSION = '0.13.0' as const
+export const PLUGIN_VERSION = '0.18.0' as const
 export const ReportSchema = z.object({
   schemaVersion: z.literal(1), pluginVersion: z.string().regex(/^\d+\.\d+\.\d+$/u), id: z.string().uuid(), createdAt: z.string().datetime(),
   source: z.object({ identity: z.string(), label: text, revision: z.enum(['working-tree', 'index', 'commit']), scope: z.enum(['full', 'diff', 'staged']), commit: z.string().optional(), baseCommit: z.string().optional(), digest: z.string(), files: z.record(path, z.string()), changed: z.array(path).max(10000), skipped: z.number().int().nonnegative() }).strict(),
-  policy: z.object({ engine: z.string(), rulesDigest: z.string(), dependencies: z.boolean(), secrets: z.boolean(), view: z.enum(['all', 'new']), failOn: z.enum(['none', 'high', 'medium']) }).strict(),
+  policy: z.object({ engine: z.string(), rulesDigest: z.string(), dependencies: z.boolean(), secrets: z.boolean(), view: z.enum(['all', 'new']), failOn: z.enum(['none', 'high', 'medium']), dynamic: z.string().max(2000).optional() }).strict(),
   engines: z.array(z.object({ name: z.string(), version: z.string(), status: z.enum(['completed', 'partial', 'unavailable', 'failed', 'skipped']), detail: text }).strict()).max(10),
   coverage: z.object({ files: z.number(), scannedFiles: z.number(), omittedFindings: z.number(), detail: text }).strict(),
   findings: z.array(FindingSchema).max(2000), baseline: z.object({ id: z.string(), comparable: z.boolean(), reason: text, notObserved: z.array(FindingSchema).max(2000) }).optional(),
@@ -70,7 +73,11 @@ export async function writeReport(root: string, value: Report, draft = false): P
 export async function reviewReport(file: string, reviews: Review[], root: string, additional: AdditionalFinding[] = [], agent?: AgentAudit, retainParent = true, reportId = randomUUID(), evidenceArchive?: EvidenceArchive): Promise<{ json: string; html: string }> {
   const original = await readReport(file), entries = z.array(ReviewSchema).max(2000).parse(reviews)
   if (new Set(entries.map(item => item.findingId)).size !== entries.length) throw new Error('Duplicate review finding IDs')
-  for (const review of entries) if (!original.findings.some(item => item.id === review.findingId)) throw new Error('Review refers to an unknown finding')
+  for (const review of entries) {
+    const finding = original.findings.find(item => item.id === review.findingId)
+    if (!finding) throw new Error('Review refers to an unknown finding')
+    if (finding.suppression) throw new Error('Review refers to a finding the user excluded; restore the exclusion first')
+  }
   const additions = z.array(AdditionalFindingSchema).max(100).parse(additional)
   for (const item of additions) if (!Object.hasOwn(original.source.files, item.file)) throw new Error('Additional finding is outside the scanned snapshot')
   const report: Report = { ...original, pluginVersion: PLUGIN_VERSION, id: reportId, createdAt: new Date().toISOString(), ...(retainParent ? { parentReport: original.id } : { parentReport: undefined }),
@@ -144,5 +151,7 @@ export async function listReports(root: string, source?: string): Promise<Report
 }
 export function renderReport(input: Report): string { return renderReportView(ReportSchema.parse(input)) }
 export function sarif(report: Report): unknown {
-  return { version: '2.1.0', $schema: 'https://json.schemastore.org/sarif-2.1.0.json', runs: [{ tool: { driver: { name: 'dsh-security-scan', version: report.pluginVersion } }, results: report.findings.filter(item => item.status !== 'dismissed').map(item => ({ ruleId: item.rule, level: ['critical', 'high'].includes(item.severity) ? 'error' : 'warning', message: { text: item.title + '\n' + item.recommendation }, locations: [{ physicalLocation: { artifactLocation: { uri: item.file.split('/').map(encodeURIComponent).join('/') }, region: { startLine: item.line } } }], partialFingerprints: { primaryLocationLineHash: item.fingerprint }, properties: { status: item.status, change: item.change } })) }] }
+  // Runtime findings point at the checked URL; there is no repository file to annotate.
+  const location = (item: Finding) => item.endpoint ? { physicalLocation: { artifactLocation: { uri: item.endpoint.url } } } : { physicalLocation: { artifactLocation: { uri: item.file.split('/').map(encodeURIComponent).join('/') }, region: { startLine: item.line } } }
+  return { version: '2.1.0', $schema: 'https://json.schemastore.org/sarif-2.1.0.json', runs: [{ tool: { driver: { name: 'dsh-security-scan', version: report.pluginVersion } }, results: report.findings.filter(item => item.status !== 'dismissed').map(item => ({ ruleId: item.rule, level: ['critical', 'high'].includes(item.severity) ? 'error' : 'warning', message: { text: item.title + '\n' + item.recommendation }, locations: [location(item)], partialFingerprints: { primaryLocationLineHash: item.fingerprint }, properties: { status: item.status, change: item.change, ...(item.endpoint ? { endpoint: item.endpoint } : {}) } })) }] }
 }

@@ -87,7 +87,7 @@ it('finds all baseline rule families with real Semgrep across Python, Go and JS'
   await writeFile(join(f.workspace, 'safe.ts'), 'function show(value: string, el: HTMLElement) { el.textContent = value; const opts={rejectUnauthorized:true}; }\n')
   const result = await scanWorkspace({ ...f.options, semgrepPath: process.env.SECURITY_TEST_SEMGREP! })
   expect(result.status).toBe('completed')
-  expect(new Set(result.findings.map(item => item.rule)).size).toBe(12)
+  expect(new Set(result.findings.map(item => item.rule))).toEqual(new Set(['python-shell', 'python-eval', 'python-pickle', 'python-tls', 'python-yaml', 'go-shell', 'go-tls', 'go-sql', 'js-eval', 'js-shell', 'js-tls', 'js-html'].map(name => 'dsh-security.' + name)))
   expect(result.findings.some(item => item.file === 'app.ts')).toBe(true)
   expect(result.findings.some(item => item.file.startsWith('safe.'))).toBe(false)
 })
@@ -100,4 +100,11 @@ it('scans beyond 1500 source files in bounded batches, retaining later findings'
   expect(result.status).toBe('completed')
   expect(result).toMatchObject({ scannedFiles: 1506, coverage: { files: 1506, limited: false } })
   expect(result.findings).toEqual([expect.objectContaining({ file: '1504.py' })])
+})
+
+it('keeps the bundled rule file generated from scripts/build-rules.mjs', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const result = spawnSync(process.execPath, ['scripts/build-rules.mjs', '--check'], { cwd: new URL('..', import.meta.url), encoding: 'utf8' })
+  expect(result.stderr).toBe('')
+  expect(result.status).toBe(0)
 })

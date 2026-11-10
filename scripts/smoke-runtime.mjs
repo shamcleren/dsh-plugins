@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { verifyProfilePeers } from './home-compatibility.mjs'
 import { releaseArtifact } from './plugins.mjs'
 import { releaseInfo } from './bootstrap.mjs'
+import { smokeTarget } from './smoke-target.mjs'
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const update = process.argv.includes('--update')
@@ -22,16 +23,19 @@ const desktopApp = desktopArg && resolve(desktopArg.slice('--desktop-app='.lengt
 if (desktopApp && update) throw new Error('Desktop compatibility and managed Web update are separate checks')
 const previousRuntimeArg = process.argv.find(arg => arg.startsWith('--previous-runtime='))
 if (update && !previousRuntimeArg) throw new Error('--update requires --previous-runtime=/path/to/old/runtime to install the old plugins with their compatible runtime')
-const runtime = resolve(process.argv.slice(2).find(arg => arg !== '--update' && arg !== '--startup-only' && arg !== previousRuntimeArg && arg !== desktopArg) ?? join(repo, 'runtime'))
+const runtimeOverride = process.argv.slice(2).find(arg => arg !== '--update' && arg !== '--startup-only' && arg !== previousRuntimeArg && arg !== desktopArg)
+const target = await smokeTarget({ repo, desktopApp, runtimeOverride })
+const { runtime, node: nodeExecutable, profileName } = target
+const officialDesktop = target.kind === 'electron'
 const previousRuntime = previousRuntimeArg ? resolve(previousRuntimeArg.slice('--previous-runtime='.length)) : runtime
 const scratch = await mkdtemp(join(tmpdir(), 'dsh-release-smoke-'))
 const home = join(scratch, 'home'), ready = join(scratch, 'ready.json')
 const cli = join(runtime, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
-const env = { HOME: home, DSH_HOME: home, PATH: dirname(process.execPath) + ':' + join(runtime, 'node_modules/.bin') + ':' + (process.env.PATH ?? '/usr/bin:/bin'), npm_config_cache: join(scratch, 'npm-cache') }
+const env = { HOME: home, DSH_HOME: home, PATH: dirname(nodeExecutable) + ':' + join(runtime, 'node_modules/.bin') + ':' + (process.env.PATH ?? '/usr/bin:/bin'), npm_config_cache: join(scratch, 'npm-cache') }
 let host, exited, inspectHost, output = ''
 const desktopIssues = []
 async function command(args, options = {}) {
-  const child = spawn(process.execPath, args, { cwd: scratch, env, stdio: ['ignore', 'pipe', 'pipe'], ...options })
+  const child = spawn(nodeExecutable, args, { cwd: scratch, env, stdio: ['ignore', 'pipe', 'pipe'], ...options })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output += chunk })
   const [code] = await once(child, 'exit')
@@ -50,21 +54,35 @@ async function waitFor(check, description) {
 }
 try {
   await mkdir(home)
+  if (target.kind === 'native') console.log('Native macOS bundle: Node ' + (await command(['--version'])).trim() + ', official DSH ' + target.version + ', isolated Web profile (native window not automated)')
   const catalog = JSON.parse(await readFile(join(repo, 'marketplace.json'), 'utf8'))
   const hasAidev = catalog.plugins.some(entry => entry.id === 'aidev')
   env.DSH_SMOKE_ARTIFACT = join(repo, catalog.plugins.find(entry => entry.id === 'wecom-tools').artifact.path)
   for (const entry of catalog.plugins) await releaseArtifact(repo, entry)
-  const previous = { aidev: '0.3.4', 'trusted-marketplace': '0.4.5', 'security-scan': '0.12.0', wechat: '0.5.5', 'wecom-aibot': '0.6.8', 'dsh-pet': '0.2.3', 'codex-controller': '0.3.2', 'desktop-share': '0.1.4', 'web-search': '0.1.1', 'wecom-tools': '0.2.2' }
+  const previous = { aidev: '0.3.6', 'trusted-marketplace': '0.4.8', 'security-scan': '0.13.1', wechat: '0.5.7', 'wecom-aibot': '0.6.11', 'dsh-pet': '0.2.5', 'desktop-share': '0.1.6', 'web-search': '0.1.3', 'wecom-tools': '0.2.4' }
   const artifacts = catalog.plugins.map(entry => join(repo, update && previous[entry.id]
     ? entry.artifact.path.replace(entry.version + '.tgz', previous[entry.id] + '.tgz') : entry.artifact.path))
-  const installer = spawn(process.execPath, [join(previousRuntime, 'node_modules/@deepseek-ai/dsh/lib/bin.js'), 'plugin', '--profile', 'web', '--config.ignore-scripts=true', 'add', ...artifacts, '--save-exact'], { cwd: scratch, env, stdio: ['ignore', 'pipe', 'pipe'] })
+  if (update) {
+    // A disposable repository-owned retirement fixture; never read the user's installed profile.
+    const retired = join(scratch, 'retired-plugin')
+    await mkdir(retired)
+    await writeFile(join(retired, 'package.json'), JSON.stringify({
+      name: '@shamcleren/dsh-codex-controller', version: '0.0.0', type: 'module', main: 'index.js',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+      engines: { dsh: JSON.parse(await readFile(join(previousRuntime, 'node_modules/@deepseek-ai/dsh/package.json'))).version },
+    }))
+    await writeFile(join(retired, 'index.js'), 'export function apply() {}\n')
+    await writeFile(join(retired, 'cordis.patch.yml'), "- insert:\n    - id: retired-codex-fixture\n      name: '@shamcleren/dsh-codex-controller'\n")
+    artifacts.push(retired)
+  }
+  const installer = spawn(nodeExecutable, [join(previousRuntime, 'node_modules/@deepseek-ai/dsh/lib/bin.js'), 'plugin', '--profile', 'web', '--config.ignore-scripts=true', 'add', ...artifacts, '--save-exact'], { cwd: scratch, env, stdio: ['ignore', 'pipe', 'pipe'] })
   let installLog = ''
   for (const stream of [installer.stdout, installer.stderr]) stream.on('data', chunk => { installLog += chunk })
   const [code] = await once(installer, 'exit')
   assert.equal(code, 0, installLog)
-  const profile = join(home, 'profiles', desktopApp ? 'desktop' : 'web')
+  const profile = join(home, 'profiles', profileName)
   // Only the isolated fixture is relocated; the official CLI cannot mutate a live Desktop profile.
-  if (desktopApp) await rename(join(home, 'profiles/web'), profile)
+  if (officialDesktop) await rename(join(home, 'profiles/web'), profile)
   if (update) {
     // A real isolated installation: invoke the same CLI and transaction used by
     // users, without touching their home, installed app or running processes.
@@ -82,7 +100,9 @@ try {
     const before = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'))
     await command([join(repo, 'scripts/dhp.mjs'), '--dir', installation, 'update'])
     const after = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'))
-    assert.deepEqual(Object.keys(after.dependencies).sort(), Object.keys(before.dependencies).sort())
+    assert.ok(before.dependencies['@shamcleren/dsh-codex-controller'])
+    assert.equal(after.dependencies['@shamcleren/dsh-codex-controller'], undefined)
+    assert.deepEqual(Object.keys(after.dependencies).sort(), Object.keys(before.dependencies).filter(name => name !== '@shamcleren/dsh-codex-controller').sort())
     for (const entry of catalog.plugins) {
       const installed = JSON.parse(await readFile(join(profile, 'node_modules', entry.package, 'package.json'), 'utf8'))
       assert.equal(installed.version, entry.version, entry.id + ': dhp update installed release')
@@ -91,7 +111,7 @@ try {
     assert.match(await readFile(join(profile, 'cordis.patch.yml'), 'utf8'), /selectedDefault: dsh-security-audit/)
     const again = await command([join(repo, 'scripts/dhp.mjs'), '--dir', installation, 'update'])
     assert.match(again, /Already up to date/)
-    console.log('dhp update: all 10 plugins retained, releases upgraded, settings preserved, repeat is a no-op')
+    console.log('dhp update: all ' + catalog.plugins.length + ' plugins retained, releases upgraded, settings preserved, repeat is a no-op')
   }
   await verifyProfilePeers(profile, runtime)
   let migratedPreset = ''
@@ -110,18 +130,18 @@ try {
   manifest.dsh.profile.bundles = ['@deepseek-ai/dsh-base', ...before, '@deepseek-ai/dsh-web-app', ...after]
   await writeFile(manifestPath, JSON.stringify(manifest))
   // Model an old Host crash using a real, reaped PID rather than a guessed PID.
-  const dead = spawnSync(process.execPath, ['-e', ''], { env, stdio: 'ignore' })
+  const dead = spawnSync(nodeExecutable, ['-e', ''], { env, stdio: 'ignore' })
   assert.equal(dead.status, 0)
   await mkdir(join(home, 'security-scan'), { recursive: true })
   await writeFile(join(home, 'security-scan/.tasks.lock'), dead.pid + '\n', { mode: 0o600 })
   const portProbe = createServer()
-  await new Promise((resolve, reject) => { portProbe.once('error', reject); portProbe.listen(desktopApp ? 19387 : 0, '127.0.0.1', resolve) })
+  await new Promise((resolve, reject) => { portProbe.once('error', reject); portProbe.listen(officialDesktop ? 19387 : 0, '127.0.0.1', resolve) })
   const port = portProbe.address().port
   await new Promise(resolve => portProbe.close(resolve))
   await writeFile(join(home, 'settings.yaml'), 'desktop-pet:\n  petSize: 120\nsecurity-scan:\n  gitleaksPath: /nonexistent/legacy-gitleaks\n')
   const probe = join(scratch, 'probe.mjs')
-  const requiredTools = ['security_record_repair_delivery', 'security_start_scan', 'security_scan_status', 'security_scan', 'security_audit', 'security_reports', 'security_read_evidence', 'security_review_report', 'codex_delegate', 'aidev_search', 'aidev_resource_list_installed', 'aidev_resource_install', 'aidev_resource_uninstall', 'aidev_knowledge_query', 'aidev_agent_detail', 'aidev_skill_sync', 'aidev_mcp_create', 'aidev_knowledgebase_manage', 'aidev_knowledge_upload', 'aidev_agent_manage'].filter(name => hasAidev || !name.startsWith('aidev_'))
-  await writeFile(probe, `import { writeFile } from 'node:fs/promises'; export const inject = ['connection', 'webServer', 'skills', 'tools', 'llm']; export async function apply(ctx) { await writeFile(${JSON.stringify(ready)}, JSON.stringify({skills: (await ctx.skills.list()).map(item => item.name), missingTools: ${JSON.stringify(requiredTools)}.filter(name => !ctx.tools.get(name)), codexProvider: ctx.llm.listProviders().some(item => item.id === 'codex'), url: ctx.connection.authenticatedUrl('http://127.0.0.1:' + ctx.webServer.port)}), {mode: 0o600}); }`)
+  const requiredTools = ['wechat_recipients', 'wechat_notify', 'wechat_notification_status', 'wechat_notification_cancel', 'dsh_security_scan_record_repair_delivery', 'dsh_security_scan_repair_rescan', 'dsh_security_scan_findings', 'dsh_security_scan_exclude_findings', 'dsh_security_scan_start', 'dsh_security_scan_status', 'dsh_security_scan_rules', 'dsh_security_scan_audit', 'dsh_security_scan_reports', 'dsh_security_scan_read_evidence', 'dsh_security_scan_review_report', 'aidev_search', 'aidev_resource_list_installed', 'aidev_resource_install', 'aidev_resource_uninstall', 'aidev_knowledge_query', 'aidev_agent_detail', 'aidev_skill_sync', 'aidev_mcp_create', 'aidev_knowledgebase_manage', 'aidev_knowledge_upload', 'aidev_agent_manage'].filter(name => hasAidev || !name.startsWith('aidev_'))
+  await writeFile(probe, `import { writeFile } from 'node:fs/promises'; export const inject = ['connection', 'webServer', 'skills', 'tools', 'llm', 'wechatPush']; export async function apply(ctx) { await writeFile(${JSON.stringify(ready)}, JSON.stringify({skills: (await ctx.skills.list()).map(item => item.name), missingTools: ${JSON.stringify(requiredTools)}.filter(name => !ctx.tools.get(name)), codexProvider: ctx.llm.listProviders().some(item => item.id === 'codex'), url: ctx.connection.authenticatedUrl('http://127.0.0.1:' + ctx.webServer.port)}), {mode: 0o600}); }`)
   // No external accounts, pet windows or search traffic in the fixture. Web Search's
   // protocol/transport lifecycle is exercised separately against its local mock server.
   await writeFile(join(profile, 'cordis.patch.yml'), `
@@ -164,25 +184,25 @@ ${startupOnly ? '' : `    - id: upgrade-probe
         reconnect:
           enabled: false
 `)
-  if (desktopApp) {
+  if (officialDesktop) {
     const resources = join(desktopApp, 'Contents/Resources')
     const bundled = join(resources, 'app.asar/dsh')
-    host = spawn(join(desktopApp, 'Contents/MacOS/DeepSeek Harness'), [
+    host = spawn(target.electron, [
       '--expose-internals', join(bundled, 'node_modules/@deepseek-ai/dsh-desktop-host/lib/index.js'),
       bundled, profile, join(resources, 'runtime/primary-runtime'),
       join(resources, 'runtime/pnpm/bin/pnpm.mjs'), join(resources, 'runtime/bin'),
     ], { cwd: profile, env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })
-  } else host = spawn(process.execPath, [cli, '--profile', 'web', '--no-open'], { cwd: scratch, env, stdio: ['ignore', 'pipe', 'pipe'] })
+  } else host = spawn(nodeExecutable, [cli, '--profile', 'web', '--no-open'], { cwd: scratch, env, stdio: ['ignore', 'pipe', 'pipe'] })
   exited = once(host, 'exit')
   for (const stream of [host.stdout, host.stderr]) stream.on('data', chunk => { output += chunk })
   const info = await waitFor(async () => {
     try { return JSON.parse(await readFile(ready, 'utf8')) } catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error }
   }, 'probe activation')
   assert.ok(info.skills.includes('wecom-unified'), 'bundled WeCom Skill activated')
-  assert.ok(info.skills.includes('security-review'), 'security review Skill activated')
+  assert.ok(info.skills.includes('dsh-security-review'), 'security review Skill activated')
   assert.deepEqual(info.missingTools, [], 'all plugin tool capabilities registered')
-  assert.equal(info.codexProvider, true, 'Codex model provider registered')
-  console.log('Host capabilities: ' + requiredTools.length + ' tools, 2 bundled Skills and Codex model provider registered')
+  assert.equal(info.codexProvider, false, 'removed Codex plugin does not register a model provider')
+  console.log('Host capabilities: ' + requiredTools.length + ' tools and 2 bundled Skills registered; removed Codex provider absent')
   let cookie
   await waitFor(async () => {
     try {
@@ -210,8 +230,8 @@ ${startupOnly ? '' : `    - id: upgrade-probe
   assert.equal(upgrade.status, 200, upgradeBody)
   assert.deepEqual(JSON.parse(upgradeBody).result, { ok: true, value: { forms: 6, presets: 2 } })
   console.log('Legacy settings imported; 6 live forms, revision conflicts, static-field protection and 2 presets passed')
-  for (const channel of ['security-scan', 'trusted-marketplace', 'aidev', 'codex-controller']) {
-    const response = await fetch(`http://127.0.0.1:${port}/${channel}/state`, { method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: 'smoke', method: 'state', payload: channel === 'codex-controller' ? { sessionId: 'smoke' } : {} }), signal: AbortSignal.timeout(5000) })
+  for (const channel of ['security-scan', 'trusted-marketplace', ...(hasAidev ? ['aidev'] : [])]) {
+    const response = await fetch(`http://127.0.0.1:${port}/${channel}/state`, { method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: 'smoke', method: 'state', payload: {} }), signal: AbortSignal.timeout(5000) })
     const body = await response.text()
     assert.equal(response.status, 200, channel + ': ' + body)
     const result = JSON.parse(body).result
@@ -223,7 +243,7 @@ ${startupOnly ? '' : `    - id: upgrade-probe
     } else {
       assert.equal(result.ok, true, channel + ': ' + body)
       if (channel === 'trusted-marketplace') assert.equal(result.value.ref, 'upgrade-fixture', 'marketplace reads the Profile live reference')
-      if (desktopApp && channel === 'trusted-marketplace') {
+      if (officialDesktop && channel === 'trusted-marketplace') {
         const installed = result.value.installed.filter(item => catalog.plugins.some(entry => entry.package === item.packageName))
         console.log('Official Desktop: marketplace sees ' + installed.length + ' of ' + catalog.plugins.length + ' installed catalog packages')
         if (installed.length !== catalog.plugins.length) desktopIssues.push('Marketplace does not target the active Desktop profile')
@@ -262,16 +282,34 @@ ${startupOnly ? '' : `    - id: upgrade-probe
   // Mirror the deployment guard above; do not claim unguarded exceptions are contained.
   console.log('Catalog artifacts and peers: ' + catalog.plugins.length + ' passed')
   console.log('Missing MCP credential guarded + offline MCP contained: authenticated Web HTTP 200')
-  const mutation = await fetch(`http://127.0.0.1:${port}/smoke-upgrade/mutation`, {
-    method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ type: 'client-request', rpcId: 'mutation', method: 'mutation', payload: {} }), signal: AbortSignal.timeout(120000),
-  })
-  const mutationText = await mutation.text()
-  assert.equal(mutation.status, 200, mutationText)
-  const mutationBody = JSON.parse(mutationText)
-  assert.equal(mutationBody.result?.ok, true, JSON.stringify(mutationBody))
-  assert.deepEqual(mutationBody.result.value, { profile: desktopApp ? 'desktop' : 'web', removed: true, installed: true, updated: true })
-  console.log('Marketplace current-profile uninstall, reinstall and update: passed')
+  for (const action of ['remove', 'install', 'update']) {
+    const beforeUpdate = action === 'update' ? await readFile(join(profile, 'package.json')) : undefined
+    const lockBeforeUpdate = action === 'update' ? await readFile(join(profile, 'pnpm-lock.yaml')) : undefined
+    const mutation = await fetch(`http://127.0.0.1:${port}/smoke-upgrade/mutation`, {
+      method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'client-request', rpcId: 'mutation', method: 'mutation', payload: { action } }), signal: AbortSignal.timeout(120000),
+    })
+    const mutationText = await mutation.text()
+    assert.equal(mutation.status, 200, mutationText)
+    const mutationBody = JSON.parse(mutationText)
+    assert.equal(mutationBody.result?.ok, true, JSON.stringify(mutationBody))
+    assert.deepEqual(mutationBody.result.value, { profile: profileName, action })
+    await waitFor(async () => {
+      const state = await fetch(`http://127.0.0.1:${port}/trusted-marketplace/state`, {
+        method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'client-request', rpcId: 'state', method: 'state', payload: {} }), signal: AbortSignal.timeout(5000),
+      })
+      if (state.status !== 200) return false
+      const body = await state.json()
+      if (!body.result?.ok) return false
+      return body.result.value.installed.some(item => item.packageName === '@shamcleren/dsh-wecom-tools') === (action !== 'remove')
+    }, 'marketplace state after ' + action)
+    if (beforeUpdate) {
+      assert.deepEqual(await readFile(join(profile, 'package.json')), beforeUpdate)
+      assert.deepEqual(await readFile(join(profile, 'pnpm-lock.yaml')), lockBeforeUpdate)
+    }
+  }
+  console.log('Marketplace current-profile uninstall and reinstall passed; installed update deferred without mutation')
   assert.deepEqual(desktopIssues, [], 'Official Desktop replacement blockers')
   }
 } catch (error) {

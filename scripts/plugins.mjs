@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { defaultDirectory, readInstallation, repositoryRoot } from './installation.mjs'
 import { run } from './process.mjs'
+import { retiredPlugins } from './retired-plugins.mjs'
 
 const repository = repositoryRoot
 const capture = promisify(execFile)
@@ -41,13 +42,13 @@ async function readCatalog(repo) {
   return catalog.plugins
 }
 
-async function catalogEntry(repo, name) {
-  const plugins = await readCatalog(repo)
+async function catalogEntry(repo, name, allowRetired = false) {
+  const plugins = [...await readCatalog(repo), ...(allowRetired ? retiredPlugins : [])]
   const id = name === 'marketplace' ? 'trusted-marketplace' : name
   const entries = plugins.filter(entry => entry.id === id || entry.package === id)
   if (entries.length !== 1) throw new Error('Choose a plugin name. Available: ' + plugins.map(entry => entry.id === 'trusted-marketplace' ? 'marketplace' : entry.id).join(', '))
   const entry = entries[0]
-  if (!['before-web-app', 'after-web-app'].includes(entry.placement)) throw new Error('Invalid catalog placement')
+  if (!allowRetired && !['before-web-app', 'after-web-app'].includes(entry.placement)) throw new Error('Invalid catalog placement')
   return entry
 }
 
@@ -81,6 +82,9 @@ async function listPlugins(repo, profile, log) {
     const installed = declared ? await installedPackageVersion(profile, entry.package) : undefined
     const status = installed ? '已安装    ' : declared ? '安装不完整' : '未安装    '
     log(pluginName(entry).padEnd(18) + ' ' + status + '  ' + (installed ?? '-') + ' / ' + entry.version)
+  }
+  for (const entry of retiredPlugins) if (Object.hasOwn(dependencies, entry.package)) {
+    log(entry.id.padEnd(18) + ' 已退役；dhp update 将卸载（保留会话与配置）')
   }
 }
 
@@ -150,7 +154,7 @@ export async function managePlugin({ action, plugin, source = false, repo = repo
     await listPlugins(repo, profile, log)
     return
   }
-  const entry = await catalogEntry(repo, plugin)
+  const entry = await catalogEntry(repo, plugin, action === 'remove')
   let bytes, sourcePackage
   if (action === 'install') {
     const runtime = JSON.parse(await readFile(join(root, 'runtime/node_modules/@deepseek-ai/dsh/package.json'), 'utf8'))

@@ -1,5 +1,6 @@
 import type { Logger } from '@deepseek-ai/cordis'
 import type {
+  BaseMessage,
   EventMessageWith,
   TemplateCardEventData,
   TextMessage,
@@ -9,7 +10,7 @@ import type {
 type ConnectionListener = () => void
 type DisconnectionListener = (reason: string) => void
 type ErrorListener = (error: Error) => void
-type TextMessageListener = (frame: WsFrame<TextMessage>) => void
+type TextMessageListener = (frame: WsFrame<BaseMessage>) => void
 type TemplateCardEventListener = (frame: WsFrame<EventMessageWith<TemplateCardEventData>>) => void
 
 /** SDK operations used by the connection lifecycle. */
@@ -19,12 +20,12 @@ export interface WeComBotClient {
   on(event: 'authenticated', listener: ConnectionListener): unknown
   on(event: 'disconnected', listener: DisconnectionListener): unknown
   on(event: 'error', listener: ErrorListener): unknown
-  on(event: 'message.text', listener: TextMessageListener): unknown
+  on(event: 'message.text' | 'message.image' | 'message.mixed' | 'message.voice' | 'message.file' | 'message.video', listener: TextMessageListener): unknown
   on(event: 'event.template_card_event', listener: TemplateCardEventListener): unknown
   off(event: 'authenticated', listener: ConnectionListener): unknown
   off(event: 'disconnected', listener: DisconnectionListener): unknown
   off(event: 'error', listener: ErrorListener): unknown
-  off(event: 'message.text', listener: TextMessageListener): unknown
+  off(event: 'message.text' | 'message.image' | 'message.mixed' | 'message.voice' | 'message.file' | 'message.video', listener: TextMessageListener): unknown
   off(event: 'event.template_card_event', listener: TemplateCardEventListener): unknown
 }
 
@@ -44,7 +45,7 @@ export class WeComBotAccount {
     this.logger.error(error)
   }
 
-  private readonly textMessage = (frame: WsFrame<TextMessage>): void => {
+  private readonly textMessage = (frame: WsFrame<BaseMessage>): void => {
     this.onTextMessage(frame)
   }
 
@@ -86,7 +87,7 @@ export class WeComBotAccount {
     this.client.on('authenticated', this.authenticated)
     this.client.on('disconnected', this.disconnected)
     this.client.on('error', this.failed)
-    this.client.on('message.text', this.textMessage)
+    for (const event of ['message.text', 'message.image', 'message.mixed', 'message.voice', 'message.file', 'message.video'] as const) this.client.on(event, this.textMessage)
     this.client.on('event.template_card_event', this.templateCardEvent)
   }
 
@@ -94,7 +95,7 @@ export class WeComBotAccount {
     this.client.off('authenticated', this.authenticated)
     this.client.off('disconnected', this.disconnected)
     this.client.off('error', this.failed)
-    this.client.off('message.text', this.textMessage)
+    for (const event of ['message.text', 'message.image', 'message.mixed', 'message.voice', 'message.file', 'message.video'] as const) this.client.off(event, this.textMessage)
     this.client.off('event.template_card_event', this.templateCardEvent)
   }
 }

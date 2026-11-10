@@ -2,6 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { createMarketplaceRpcHandler } from '../src/rpc.ts'
 
 describe('Marketplace RPC', () => {
+  it('returns an actionable upgrade status for an already installed plugin', async () => {
+    const report = vi.fn()
+    const handler = createMarketplaceRpcHandler({ add: vi.fn(async () => { throw new Error('marketplace-update-offline') }) } as never, report)
+    expect(await handler('add', { packageName: 'demo' }, new AbortController().signal)).toEqual({
+      ok: false, error: { code: 'update-offline', message: 'marketplace-update-offline', details: {} },
+    })
+    expect(report).not.toHaveBeenCalled()
+  })
   it('accepts one repository address and rejects token, application, and repository-list requests', async () => {
     const configure = vi.fn(), beginOAuth = vi.fn()
     const handler = createMarketplaceRpcHandler({ configure, beginOAuth } as never, vi.fn())

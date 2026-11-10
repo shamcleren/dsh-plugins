@@ -12,8 +12,8 @@ Every DSH user invoking the Skill shares the authorization stored for the operat
 
 Install from **Remote Market** or from this repository's local release tarball. For source changes, build the local plugin directory before installing it. Both paths use the same Web profile; see the [plugin management guide](../../docs/plugin-management.md) for commands, updates and removal.
 
-Restart the Host, then invoke `wecom-unified` through conversation. The Skill checks for `@wecom/cli` 1.1.0 or newer and guides first-use authorization.
+Restart the Host, then invoke `wecom-unified` through conversation. The Skill requires `@wecom/cli` 1.3.4 or newer and guides first-use authorization. The CLI is installed separately; installing or updating this plugin does not install or upgrade it. Installation and upgrade instructions pin `@wecom/cli@1.3.4`, check the actual command path against the npm global prefix, and retain one verified CLI path throughout each workflow. A CLI-only upgrade does not require a Host restart.
 
 ## Upstream snapshot
 
-The bundled Skill is copied from [`wecomTeam/wecom-unified`](https://github.com/wecomTeam/wecom-unified) commit `33aaa7155b0d1584828bc143a3877c4b5ec438fe`, with trailing Markdown whitespace normalized for this repository's checks. Upstream content remains MIT-licensed; its license and attribution are included in this package.
+The bundled Skill is copied from [`wecomTeam/wecom-unified`](https://github.com/wecomTeam/wecom-unified) commit `c2947ae194703c06cbfe06444a263d1da094ea78`, with trailing Markdown whitespace normalized for this repository's checks and a local CLI preflight override documented in `THIRD_PARTY_NOTICES.md`. Upstream content remains MIT-licensed; its license and attribution are included in this package.

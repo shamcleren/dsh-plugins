@@ -279,7 +279,7 @@ export class MarketplaceService extends Service {
   }
 
   /**
-   * Install or update one compatible Catalog package into the configured profile.
+   * Install one compatible Catalog package into the configured profile.
    * @param packageName Exact package identity present in the current Catalog.
    * @returns Mutation identity and restart requirement.
    */
@@ -289,6 +289,11 @@ export class MarketplaceService extends Service {
       const plugin = catalog.plugins.find(entry => entry.packageName === packageName)
       if (plugin === undefined) throw new Error(`marketplace package "${packageName}" is not in the catalog`)
       if (!plugin.compatible) throw new Error(`marketplace package "${packageName}" is incompatible with this DSH version`)
+      // The public Host manager refuses replacement with HMR. Keep installed
+      // packages intact; the offline dhp transaction owns their upgrades.
+      if (Object.hasOwn(readProfileManifest('dsh', this.ctx.profileContext.dir).dependencies ?? {}, packageName)) {
+        throw new Error('marketplace-update-offline')
+      }
       const artifact = await this.cacheArtifact(this.current(), plugin)
       const installed = await this.ctx.pluginManager.installBundle(packageName + '@file:' + artifact)
       this.requireApplied(installed)

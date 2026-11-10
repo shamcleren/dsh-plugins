@@ -24,7 +24,7 @@ it('links HTTP references while escaping markup, credentials and trailing punctu
 
 it('summarizes actions by category without equating dependency records to confirmed vulnerabilities', async () => {
   const { reportSummary, renderSummary } = await import('../src/report-summary.js')
-  const report = { findings: [dependency('GHSA-A', ['CVE-A']), dependency('PYSEC-A', ['CVE-A']), { ...dependency('tls'), engine: 'semgrep', cwe: 'CWE-295', status: 'confirmed' }, { ...dependency('secret'), engine: 'gitleaks', status: 'dismissed', evidence: 'Only [REDACTED] was seen' }] } as unknown as import('../src/report.js').Report
+  const report = { engines: [], policy: {}, findings: [dependency('GHSA-A', ['CVE-A']), dependency('PYSEC-A', ['CVE-A']), { ...dependency('tls'), engine: 'semgrep', cwe: 'CWE-295', status: 'confirmed' }, { ...dependency('secret'), engine: 'gitleaks', status: 'dismissed', evidence: 'Only [REDACTED] was seen' }] } as unknown as import('../src/report.js').Report
   const summary = reportSummary(report)
   expect(summary.sourceConfirmed).toHaveLength(1)
   expect(summary.packages).toHaveLength(1)
@@ -84,4 +84,25 @@ it('masks credential-hit files completely and refuses mismatched evidence digest
   expect(archive.snippets[0]).toMatchObject({ start: 12, sourceHash: 'digest', redacted: true })
   archive.snippets[0]!.sourceHash = 'different'
   expect(() => mergeArchives(report, archive)).toThrow('digest')
+})
+
+it('renders runtime findings at their endpoint and exports them to SARIF without a fake file path', async () => {
+  const { renderReport, sarif } = await import('../src/report.js')
+  const { Script } = await import('node:vm')
+  const runtime: Finding = { id: 'http-csp', rule: 'dynamic.header-csp', fingerprint: 'http-csp', engine: 'http', file: 'http/127.0.0.1:3000', line: 1, title: '页面未设置 Content-Security-Policy', cwe: 'CWE-693', severity: 'low', status: 'needs-review', change: 'unknown', evidence: 'HTML 响应未返回 Content-Security-Policy。', recommendation: '设置 CSP', verification: '只读 GET', endpoint: { url: 'http://127.0.0.1:3000/', method: 'GET', status: 200 } }
+  const report: import('../src/report.js').Report = {
+    schemaVersion: 1, pluginVersion: '0.17.0', id: '12345678-1234-4234-8234-123456789abc', createdAt: '2026-11-06T00:00:00.000Z',
+    source: { identity: 'test', label: '/repo', revision: 'working-tree', scope: 'full', digest: 'test', files: {}, changed: [], skipped: 0 },
+    policy: { engine: 'auto', rulesDigest: 'test', dependencies: false, secrets: false, view: 'all', failOn: 'none', dynamic: 'http://127.0.0.1:3000/' },
+    engines: [{ name: 'http', version: 'baseline-v1', status: 'completed', detail: '只读运行时基线检查' }], coverage: { files: 0, scannedFiles: 0, omittedFindings: 0, detail: '' }, findings: [runtime], reviews: [], notes: [],
+  }
+  const html = renderReport(report)
+  expect(html).toContain('id="runtime-actions"')
+  expect(html).toContain('GET http://127.0.0.1:3000/ · HTTP 200')
+  expect(html).toContain('运行时风险')
+  expect(() => new Script(html.split('<script>')[1]!.split('</script>')[0]!)).not.toThrow()
+  type Sarif = { runs: Array<{ results: Array<{ locations: Array<{ physicalLocation: { artifactLocation: { uri: string } } }>; properties: unknown }> }> }
+  const result = (sarif(report) as Sarif).runs[0]!.results[0]!
+  expect(result.locations[0]!.physicalLocation.artifactLocation.uri).toBe('http://127.0.0.1:3000/')
+  expect(result.properties).toMatchObject({ endpoint: { method: 'GET', status: 200, url: 'http://127.0.0.1:3000/' } })
 })

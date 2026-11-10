@@ -17,23 +17,25 @@ test('official V3 to V4 migration preserves plugin notices and leaves the old ge
   const old = join(folder, 'session.v3.jsonl')
   await copyFile(fileURLToPath(new URL('../fixtures/session-v3-plugin-notices.jsonl', import.meta.url)), old)
   const { Context } = await load('@deepseek-ai/cordis')
-  const { default: Backend } = await load('@deepseek-ai/dsh-session-persistence-jsonl')
+  const Backend = await load('@deepseek-ai/dsh-session-persistence-jsonl')
   const ctx = new Context()
   try {
-    const fiber = await ctx.plugin(Backend, { root, compression: 'none' })
-    for (const access of ['read', 'write', 'read']) {
-      const handle = await fiber.ctx.sessionPersistence.open('upgrade-fixture', access)
-      try {
-        const { events } = await handle.read()
-        assert.equal(handle.header.version, 4)
-        assert.equal(events.length, 2)
-        assert.equal(events[0].data.source.kind, 'plugin:codex-controller')
-        assert.equal(events[0].data.content[0].text, 'codex-thread:fixture-123')
-        assert.equal(events[1].data.source.kind, 'plugin:security-scan')
-        assert.equal(events[1].data.source.summary, '旧报告')
-        if (access === 'write') await handle.flush()
-      } finally { await handle.close() }
-      assert.deepEqual(await readFile(old), original)
-    }
+    await ctx.plugin(Backend, { root, compression: 'none' })
+    await ctx.plugin({ inject: ['sessionPersistence'], async apply(consumer) {
+      for (const access of ['read', 'write', 'read']) {
+        const handle = await consumer.sessionPersistence.open('upgrade-fixture', access)
+        try {
+          const { events } = await handle.read()
+          assert.equal(handle.header.version, 4)
+          assert.equal(events.length, 2)
+          assert.equal(events[0].data.source.kind, 'plugin:codex-controller')
+          assert.equal(events[0].data.content[0].text, 'codex-thread:fixture-123')
+          assert.equal(events[1].data.source.kind, 'plugin:security-scan')
+          assert.equal(events[1].data.source.summary, '旧报告')
+          if (access === 'write') await handle.flush()
+        } finally { await handle.close() }
+        assert.deepEqual(await readFile(old), original)
+      }
+    } })
   } finally { await ctx.fiber.dispose(); await rm(root, { recursive: true, force: true }) }
 })

@@ -1,6 +1,6 @@
 import type { Logger } from '@deepseek-ai/cordis'
 import type { Config, WeComCredentials, WeComSettingsPatch } from './config.js'
-import { resolveRuntimeConfig } from './config.js'
+import { configuredBots, resolveRuntimeConfig } from './config.js'
 import { WeComBotAccount } from './account.js'
 import type { WeComBotClient } from './account.js'
 import type { HostApiProxy } from './host-api.js'
@@ -23,13 +23,13 @@ export interface WeComRuntimeOptions {
   logger: Logger
   resolveCredentials(config: Config): Promise<WeComCredentials | undefined>
   createClient(credentials: WeComCredentials): RuntimeClient
-  prepareContext(config: Config): Promise<RouterRuntimeContext>
+  prepareContext(config: Config & { id?: string }): Promise<RouterRuntimeContext>
   /** Persist a channel policy change made from a chat command. */
-  writeSettings(section: WeComSettingsPatch): Promise<void>
+  writeSettings(section: WeComSettingsPatch, botId?: string): Promise<void>
 }
 
 /** Keep the Bot connection synchronized with live settings and credentials. */
-export class WeComRuntimeController {
+class SingleBotRuntimeController {
   private desired: Config = {}
   private generation = 0
   private stopped = false
@@ -39,6 +39,8 @@ export class WeComRuntimeController {
   private warnedUnconfigured = false
 
   constructor(private readonly options: WeComRuntimeOptions) {}
+
+  async ready(): Promise<void> { await this.tail }
 
   update(config: Config): void {
     if (this.stopped) return
@@ -97,6 +99,7 @@ export class WeComRuntimeController {
       connectionPolicy,
       config.workspaceId,
       config.workspaceName,
+      config.preventIdleSleep,
     ])
     if (this.active?.key === key) {
       this.active.router.setAgentPreset(agentPreset)
@@ -104,11 +107,12 @@ export class WeComRuntimeController {
     }
     await this.stopActive()
     if (this.stopped || generation !== this.generation) return
-    await this.startActive(key, credentials, config)
+    await this.startActive(key, credentials, config, generation)
   }
 
-  private async startActive(key: string, credentials: WeComCredentials, config: Config): Promise<void> {
+  private async startActive(key: string, credentials: WeComCredentials, config: Config, generation: number): Promise<void> {
     const context = await this.options.prepareContext(config)
+    if (this.stopped || generation !== this.generation) return
     const client = this.options.createClient(credentials)
     const router = new WeComConversationRouter(
       this.options.api,
@@ -125,6 +129,7 @@ export class WeComRuntimeController {
       frame => { router.acceptTemplateCardEvent(frame) },
     )
     const wake = await IdleSleepAssertion.start(config.preventIdleSleep === true)
+    if (this.stopped || generation !== this.generation) { await wake?.stop(); return }
     router.start()
     try {
       account.start()
@@ -143,5 +148,81 @@ export class WeComRuntimeController {
     active.account.stop()
     await active.router.stop()
     await active.wake?.stop()
+  }
+}
+
+/** Reconcile independent connections; a missing credential only takes its own Bot offline. */
+export class WeComRuntimeController {
+  private readonly bots = new Map<string, SingleBotRuntimeController>()
+  private readonly credentials = new Map<string, WeComCredentials | undefined>()
+  private tail: Promise<void> = Promise.resolve()
+  private stopped = false
+  constructor(private readonly options: WeComRuntimeOptions) {}
+
+  async ready(): Promise<void> {
+    await this.tail
+    await Promise.all([...this.bots.values()].map(bot => bot.ready()))
+  }
+
+  update(config: Config): void {
+    if (this.stopped) return
+    // Validate the complete roster before retiring any current connection.
+    let roster: ReturnType<typeof configuredBots>
+    try { roster = configuredBots(config) }
+    catch (error) { this.options.logger.error(error); return }
+    const legacy = config.bots === undefined
+    this.tail = this.tail.then(async () => {
+      if (this.stopped) return
+      const keyFor = (id: string) => `${legacy ? 'legacy' : 'bot'}:${id}`
+      const ids = new Set(roster.map(bot => keyFor(bot.id)))
+      const resolved = await Promise.allSettled(roster.map(entry => this.options.resolveCredentials(entry)))
+      if (this.stopped) return
+      const counts = new Map<string, number>()
+      for (const result of resolved) if (result.status === 'fulfilled' && result.value !== undefined) {
+        counts.set(result.value.botId, (counts.get(result.value.botId) ?? 0) + 1)
+      }
+      for (const [index, entry] of roster.entries()) {
+        const result = resolved[index]
+        const credentials = result?.status === 'fulfilled' ? result.value : undefined
+        const duplicate = credentials !== undefined && (counts.get(credentials.botId) ?? 0) > 1
+        if (duplicate) this.options.logger.error('wecom-aibot: the same Bot account cannot be connected twice')
+        else if (result?.status === 'rejected') this.options.logger.error('wecom-aibot: credential resolution failed')
+        this.credentials.set(keyFor(entry.id), duplicate ? undefined : credentials)
+      }
+      for (const [id, bot] of this.bots) if (!ids.has(id)) {
+        this.bots.delete(id)
+        this.credentials.delete(id)
+        await bot.stop()
+      }
+      for (const entry of roster) {
+        let bot = this.bots.get(keyFor(entry.id))
+        if (bot === undefined) {
+          bot = new SingleBotRuntimeController({ ...this.options,
+            resolveCredentials: async () => this.credentials.get(keyFor(entry.id)),
+            writeSettings: section => this.options.writeSettings(section, legacy ? undefined : entry.id),
+          })
+          this.bots.set(keyFor(entry.id), bot)
+        }
+        bot.update(entry)
+      }
+    }).catch((error: unknown) => { this.options.logger.error(error) })
+  }
+  routesSession(id: string): boolean { return [...this.bots.values()].some(bot => bot.routesSession(id)) }
+  observesSession(id: string): boolean { return [...this.bots.values()].some(bot => bot.observesSession(id)) }
+  ownsSession(id: string): boolean { return [...this.bots.values()].some(bot => bot.ownsSession(id)) }
+  async requestApproval(request: ChannelApprovalRequest): Promise<ChannelApprovalAnswer | undefined> {
+    for (const bot of this.bots.values()) {
+      const answer = await bot.requestApproval(request)
+      if (answer !== undefined) return answer
+    }
+    return undefined
+  }
+  async stop(): Promise<void> {
+    if (this.stopped) return
+    this.stopped = true
+    await this.tail
+    await Promise.all([...this.bots.values()].map(bot => bot.stop()))
+    this.bots.clear()
+    this.credentials.clear()
   }
 }

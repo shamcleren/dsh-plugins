@@ -19,7 +19,7 @@ function configForms(): {
 } {
   let snapshot: ConfigFormSnapshot<Config> = {
     status: 'ready', value: {}, base: {}, user: {},
-    revision: 1, writable: true, mode: 'host',
+    revision: 1, writable: true,
   }
   const listeners = new Set<() => void>()
   const set = vi.fn(async () => true)

@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { releaseArtifact } from './plugins.mjs'
+import { installedRetirements } from './retired-plugins.mjs'
 
 const journalName = '.dhp-profile-update.json'
 const owner = 'dhp-profile-update-v1'
@@ -118,6 +119,11 @@ export async function verifyProfilePeers(profile, runtime, ignored = new Set()) 
     if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name)) throw new Error('Invalid installed package name')
     if (ignored.has(name)) continue
     const plugin = await json(join(profile, 'node_modules', name, 'package.json'))
+    const engine = plugin.engines?.dsh
+    if (engine !== undefined) {
+      const actual = (await json(join(runtime, 'node_modules/@deepseek-ai/dsh/package.json'))).version
+      if (typeof engine !== 'string' || !semver.valid(actual) || !semver.satisfies(actual, engine)) throw new Error('Runtime update is incompatible with installed ' + name + ': engines.dsh requires ' + engine + ', new runtime has ' + actual + '. Update/remove that plugin with the old installation first, or use an isolated DSH_HOME.')
+    }
     for (const [peer, range] of Object.entries(plugin.peerDependencies ?? {})) {
       if (!/^@deepseek-ai\/dsh(?:-[a-z0-9-]+)?$/.test(peer)) continue
       const actualBytes = await regular(join(runtime, 'node_modules', peer, 'package.json'))
@@ -197,11 +203,11 @@ export async function homeProfileUpdates({ home, repo, release }) {
   if (!bytes) return []
   const manifest = JSON.parse(bytes)
   const entries = await catalogReplacements(profile, manifest, repo, release, false)
-  return Promise.all(entries.map(async entry => {
+  return Promise.all([...entries, ...installedRetirements(manifest)].map(async entry => {
     let current
     try { current = (await json(join(profile, 'node_modules', entry.package, 'package.json'))).version }
     catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error }
-    return { id: entry.id, current: current ?? 'missing/unknown', target: entry.version,
+    return { id: entry.id, current: current ?? 'missing/unknown', target: entry.version ?? 'removed (retired)',
       source: linksRepositorySource(profile, manifest.dependencies[entry.package], repo) }
   }))
 }
@@ -243,11 +249,12 @@ export async function prepareHomeProfile({ root, home, repo, runtime, release, n
   const bytes = await regular(join(profile, 'package.json')), manifest = bytes ? JSON.parse(bytes) : undefined
   if (!manifest && !marketplace) return undefined
   const entries = await catalogReplacements(profile, manifest, repo, release, marketplace)
+  const retirements = installedRetirements(manifest)
   const presetPatch = await legacyPresetPatch({ home, profile, runtime })
   const replacements = []
   for (const entry of entries) replacements.push({ entry, artifact: await releaseArtifact(repo, entry) })
-  await verifyProfilePeers(profile, runtime, new Set(replacements.map(item => item.entry.package)))
-  if (replacements.length === 0 && presetPatch === undefined) return undefined
+  await verifyProfilePeers(profile, runtime, new Set([...replacements.map(item => item.entry.package), ...retirements.map(item => item.package)]))
+  if (replacements.length === 0 && retirements.length === 0 && presetPatch === undefined) return undefined
   await safeDirectory(profiles)
   const before = await profileFingerprint(profile)
   const stageName = '.dhp-web-' + randomUUID(), stage = join(profiles, stageName)
@@ -260,6 +267,7 @@ export async function prepareHomeProfile({ root, home, repo, runtime, release, n
       // Preserve meanings of local dependencies when the profile moves for staging.
       const next = structuredClone(manifest)
       for (const [name, spec] of Object.entries(next.dependencies ?? {})) {
+        if (retirements.some(entry => entry.package === name)) continue
         if (typeof spec === 'string' && /^(file|link):\.{1,2}\//.test(spec)) next.dependencies[name] = spec.slice(0, spec.indexOf(':') + 1) + resolve(profile, spec.slice(spec.indexOf(':') + 1))
         if (typeof spec === 'string' && spec.startsWith('link:') && !replacements.some(item => item.entry.package === name)) {
           retainedLinks.push({ name, target: resolve(profile, spec.slice(5)) })
@@ -291,6 +299,10 @@ export async function prepareHomeProfile({ root, home, repo, runtime, release, n
     log('Preparing compatible plugins: ' + replacements.map(item => item.entry.id).join(', '))
     const buildEnv = { ...env, DSH_HOME: stagingHome, PATH: dirname(nodeExecutable) + ':' + join(runtime, 'node_modules/.bin') + ':' + env.PATH }
     const cli = join(runtime, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
+    if (retirements.length) {
+      log('Removing retired repository plugins (data retained): ' + retirements.map(entry => entry.id).join(', '))
+      await execute(nodeExecutable, [cli, 'plugin', '--profile', 'web', '--config.ignore-scripts=true', 'remove', ...retirements.map(entry => entry.package)], { cwd: runtime, env: buildEnv })
+    }
     if (artifacts.length || retainedLinks.length) await execute(nodeExecutable, [cli, 'plugin', '--profile', 'web', '--config.ignore-scripts=true', 'add', ...artifacts, ...retainedLinks.map(({ name, target }) => name + '@link:' + target), '--save-exact'], { cwd: runtime, env: buildEnv })
     // Explicit add refreshes pnpm's relative lock entry for staging. Absolute
     // links remain valid when this staged profile is published at its final path.

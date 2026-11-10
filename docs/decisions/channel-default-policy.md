@@ -1,6 +1,6 @@
 # Channel 默认模型与预设
 
-每个聊天 channel 在没有渠道覆盖时继承 DSH 全局默认，显式配置只覆盖该渠道插件自己的新会话。覆盖属于整个插件，不属于单个联系人、群或账号。已有会话保持创建时的预设；已完成过一轮的会话继续使用上次请求记录的模型，直到该渠道命令重建会话。
+每个聊天 channel 在没有渠道覆盖时继承 DSH 全局默认，显式配置只覆盖该渠道插件自己的新会话。微信预设覆盖属于整个插件；企微多机器人模式下，工作区、模型和预设覆盖属于各自的机器人。已有会话保持创建时的预设和上次选择的模型；`/model`、`/effort` 只修改当前会话。
 
 ## 预设
 
@@ -14,8 +14,8 @@
 
 ## 模型
 
-渠道不保存自己的默认模型。没有渠道模型配置时，新会话读取 `agent-default-model`。
+企微每个 `bots[]` 条目可以配置 `model: { provider, model, reasoningEffort? }`，在新会话创建后初始化。省略时新会话继承 `agent-default-model`。`/model` 和 `/effort` 只切换当前会话；`/new` 创建的新会话重新使用机器人配置的默认模型。
 
-上游 `sessions.selectModel` 在设置当前会话后，还会把选择保存为部署级默认，桌面端 `/model` 使用同一实现。没有公开接口可以只改会话模型，agent 作用域也不能覆盖控制器上下文中的 `agentDefaultModel`。因此 `/model` 与 `/effort` 保留，但回复、帮助和设置说明必须写明它们会改变 DSH 全局默认。渠道不得先写全局再恢复，也不能用渠道配置假装模型隔离已经成立。
+`sessionController.selectModel` 仍会保存部署级默认，因此 IM 渠道不调用它，也不采用先修改全局再恢复的方式。渠道通过公开的 `resolveAgent`、`llm.resolveCallConfig` 和 Agent 作用域的 `system-prompt/assemble`、`agent/request` waterfall 完成模型校验和路由，追加标准 `model/selection` 事件。每个 step 在 prompt assembly 时捕获选择，保证系统提示词与模型请求一致；插件卸载时移除监听，持久化选择由官方会话投影在恢复时接管。
 
-解除该限制需要上游提供 session-local 的模型选择接口。
+企微 `/preset` 写入发送机器人对应的 `bots.<index>.agentPreset`，不会改变其他机器人；旧单机器人配置仍写顶层字段。配置索引取自提交时的稳定机器人 id，浏览器编辑同时携带 settings revision 防止旧列表覆盖新列表。

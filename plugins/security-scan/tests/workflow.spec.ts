@@ -148,3 +148,25 @@ it('keeps redacted scan-time code offline after the workspace changes, without e
   expect(html).not.toContain('</script><script>alert(1)</script>')
   expect((await readReport(result.json)).evidenceArchive!.snippets[0]!.lines[1]).toBe('eval(value)')
 })
+
+it('adds an authorized runtime check without breaking static baselines saved before it existed', async () => {
+  const { createServer } = await import('node:http')
+  const server = createServer((request, response) => { response.setHeader('content-type', 'text/html'); response.statusCode = request.url === '/' ? 200 : 404; response.end('<html></html>') })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const url = 'http://127.0.0.1:' + (server.address() as import('node:net').AddressInfo).port + '/'
+    const f = await fixture(), base = await audit(f.options)
+    const phases: string[] = []
+    const next = await audit({ ...f.options, baseline: base.json, dynamicUrl: url, onProgress: async phase => { phases.push(phase) } })
+    expect(phases).toContain('dynamic')
+    expect(next.report.policy.dynamic).toBe(url)
+    expect(next.report.engines.find(engine => engine.name === 'http')?.status).toBe('completed')
+    expect(next.report.findings.filter(item => item.engine === 'http').map(item => item.rule)).toEqual(expect.arrayContaining(['dynamic.header-csp', 'dynamic.header-nosniff']))
+    // Static comparison is unaffected; runtime findings have no earlier check to compare against.
+    expect(next.report.baseline?.comparable).toBe(true)
+    expect(next.report.findings.find(item => item.engine === 'semgrep')?.change).toBe('existing')
+    expect(new Set(next.report.findings.filter(item => item.engine === 'http').map(item => item.change))).toEqual(new Set(['unknown']))
+    expect(await readReport(next.json)).toEqual(next.report)
+    expect(JSON.stringify(sarif(next.report))).toContain('"uri":"' + url + '"')
+  } finally { await new Promise(resolve => server.close(resolve)) }
+})

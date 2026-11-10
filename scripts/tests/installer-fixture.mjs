@@ -20,6 +20,11 @@ export async function fakeInstall(command, args, settings) {
   await mkdir(profile, { recursive: true })
   let manifest
   try { manifest = JSON.parse(await readFile(join(profile, 'package.json'))) } catch { manifest = { dependencies: {}, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } } } }
+  if (args.includes('remove')) for (const name of args.slice(args.indexOf('remove') + 1)) {
+    delete manifest.dependencies[name]
+    manifest.dsh.profile.bundles = manifest.dsh.profile.bundles.filter(bundle => bundle !== name)
+    await rm(join(profile, 'node_modules', name), { recursive: true, force: true })
+  }
   for (const artifact of args.filter(arg => arg.endsWith('.tgz'))) {
     const pkg = JSON.parse(execFileSync('tar', ['-xOf', artifact, 'package/package.json'], { encoding: 'utf8' }))
     // pnpm replaces a source link instead of writing through it into the linked checkout.

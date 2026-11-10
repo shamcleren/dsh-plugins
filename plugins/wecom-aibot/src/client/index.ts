@@ -44,6 +44,7 @@ export function apply(ctx: ClientContext): void {
     scope,
     api,
   )
+  ctx.effect(() => () => card.dispose(), 'wecom-aibot: settings controller')
   ctx.effect(
     () => ctx.locale.register(LOCALE_NAMESPACE, { zh, en }),
     'wecom-aibot: browser dictionaries',

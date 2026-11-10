@@ -86,12 +86,14 @@ function routerFixture(
   writeSettings?: ConstructorParameters<typeof WeChatConversationRouter>[5],
   config: { agentPreset?: string } = {},
 ) {
-  const sendText = vi.fn(async () => undefined)
+  const sendText = vi.fn(async (_userId: string, _text: string, _token?: string) => undefined)
   const sendImage = vi.fn(async (_userId: string, _bytes: Buffer, _token?: string) => undefined)
+  const sendFile = vi.fn(async (_userId: string, _bytes: Buffer, _name: string, _token?: string) => undefined)
+  const sendVideo = vi.fn(async (_userId: string, _bytes: Buffer, _token?: string) => undefined)
   const typing = vi.fn(async () => undefined)
   const router = new WeChatConversationRouter(
     api,
-    { sendText, sendImage, typing },
+    { sendText, sendImage, sendFile, sendVideo, typing },
     { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), success: vi.fn() } as never,
     { adminUsers: ['peer-a'], thinkingText: '正在思考…', turnTimeoutMs: 5_000,
       mediaMaxBytes: 1024, sendTyping: true, ...config },
@@ -102,7 +104,7 @@ function routerFixture(
     writeSettings,
   )
   router.start()
-  return { router, sendText, sendImage, typing }
+  return { router, sendText, sendImage, sendFile, sendVideo, typing }
 }
 
 describe('WeChatConversationRouter', () => {
@@ -362,7 +364,7 @@ describe('WeChatConversationRouter', () => {
 
     router.accept(inbound('/model deepseek deepseek-chat high', 'message-model'))
     await vi.waitFor(() => { expect(sendText).toHaveBeenCalledWith(
-      'peer-a', expect.stringContaining('全局默认模型'), 'context-a',
+      'peer-a', expect.stringContaining('仅作用于当前微信会话'), 'context-a',
     ) })
     await router.stop()
   })
@@ -407,4 +409,24 @@ it('leaves guest tool approvals with the Host instead of granting them through W
     expect(router.ownsSession(sessionId)).toBe(false)
     expect(await router.requestApproval({ id: 'guest-request', sessionId, toolName: 'bash', resolved: new Promise(() => {}) })).toBeUndefined()
   } finally { await router.stop(); await running }
+})
+
+
+it('sends file and video deliveries and reports partial failures', async () => {
+  const { api } = hostFixture('next-turn', [], [
+    { type: 'file', attachment: { attachmentId: 'report', name: 'report.txt', bytes: 4 } },
+    { type: 'file', attachment: { attachmentId: 'video', name: 'video.mp4', bytes: 4 } },
+  ])
+  const { router, sendFile, sendVideo, sendText } = routerFixture(api, {
+    bindings: { current: (_key, fallback) => fallback, set: async () => undefined },
+    defaultWorkspace: { workspaceId: 'workspace-a', path: '/tmp', title: 'WeChat', sessionIds: [] },
+    readFile: async function* () { yield Buffer.from('data') },
+  })
+  sendVideo.mockRejectedValue(new Error('upload failed'))
+  router.accept(inbound('生成附件'))
+  try {
+    await vi.waitFor(() => { expect(sendText.mock.calls.some(call => String(call[1]).includes('2 个文件或视频中的 1 个'))).toBe(true) })
+    expect(sendFile).toHaveBeenCalledWith('peer-a', Buffer.from('data'), 'report.txt', 'context-a')
+    expect(sendVideo).toHaveBeenCalledWith('peer-a', Buffer.from('data'), 'context-a')
+  } finally { await router.stop() }
 })

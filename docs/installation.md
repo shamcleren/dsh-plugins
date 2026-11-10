@@ -77,7 +77,7 @@ make init DIR=/absolute/path/dsh-plugins
 
 ## 已有 DSH 的兼容与恢复
 
-本次兼容基线为官方 `0.1.7-rc.2`，桌面运行时使用锁定的 Node 24。凭据由该版本官方解析器校验，不需要删掉 `.credentials.yaml` 或手工降级格式。
+本次兼容基线为官方 `0.2.1-rc.5`，桌面运行时使用锁定的 Node 24。凭据由该版本官方解析器校验，不需要删掉 `.credentials.yaml` 或手工降级格式。
 
 - 旧 `settings.yaml`：更新前保存权限为 `600` 的摘要副本，包括已有的 `.imported` 文件。官方首次启动将可用字段导入 Profile 配置；旧默认预设的 `agent-presets.default` 由安装事务转为 `agent-preset-registry.selectedDefault`，不覆盖已明确设置的新字段。
 - 旧 V3 会话：由官方迁移到 V4；隔离验证覆盖 Codex 和安全扫描消息，并确认旧一代日志保留。

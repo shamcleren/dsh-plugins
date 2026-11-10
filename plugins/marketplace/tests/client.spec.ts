@@ -1,26 +1,26 @@
+import type { Context } from '@deepseek-ai/cordis'
 import { expect, it, vi } from 'vitest'
-import { apply } from '../src/client/index.ts'
+import { apply, name } from '../src/client/index.ts'
 import { zh } from '../src/client/locales.ts'
+import { isValidElement } from 'react'
 
 vi.mock('../src/client/MarketplacePanel.tsx', () => ({ MarketplacePanel: () => null }))
 
-it('keeps the native marketplace registered and adds an optional remote tab without making requests', () => {
-  const native = { id: 'marketplace', label: () => '插件市场' }
-  const tabs = new Map<string, Record<string, unknown>>([['marketplace', native]])
+it('makes the market reachable on its bundle page when only the current plugin-page slot is mounted', () => {
+  const pages = new Map<string, { meta: Record<string, unknown>; render(): unknown }>()
   const call = vi.fn()
   apply({
-    effect: callback => { callback() },
-    locale: { register: vi.fn(), bind: () => key => zh[key] },
-    connection: { rpc: { call } },
+    effect: (callback: () => unknown) => { callback() },
+    locale: { register: vi.fn(), bind: () => (key: keyof typeof zh) => zh[key] },
+    get: (service: string) => { expect(service).toBe('connection'); return { rpc: { call } } },
     slots: {
-      inject: (slot, register) => { expect(slot).toBe('settings.plugins.tab'); register() },
-      register: meta => { tabs.set(meta.id as string, meta) },
+      // An unmounted legacy slot cannot render anything, even if its type remains exported.
+      inject: (slot: string, register: () => unknown) => { if (slot === 'plugins.bundle.config') register() },
+      register: (meta: Record<string, unknown>, render: () => unknown) => { pages.set(meta.key as string, { meta, render }) },
     },
-  })
-  expect(tabs.size).toBe(2)
-  expect(tabs.get('marketplace')).toBe(native)
-  expect(tabs.get('trusted-marketplace')).toMatchObject({ name: 'settings.plugins.tab' })
-  const label = tabs.get('trusted-marketplace')?.label as () => string
-  expect(label()).toBe('Git 仓库市场')
+  } as unknown as Context)
+  const page = pages.get(name)
+  expect(page?.meta).toMatchObject({ name: 'plugins.bundle.config', key: '@shamcleren/dsh-plugin-marketplace' })
+  expect(isValidElement(page?.render())).toBe(true)
   expect(call).not.toHaveBeenCalled()
 })

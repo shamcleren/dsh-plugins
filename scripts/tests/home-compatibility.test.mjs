@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { backupLegacySettings, legacyPresetPatch, checkCredentials, homeProfileNeedsUpdate, lockDshHome, prepareHomeProfile, publishHomeProfile, recoverHomeProfile, discardHomeProfile, stabilizeProfileLock } from '../home-compatibility.mjs'
+import { backupLegacySettings, legacyPresetPatch, checkCredentials, verifyProfilePeers, homeProfileNeedsUpdate, lockDshHome, prepareHomeProfile, publishHomeProfile, recoverHomeProfile, discardHomeProfile, stabilizeProfileLock } from '../home-compatibility.mjs'
 import { releaseInfo } from '../bootstrap.mjs'
 import { fakeInstall } from './installer-fixture.mjs'
 const repo = fileURLToPath(new URL('../../', import.meta.url)), runtime = join(repo, 'runtime')
@@ -81,6 +81,20 @@ async function fixture(t) {
   t.after(() => rm(root, { recursive: true, force: true }))
   return { root, home }
 }
+
+test('engine-only third-party plugins must support the selected runtime before staging', async t => {
+  const { home } = await fixture(t), profile = join(home, 'profiles/web')
+  await mkdir(join(profile, 'node_modules/third-party'), { recursive: true })
+  await writeFile(join(profile, 'package.json'), JSON.stringify({ dependencies: { 'third-party': '1.0.0' } }))
+  const path = join(profile, 'node_modules/third-party/package.json')
+  for (const engine of ['0.1.7-rc.2', 42, 'invalid']) {
+    await writeFile(path, JSON.stringify({ engines: { dsh: engine } }))
+    await assert.rejects(verifyProfilePeers(profile, runtime), /third-party: engines.dsh requires/)
+  }
+  const version = JSON.parse(await readFile(join(runtime, 'package.json'))).dependencies['@deepseek-ai/dsh']
+  await writeFile(path, JSON.stringify({ engines: { dsh: version } }))
+  await verifyProfilePeers(profile, runtime)
+})
 
 test('profile recovery cleanup is repeatable after its staging directory has been removed', async t => {
   const { root, home } = await fixture(t)
@@ -266,4 +280,28 @@ for (const committed of [false, true]) test('same-runtime profile recovery check
   await recoverHomeProfile({ ...f, runtimeDigest: f.release.runtimeDigest, profileUpdateId: committed ? '.update-fixture' : '.update-previous', ready: true })
   const current = JSON.parse(await readFile(join(f.profile, 'node_modules', f.entry.package, 'package.json')))
   assert.equal(current.version, committed ? f.entry.version : '0.4.0')
+})
+
+test('retired plugins are removed through the staged official CLI while unknown packages and data remain', async t => {
+  const f = await fixture(t), profile = join(f.home, 'profiles/web')
+  const retired = '@shamcleren/dsh-codex-controller', retained = '@example/private-plugin'
+  await mkdir(join(profile, 'node_modules', retained), { recursive: true })
+  await writeFile(join(profile, 'node_modules', retained, 'package.json'), JSON.stringify({ name: retained, version: '1.0.0' }))
+  await writeFile(join(profile, 'package.json'), JSON.stringify({ dependencies: { [retired]: 'file:/previous.tgz', [retained]: '1.0.0' }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', retired, '@deepseek-ai/dsh-web-app', retained] } } }))
+  const patch = '- id: retained-settings\n  config:\n    value: keep\n'
+  await writeFile(join(profile, 'cordis.patch.yml'), patch)
+  const release = await releaseInfo(repo)
+  assert.equal(await homeProfileNeedsUpdate({ home: f.home, repo, release }), true)
+  const calls = []
+  const transaction = await prepareHomeProfile({ ...f, repo, runtime, release, nodeExecutable: process.execPath, env: { PATH: process.env.PATH },
+    execute: async (...args) => { calls.push(args[1]); await fakeInstall(...args) }, log() {} })
+  assert.ok(calls.some(args => args.includes('remove') && args.includes(retired)))
+  assert.ok(JSON.parse(await readFile(join(profile, 'package.json'))).dependencies[retired], 'live profile stays intact before publication')
+  await publishHomeProfile(transaction)
+  await recoverHomeProfile({ ...f, runtimeDigest: release.runtimeDigest, ready: true })
+  const manifest = JSON.parse(await readFile(join(profile, 'package.json')))
+  assert.equal(manifest.dependencies[retired], undefined)
+  assert.equal(manifest.dependencies[retained], '1.0.0')
+  assert.equal(await readFile(join(profile, 'cordis.patch.yml'), 'utf8'), patch)
+  assert.equal(await homeProfileNeedsUpdate({ home: f.home, repo, release }), false)
 })

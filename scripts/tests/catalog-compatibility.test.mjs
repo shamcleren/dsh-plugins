@@ -22,10 +22,11 @@ test('every plugin has an intact release with the pinned DSH contracts and publi
     const entry = entries[0]
     assert.equal(entry.dshVersion, runtime, source.name + ': catalog runtime')
     assert.equal(entry.version, source.version, source.name + ': unpublished source version')
+    assert.equal(source.engines?.dsh, runtime, source.name + ': official compatibility declaration')
     await releaseArtifact(repo, entry)
     const tarball = join(repo, entry.artifact.path)
     const packed = JSON.parse(execFileSync('tar', ['-xOf', tarball, 'package/package.json'], { encoding: 'utf8' }))
-    for (const key of ['exports', 'dependencies', 'peerDependencies', 'dsh', 'bin']) {
+    for (const key of ['exports', 'dependencies', 'peerDependencies', 'engines', 'dsh', 'bin']) {
       assert.deepEqual(packed[key], source[key], source.name + ': release contract ' + key)
     }
     for (const [peer, version] of Object.entries(source.peerDependencies ?? {})) {

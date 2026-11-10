@@ -3,7 +3,8 @@
 import type { CardApi as IApiClient, PresetOption } from './api.js'
 import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 type SnapshotStore<T> = { getSnapshot(): T; subscribe(listener: () => void): () => void; set(value: T): void; update(mutator: (value: T) => void): void }
-import type { Config } from '../config.js'
+import { z } from 'zod'
+import type { BotConfig, Config } from '../config.js'
 import {
   booleanField, CardForm, numberField, stringListField, textField,
   type FieldState, type FormActions, type FormState,
@@ -31,6 +32,12 @@ export interface CredentialFailure {
 }
 
 export interface WeComCardState extends FormState {
+  bots: readonly { id: string; name?: string }[]
+  selectedBotId: string
+  rosterWritable: boolean
+  multiBot: boolean
+  model: FieldState
+  name: FieldState
   botId: FieldState
   secret: FieldState
   allowedUsers: FieldState
@@ -63,12 +70,19 @@ export interface WorkspaceOption {
 }
 
 export interface WeComCardFace extends FormActions {
+  selectBot(id: string): void
+  addBot(): void
+  removeBot(): void
   hooks: { weComCard: SnapshotStore<WeComCardState> }
 }
 
 /** Synchronizes one WeCom card with settings and credential stores. */
 export class WeComCardController {
   private readonly form: CardForm<Config>
+  private readonly scope: ConfigForm<Config>
+  private selectedBotId = ''
+  private readonly selectionListeners = new Set<() => void>()
+  private readonly disposers: (() => void)[] = []
   private readonly store: SnapshotStore<WeComCardState>
   private botId: CredentialState = { ref: '', configured: false, writable: true }
   private secret: CredentialState = { ref: '', configured: false, writable: true }
@@ -82,12 +96,19 @@ export class WeComCardController {
   private credentialFailure: CredentialFailure | undefined
 
   constructor(
-    private readonly scope: ConfigForm<Config>,
+    private readonly rootScope: ConfigForm<Config>,
     private readonly api: Pick<IApiClient, 'credentials' | 'workspace' | 'presets'>,
   ) {
+    this.scope = botScope(rootScope, () => { this.selectedBotId ||= rootScope.getSnapshot().value?.bots?.[0]?.id ?? ''; return this.selectedBotId }, this.selectionListeners, this.disposers)
     this.form = new CardForm(
-      scope,
+      this.scope,
       [
+        textField('name'),
+        { field: 'model',
+          format: value => { const model = value as Config['model']; return model === undefined ? '' : [model.provider, model.model, model.reasoningEffort].filter(Boolean).join(' ') },
+          parse: text => { const parts = text.trim().split(/\s+/u); return text.trim() === '' ? { kind: 'clear' as const }
+            : parts.length < 2 || parts.length > 3 ? undefined : { kind: 'set' as const, value: { provider: parts[0], model: parts[1], ...(parts[2] === undefined ? {} : { reasoningEffort: parts[2] }) } } },
+        },
         stringListField('allowedUsers'),
         stringListField('adminUsers'),
         textField('workspaceId'),
@@ -102,7 +123,7 @@ export class WeComCardController {
       ],
     )
     this.store = this.form.bind(() => this.projection())
-    scope.subscribe(() => { void this.readCredentials() })
+    this.disposers.push(this.scope.subscribe(() => { void this.readCredentials() }))
     void this.readCredentials()
     void this.readWorkspaces()
     void this.readPresets()
@@ -117,6 +138,14 @@ export class WeComCardController {
     const actions = this.form.actions()
     return {
       hooks: { weComCard: this.store },
+      selectBot: id => {
+        if (this.form.state().dirty) return
+        this.selectedBotId = id
+        for (const listener of this.selectionListeners) listener()
+        this.store.set(this.projection())
+      },
+      addBot: () => { void this.changeRoster(false) },
+      removeBot: () => { void this.changeRoster(true) },
       ...actions,
       discard: () => {
         this.credentialFailure = undefined
@@ -126,9 +155,44 @@ export class WeComCardController {
     }
   }
 
+  dispose(): void { for (const dispose of this.disposers.splice(0)) dispose() }
+
+  private activeBotId(): string {
+    const bots = this.rootScope.getSnapshot().value?.bots
+    return this.selectedBotId || bots?.[0]?.id || ''
+  }
+
+  private async changeRoster(remove: boolean): Promise<void> {
+    if (this.form.state().dirty || !this.rootScope.getSnapshot().writable) return
+    const snapshot = this.rootScope.getSnapshot()
+    const current = snapshot.value ?? {}
+    const { bots: configured, ...legacy } = current
+    const bots: BotConfig[] = configured === undefined ? [{ ...legacy, id: 'default', botIdEnv: legacy.botIdEnv ?? DEFAULT_BOT_ID_REF, secretEnv: legacy.secretEnv ?? DEFAULT_SECRET_REF }] : [...configured]
+    if (remove) {
+      const index = bots.findIndex(bot => bot.id === this.activeBotId())
+      if (index < 0) return
+      bots.splice(index, 1)
+    } else {
+      const id = `bot_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`
+      bots.push({ id, botIdEnv: `WECOM_${id}_BOT_ID`, secretEnv: `WECOM_${id}_BOT_SECRET` })
+    }
+    try {
+      const accepted = await this.rootScope.mutate([{ op: 'set', path: ['bots'], value: z.json().parse(JSON.parse(JSON.stringify(bots))) }], snapshot.revision)
+      if (accepted) this.selectedBotId = remove ? bots[0]?.id ?? '' : bots.at(-1)?.id ?? ''
+    } catch { /* Host refused: keep the accepted roster. */ }
+    for (const listener of this.selectionListeners) listener()
+    this.store.set(this.projection())
+  }
+
   private projection(): WeComCardState {
     return {
       ...this.form.state(),
+      bots: this.rootScope.getSnapshot().value?.bots ?? [],
+      selectedBotId: this.activeBotId(),
+      rosterWritable: this.rootScope.getSnapshot().writable,
+      multiBot: this.rootScope.getSnapshot().value?.bots !== undefined,
+      model: this.form.field('model'),
+      name: this.form.field('name'),
       botId: this.form.field(BOT_ID_FIELD),
       secret: this.form.field(SECRET_FIELD),
       allowedUsers: this.form.field('allowedUsers'),
@@ -197,6 +261,12 @@ export class WeComCardController {
   }
 
   private async readCredentials(): Promise<void> {
+    if (this.rootScope.getSnapshot().value?.bots !== undefined && this.scope.getSnapshot().value === undefined) {
+      this.botId = { ref: '', configured: false, writable: false }
+      this.secret = { ref: '', configured: false, writable: false }
+      this.store.set(this.projection())
+      return
+    }
     const refs = refsOf(this.scope.getSnapshot())
     if (refs.botId !== this.botId.ref || refs.secret !== this.secret.ref) {
       this.botId = { ref: refs.botId, configured: false, writable: true }
@@ -218,6 +288,7 @@ export class WeComCardController {
   }
 
   private async writeCredential(kind: 'botId' | 'secret', value: string): Promise<boolean> {
+    if (this.rootScope.getSnapshot().value?.bots !== undefined && this.scope.getSnapshot().value === undefined) return false
     const ref = refsOf(this.scope.getSnapshot())[kind]
     this.credentialFailure = undefined
     let refusal: string | undefined
@@ -249,4 +320,31 @@ function credentialState(
   view: { configured: boolean; writable: boolean } | undefined,
 ): CredentialState {
   return { ref, configured: view?.configured ?? false, writable: view?.writable ?? true }
+}
+
+/** Project a selected Bot and fence nested writes against roster changes. */
+export function botScope(root: ConfigForm<Config>, selected: () => string,
+  listeners: Set<() => void>, disposers: (() => void)[]): ConfigForm<Config> {
+  const index = () => { const bots = root.getSnapshot().value?.bots; return bots === undefined ? undefined : selected() === '' ? 0 : bots.findIndex(bot => bot.id === selected()) }
+  const layer = (value: unknown): Config | undefined => {
+    const config = value as Config | undefined
+    const i = index()
+    if (i === undefined) return config
+    const bot = config?.bots?.[i]
+    if (bot === undefined) return undefined
+    return { ...bot, botIdEnv: bot.botIdEnv ?? `WECOM_${bot.id}_BOT_ID`, secretEnv: bot.secretEnv ?? `WECOM_${bot.id}_BOT_SECRET` }
+  }
+  disposers.push(root.subscribe(() => { for (const listener of listeners) listener() }))
+  const mutate: ConfigForm<Config>['mutate'] = (ops, revision) => {
+    const snapshot = root.getSnapshot(), i = index()
+    if (i !== undefined && snapshot.value?.bots?.[i] === undefined) return Promise.resolve(false)
+    return root.mutate(ops.map(op => ({ ...op, path: [...(i === undefined ? [] : ['bots', String(i)]), ...op.path] })), revision ?? snapshot.revision)
+  }
+  return {
+    getSnapshot: () => { const snapshot = root.getSnapshot(); return { ...snapshot, value: layer(snapshot.value), base: layer(snapshot.base), user: index() === undefined ? snapshot.user : (snapshot.user as Config | undefined)?.bots?.[index()!], writable: snapshot.writable && (index() === undefined || snapshot.value?.bots?.[index()!] !== undefined) } },
+    subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    mutate,
+    set: (field, value) => index() === undefined ? root.set(field, value) : mutate([{ op: 'set', path: [field], value: z.json().parse(JSON.parse(JSON.stringify(value))) }]),
+    unset: field => index() === undefined ? root.unset(field) : mutate([{ op: 'unset', path: [field] }]),
+  }
 }

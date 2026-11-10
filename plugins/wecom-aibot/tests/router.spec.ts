@@ -12,6 +12,7 @@ import type {
 import { normalizeTextFrame, promptRpcIdFor } from '../src/inbound.js'
 import type { WeComTextFrame } from '../src/inbound.js'
 import { WeComConversationRouter } from '../src/router.js'
+import { Config, configuredBots, resolveRuntimeConfig } from '../src/config.js'
 import type { WeComReplyClient, WeComTemplateCardEventFrame } from '../src/router.js'
 
 function success<T>(request: RpcRequest<unknown>, value: T): RpcResponse<T> {
@@ -335,6 +336,30 @@ describe('WeComConversationRouter', () => {
     ...test === undefined ? {} : { readImage: test.readImage },
   })
 
+  it('submits turns from two schema-resolved Bots with inherited models into separate Sessions', async () => {
+    const bots = configuredBots(Config({ bots: [{ id: 'alpha' }, { id: 'beta' }] }))
+    const tests = bots.map(() => harness())
+    const routers = bots.map((bot, index) => {
+      const test = tests[index]!
+      return new WeComConversationRouter(test.api, test.replies, logger(), resolveRuntimeConfig(bot), runtime())
+    })
+    try {
+      routers.forEach((router, index) => {
+        router.start()
+        const frame = textFrame()
+        frame.body!.aibotid = bots[index]!.id
+        router.accept(frame)
+      })
+      await vi.waitFor(() => {
+        for (const test of tests) expect(test.replyCalls.at(-1)).toEqual({ content: '你好，世界', finish: true })
+      })
+      const created = tests.map(test => test.create.mock.calls[0]![0].payload)
+      expect(created[0]!.sessionId).not.toBe(created[1]!.sessionId)
+      for (const request of created) expect(request).not.toHaveProperty('model')
+      for (const test of tests) expect(test.prompt).toHaveBeenCalledTimes(1)
+    } finally { await Promise.all(routers.map(router => router.stop())) }
+  })
+
   it('projects one admitted Host turn as incremental and final WeCom replies', async () => {
     const test = harness()
     const router = new WeComConversationRouter(test.api, test.replies, logger(), {
@@ -637,11 +662,11 @@ describe('WeComConversationRouter', () => {
     expect(test.replyCalls.at(-1)?.content).toContain('Effort 已切换为 off')
     // Upstream saves every selection as the deployment default, so the channel
     // may not present the switch as WeCom-local.
-    expect(test.replyCalls.at(-1)?.content).toContain('全局默认模型')
+    expect(test.replyCalls.at(-1)?.content).toContain('仅作用于当前企微会话')
     await router.stop()
   })
 
-  it('warns that switching the model reaches the deployment default', async () => {
+  it('switches the model only for the current conversation', async () => {
     const test = harness()
     const router = new WeComConversationRouter(test.api, test.replies, logger(), {
       allowedUsers: [], adminUsers: ['user-1'], thinkingText: '处理中', turnTimeoutMs: 1_000,
@@ -650,7 +675,7 @@ describe('WeComConversationRouter', () => {
     router.accept(textFrame('/model deepseek deepseek-chat high'))
 
     await vi.waitFor(() => expect(test.replyCalls.at(-1)?.content).toContain('已切换到 deepseek'))
-    expect(test.replyCalls.at(-1)?.content).toContain('全局默认模型')
+    expect(test.replyCalls.at(-1)?.content).toContain('仅作用于当前企微会话')
     await router.stop()
   })
 
@@ -1168,4 +1193,49 @@ describe('WeComConversationRouter', () => {
       resolved: Promise.resolve({ outcome: 'unavailable' }),
     })).resolves.toBeUndefined()
   })
+})
+
+it('uploads and sends file and video attachments to the originating WeCom chat', async () => {
+  const test = harness([], [
+    { type: 'file', attachment: { attachmentId: 'report', name: 'report.txt', bytes: 4 } },
+    { type: 'file', attachment: { attachmentId: 'video', name: 'video.mp4', bytes: 4 } },
+  ])
+  const router = new WeComConversationRouter(test.api, test.replies, logger(), {
+    allowedUsers: [], adminUsers: [], thinkingText: '处理中', turnTimeoutMs: 1000,
+  }, {
+    bindings: { current: (_key, fallback) => fallback, set: async () => undefined },
+    defaultWorkspace: { workspaceId: 'files', path: '/tmp', title: 'Files', sessionIds: [] },
+    readFile: async function* () { yield Buffer.from('data') },
+  })
+  router.start(); router.accept(textFrame())
+  try {
+    await vi.waitFor(() => expect(test.sentMedia).toHaveLength(2))
+    expect(test.uploads.map(file => [file.filename, file.bytes.toString()])).toEqual([['report.txt', 'data'], ['video.mp4', 'data']])
+    expect(test.sentMedia.map(file => file.mediaType)).toEqual(['file', 'video'])
+    expect(test.sentMedia[0]?.targetId).toBe(test.sentMedia[1]?.targetId)
+  } finally { await router.stop() }
+})
+
+it('drains shutdown while prompt admission is still pending without an unhandled observation rejection', async () => {
+  const test = harness()
+  let entered!: () => void, release!: () => void
+  const admission = new Promise<void>(resolve => { entered = resolve })
+  const gate = new Promise<void>(resolve => { release = resolve })
+  test.prompt.mockImplementation(async request => {
+    entered(); await gate
+    return success(request, { accepted: true as const, disposition: 'next-turn' as const })
+  })
+  const router = new WeComConversationRouter(test.api, test.replies, logger(), {
+    allowedUsers: [], adminUsers: [], thinkingText: '处理中', turnTimeoutMs: 1000,
+  }, {
+    bindings: { current: (_key, fallback) => fallback, set: async () => undefined },
+    defaultWorkspace: { workspaceId: 'shutdown', path: '/tmp', title: 'Shutdown', sessionIds: [] },
+  })
+  router.start(); router.accept(textFrame())
+  await admission
+  const stopped = router.stop()
+  // Cross the rejection-notification boundary while admission remains blocked.
+  await new Promise<void>(resolve => setImmediate(resolve))
+  release()
+  await stopped
 })

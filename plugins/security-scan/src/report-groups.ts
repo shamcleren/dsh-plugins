@@ -5,8 +5,8 @@ const dependencyName = (item: Finding): string => item.dependency?.name ?? /^(.*
 export function groupFindings(items: Finding[]): ReportGroup[] {
   const groups = new Map<string, ReportGroup>()
   for (const item of items) {
-    const type = item.engine === 'osv' ? '依赖漏洞' : item.engine === 'gitleaks' ? '凭据泄漏' : '源码风险'
-    const name = item.engine === 'osv' ? dependencyName(item) : item.cwe || item.rule
+    const type = item.engine === 'osv' ? '依赖漏洞' : item.engine === 'gitleaks' ? '凭据泄漏' : item.engine === 'http' ? '运行时风险' : '源码风险'
+    const name = item.engine === 'osv' ? dependencyName(item) : item.engine === 'http' ? item.title : item.cwe || item.rule
     const key = type + ':' + (item.dependency?.ecosystem ?? '') + ':' + name
     let group = groups.get(key)
     if (!group) { group = { key, title: name, type, issues: [] }; groups.set(key, group) }

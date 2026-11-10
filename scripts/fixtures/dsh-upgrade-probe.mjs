@@ -9,9 +9,12 @@ export function apply(ctx) {
   ctx.on('plugin-manager/install-log', chunk => {
     if (chunk.text) console.log('Isolated package operation: ' + chunk.text.replace(/([?&]token=)[^\s]+/g, '$1[redacted]'))
   })
-  registerHostRpc(ctx, '/smoke-upgrade', async method => {
+  registerHostRpc(ctx, '/smoke-upgrade', async (method, payload) => {
     if (method === 'diagnostic') return { ok: true, value: [...ctx.root.loader.entries()].filter(e => e.fiber && e.fiber.state !== 2).map(e => ({ id: e.options.id, state: e.fiber.state, error: String(e.fiber._error ?? '') })) }
     if (method === 'mutation') {
+      const action = payload?.action
+      assert.ok(['remove', 'install', 'update'].includes(action))
+      const profile = ctx.profileContext.name
       const artifact = process.env.DSH_SMOKE_ARTIFACT
       assert.ok(artifact, 'isolated artifact supplied')
       const bytes = await readFile(artifact), sha256 = createHash('sha256').update(bytes).digest('hex')
@@ -25,12 +28,12 @@ export function apply(ctx) {
         packageName, compatible: true, placement: 'after-web-app', artifact: { sha256, size: bytes.length },
       }] })
       try {
-        await service.deletePackage(packageName)
-        assert.ok(!(await service.state()).installed.some(p => p.packageName === packageName))
-        await service.add(packageName)
-        assert.ok((await service.state()).installed.some(p => p.packageName === packageName))
-        await service.add(packageName)
-        return { ok: true, value: { profile: ctx.profileContext.name, removed: true, installed: true, updated: true } }
+        if (action === 'remove') await service.deletePackage(packageName)
+        else if (action === 'install') await service.add(packageName)
+        else await assert.rejects(service.add(packageName), /marketplace-update-offline/)
+        // A dependency mutation can replace this consumer. The next HTTP request
+        // observes the newly activated service instead of retaining this instance.
+        return { ok: true, value: { profile, action } }
       } finally { service.catalog = original }
     }
     const changes = {

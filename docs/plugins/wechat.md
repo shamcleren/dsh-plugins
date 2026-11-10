@@ -14,7 +14,7 @@ The implementation adapts the protocol behavior of the MIT-licensed `Tencent/ope
 2. QR confirmation saves credentials and waits for the runtime to start before reporting success. The scanning owner is derived from iLink; missing identity fails closed. The card also selects the channel-wide agent preset described by [channel default policy](../decisions/channel-default-policy.md). Details are maintained in the [plugin README](../../plugins/wechat/README.md).
 3. Each account resumes its opaque `get_updates_buf` and long-polls `ilink/bot/getupdates`.
 4. The channel persists the latest `(account, peer)` context token before dispatch.
-5. Text and supported image bytes become one Host `session.prompt` request with `mode: steer` for a channel-owned active turn, otherwise `mode: queue`.
+5. Text, supported image bytes and Session-owned file upload receipts become one Host `session.prompt` request with `mode: steer` for a channel-owned active turn, otherwise `mode: queue`.
 6. A rejected steer retries once as queued input. Queued admission owns the new durable turn; successful steering receives `已加入当前任务。` while the existing turn keeps reply ownership.
 7. The channel folds durable assistant output across every step and sends the final result through `ilink/bot/sendmessage`.
 
@@ -24,13 +24,13 @@ Account ids, peer ids, message ids, tokens, and cursors do not enter Session ids
 
 An active WeChat turn handles its approval through the upstream approval waterfall. Approval requests are presented as text and accept `/approve` or `/reject` only from the originating peer. The upstream approval service retains its canonical audit id and permission policy. Unrelated requests delegate to the Host UI; Web and WeChat do not present the same approval concurrently.
 
-`/preset` writes this plugin's own settings and rebuilds the current conversation. `/model` and `/effort` also change the deployment-wide default model, and their replies say so. `ask_user_question` requests render numbered questions and choices. `/answer <answer>` handles one question; batches use `/answer <number-or-id> <answer>`. Comma-separated selections support multi-select. The channel submits the original stable question ids through the Host response path without starting another model turn.
+`/preset` writes this plugin's own settings and rebuilds the current conversation. `/model` and `/effort` select only the current conversation through public Agent waterfalls; they do not save the deployment default. `ask_user_question` requests render numbered questions and choices. `/answer <answer>` handles one question; batches use `/answer <number-or-id> <answer>`. Comma-separated selections support multi-select. The channel submits the original stable question ids through the Host response path without starting another model turn.
 
 ## Media behavior
 
-Inbound images download from the iLink CDN, enforce the configured byte cap before and after AES-128-ECB decryption, detect PNG/JPEG/WebP/GIF bytes, and enter the Host's durable attachment path. Voice messages use Tencent transcription when present. File names and video presence remain visible as text because the Host prompt API does not accept arbitrary file, audio, or video blocks.
+Inbound images download from the iLink CDN, enforce the configured byte cap before and after AES-128-ECB decryption, detect PNG/JPEG/WebP/GIF bytes, and enter the Host's durable attachment path. Voice messages use Tencent transcription when present. File and video bytes are staged through the public file-upload service for the receiving Session; only its opaque receipt reaches `session.prompt`. Available inline quotes are included as text. ID-only quotes without an inline body are reported as unavailable; this plugin does not maintain the OpenClaw quote database.
 
-Outbound assistant text is split at Unicode boundaries to satisfy the iLink message size. iLink context tokens survive process restarts and are echoed on replies. Typing tickets are resolved per peer and cancelled after settlement.
+Outbound assistant text is split at Unicode boundaries to satisfy the iLink message size. iLink context tokens survive process restarts and are echoed on replies. Typing tickets are resolved per peer and cancelled after settlement. Explicit file/video deliveries use the corresponding iLink upload and message types, and presented paths are read only through the public workspace filesystem. Download and delivery streams enforce byte limits and cancellation.
 
 ## Failure and lifecycle behavior
 

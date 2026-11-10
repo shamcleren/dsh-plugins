@@ -202,7 +202,7 @@ export function WeComCard(props: WeComCardProps) {
   const t = (key: LocaleKey): string => props.t(key)
   const disabled = !state.writable
   const valueField = (
-    field: 'allowedUsers' | 'adminUsers' | 'thinkingText' | 'turnTimeoutMs',
+    field: 'allowedUsers' | 'adminUsers' | 'thinkingText' | 'turnTimeoutMs' | 'model' | 'name',
     id: string,
     label: LocaleKey,
     hint: LocaleKey,
@@ -224,9 +224,22 @@ export function WeComCard(props: WeComCardProps) {
   )
   return (
     <div style={styles.form} aria-label={t('title')}>
+      <section style={styles.section} aria-label={t('bots')}>
+        <h3 style={styles.sectionHeading}>{t('bots')}</h3>
+        <div style={styles.footer}>
+          {state.multiBot ? <select aria-label={t('bots')} style={styles.input} value={state.selectedBotId} disabled={state.dirty || state.saving} onChange={event => props.selectBot(event.target.value)}>
+            {!state.bots.some(bot => bot.id === state.selectedBotId) && state.selectedBotId !== '' ? <option value={state.selectedBotId}>{t('botMissing')}</option> : null}
+            {state.bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name ?? bot.id}</option>)}
+          </select> : <span style={styles.hint}>{t('legacyBot')}</span>}
+          <button type="button" style={styles.button} disabled={state.dirty || state.saving || !state.rosterWritable} onClick={props.addBot}>{t('addBot')}</button>
+          {state.multiBot && state.bots.length > 0 ? <button type="button" style={styles.button} disabled={state.dirty || state.saving || !state.writable} onClick={props.removeBot}>{t('removeBot')}</button> : null}
+        </div>
+        <p style={styles.hint}>{t('botsHint')}</p>
+      </section>
       {!state.writable ? <p style={styles.hint}>{t('readOnly')}</p> : null}
       <section style={styles.section} aria-labelledby="wecom-section-connection">
         <h3 id="wecom-section-connection" style={styles.sectionHeading}>{t('sectionConnection')}</h3>
+        {state.multiBot ? valueField('name', 'wecom-bot-name', 'botName', 'botNameHint') : null}
         <SecretField id="wecom-bot-id" label={t('botId')} hint={t('botIdHint')} state={state.botId} configured={state.botIdConfigured} configuredLabel={t('configured')} unconfiguredLabel={t('unconfigured')} disabled={!state.botIdWritable} onEdit={text => { props.edit('botId', text) }} />
         <SecretField id="wecom-secret" label={t('secret')} hint={t('secretHint')} state={state.secret} configured={state.secretConfigured} configuredLabel={t('configured')} unconfiguredLabel={t('unconfigured')} disabled={!state.secretWritable} onEdit={text => { props.edit('secret', text) }} />
         {state.credentialFailure === undefined ? null : (
@@ -262,6 +275,7 @@ export function WeComCard(props: WeComCardProps) {
           onEdit={value => { props.edit('workspaceId', value) }}
           onReset={() => { props.resetField('workspaceId') }}
         />
+        {valueField('model', 'wecom-model', 'model', 'modelHint')}
         <p style={styles.hint}>{t('commandsHint')}</p>
       </section>
       <section style={styles.section} aria-labelledby="wecom-section-advanced">

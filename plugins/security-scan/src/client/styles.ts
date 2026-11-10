@@ -1,9 +1,4 @@
 export const css = `
-.security-nav-host{width:100%;min-width:0}
-.security-nav-trigger{box-sizing:border-box;display:flex;align-items:center;gap:8px;width:calc(100% + 4px);height:42px;flex:none;margin:4px -2px;padding:0 10px 0 8px;border:0;border-radius:12px;background:transparent;color:var(--dsw-alias-label-primary,inherit);cursor:pointer;font-family:inherit;font-size:14px;line-height:22px;text-align:left;overflow:hidden;white-space:nowrap}
-.security-nav-trigger svg{flex:none}.security-nav-host.rail{width:auto}.security-nav-host.rail .security-nav-trigger{width:36px;height:36px;margin:8px 0 10px;padding:0;justify-content:center;gap:0;border-radius:50%}
-.security-nav-trigger:hover{background:var(--dsw-alias-interactive-bg-hover,#edf2fb)}.security-nav-trigger:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#477dea);outline-offset:2px}
-
 .security-workbench{
   --scan-bg:var(--dsw-alias-bg-layer-1,#f5f7fb);
   --scan-surface:var(--dsw-alias-bg-layer-2,#fff);
@@ -16,6 +11,8 @@ export const css = `
   position:absolute;inset:0;pointer-events:auto;z-index:50;background:var(--scan-bg);color:var(--scan-text);display:flex;flex-direction:column;font:14px/1.55 system-ui,-apple-system,sans-serif;text-align:left;
 }
 .security-workbench *{box-sizing:border-box}
+.security-workbench.embedded{position:relative;inset:auto;z-index:auto;width:100%;height:100%;min-height:0}
+.security-workbench.embedded header{padding-left:max(28px,var(--dsh-frame-leading-clearance,0px))}
 .security-workbench h1{font-size:22px;font-weight:650;letter-spacing:-.4px;margin:0}
 .security-workbench h2{font-size:18px;margin:0 0 18px}.security-workbench h3{font-size:15px;margin:0}
 .security-workbench p{margin:6px 0;overflow-wrap:anywhere}.security-workbench .muted{color:var(--scan-muted);font-size:12px;line-height:1.6}
@@ -36,6 +33,7 @@ export const css = `
 .security-workbench button{appearance:none;-webkit-appearance:none;cursor:pointer;min-height:40px;flex-shrink:0;border:1px solid var(--scan-border);border-radius:8px;padding:9px 14px;background:var(--scan-surface);color:var(--scan-text);font:inherit;font-size:14px;line-height:20px;transition:background .15s,border-color .15s}
 .security-workbench button:hover:not(:disabled){background:var(--scan-subtle);border-color:var(--scan-muted)}
 .security-workbench button:disabled{cursor:not-allowed;opacity:.5}
+.security-workbench button.link{border:0;background:none;padding:0;min-height:0;color:var(--scan-accent);text-decoration:underline;cursor:pointer}.security-workbench .baseline-note{align-self:end;margin:0}
 .security-workbench button.danger{color:#d14f59}.security-workbench button.danger:hover:not(:disabled){border-color:currentColor}
 /* Brand backgrounds invert in dark mode; their foreground must invert as well. */
 .security-workbench button.primary{background:var(--scan-accent);border-color:var(--scan-accent);color:var(--scan-on-accent)}
@@ -103,7 +101,7 @@ export const css = `
 .security-workbench .environment-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px;margin-bottom:20px;border:1px solid var(--scan-border);border-radius:10px;background:var(--scan-surface);font-size:13px}
 .security-workbench .spinner{width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:security-spin 1s linear infinite}
 @keyframes security-spin{to{transform:rotate(360deg)}}
-@media(prefers-reduced-motion:reduce){.security-workbench .spinner{animation:none}.security-workbench button{transition:none}}
+@media(prefers-reduced-motion:reduce){.security-workbench .spinner{animation:none}.security-workbench button,.security-workbench .check-card{transition:none}}
 @media(max-width:760px){
   .security-workbench header{padding:14px;gap:10px;flex-wrap:wrap}.security-workbench header .grow{flex-basis:calc(100% - 130px)}.security-workbench header>button:last-child{margin-left:auto}
   .security-workbench h1{font-size:19px}.security-workbench nav{gap:20px;padding:0 16px}.security-workbench main{padding:16px}
@@ -128,14 +126,31 @@ export const css = `
 .security-workbench .editor .form-footer{position:sticky;bottom:-28px;background:var(--scan-surface);padding:16px 0;z-index:1;box-shadow:0 -8px 16px var(--scan-surface)}
 .security-workbench .model-details{padding:0 0 8px}.security-workbench .model-details summary{color:var(--scan-accent)}
 .security-workbench .follow-up{margin:0 0 20px}.security-workbench .follow-up h2{margin:0}
-.security-workbench .follow-up-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin:20px 0;padding:16px;border-radius:10px;background:var(--scan-bg)}
+.security-workbench .stepper{display:flex;gap:6px;list-style:none;margin:20px 0 6px;padding:0;counter-reset:none}
+.security-workbench .stepper li{flex:1;display:flex;align-items:center;gap:8px;min-width:0;padding:8px 10px;border-radius:8px;background:var(--scan-bg);color:var(--scan-muted);font-size:13px;white-space:nowrap}
+.security-workbench .stepper li.current{background:color-mix(in srgb,var(--scan-accent) 10%,var(--scan-surface));color:var(--scan-accent);font-weight:600}
+.security-workbench .stepper li.done{color:var(--scan-text)}
+.security-workbench .step-dot{display:grid;place-items:center;flex:none;width:20px;height:20px;border-radius:50%;border:1px solid currentColor;font-size:11px;line-height:1}
+.security-workbench .stepper li.done .step-dot{border-color:#26946a;background:#26946a;color:#fff}
+.security-workbench .step-hint{margin:0 0 12px}
+.security-workbench .quick-select{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 8px}.security-workbench .quick-select button{min-height:32px;padding:5px 12px;font-size:13px}
 .security-workbench .finding-picker summary,.security-workbench .comparison summary{font-weight:600;padding:8px 0}
 .security-workbench .finding-picker .search{max-width:none;margin:12px 0}.security-workbench .finding-list{max-height:320px;overflow:auto;overscroll-behavior:contain}
 .security-workbench .repair-delivery{margin:16px 0;padding:16px;border:1px solid var(--scan-border);border-radius:10px;overflow-wrap:anywhere}.security-workbench .repair-delivery select{display:block;max-width:100%;margin-top:6px}
 .security-workbench .finding-filters{display:flex;flex-wrap:wrap;gap:12px}.security-workbench .finding-filters label{flex:1 1 160px;min-width:0}.security-workbench .finding-filters select{display:block;width:100%;margin-top:6px}.security-workbench .finding-selection{flex-wrap:wrap;margin-top:12px}
-.security-workbench .finding-row{display:flex;align-items:flex-start;gap:12px;padding:12px 4px;border-bottom:1px solid var(--scan-border);overflow-wrap:anywhere}.security-workbench .finding-row input{margin-top:5px;accent-color:var(--scan-accent)}
+.security-workbench .finding-row{display:flex;align-items:flex-start;gap:12px;padding:12px 4px;border-bottom:1px solid var(--scan-border);overflow-wrap:anywhere}.security-workbench .suppress-form{display:grid;gap:8px;margin:8px 0 12px;padding:14px 16px;border:1px solid var(--scan-border);border-radius:10px;background:var(--scan-subtle)}.security-workbench .suppress-form label{display:grid;gap:6px;font-size:13px}.security-workbench .suppress-form textarea{min-height:72px}.security-workbench .suppressions{margin-top:20px}.security-workbench .suppressions .finding-row button{flex-shrink:0}.security-workbench .suppressions .finding-row small+small{margin-top:2px}.security-workbench .finding-row input{margin-top:5px;accent-color:var(--scan-accent)}
 .security-workbench .finding-row small{display:block;color:var(--scan-muted)}.security-workbench .comparison{margin-top:20px;padding-top:12px;border-top:1px solid var(--scan-border)}.security-workbench .comparison-counts{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
 .security-workbench .discard-overlay{position:absolute;inset:0;background:#0006;z-index:5;display:grid;place-items:center;padding:20px}.security-workbench .discard-overlay .confirm-box{width:100%;margin:0}
 .security-workbench .empty button{margin-top:16px}
-@media(max-width:760px){.security-workbench .overview{gap:8px}.security-workbench .overview button{padding:12px;flex-wrap:wrap;gap:6px}.security-workbench .overview strong{font-size:22px}.security-workbench .overview span:last-child{display:none}.security-workbench .follow-up-steps{grid-template-columns:1fr;gap:10px}.security-workbench .editor .form-footer{bottom:-16px}}
+.security-workbench .editor>fieldset>.section-title{margin:24px 0 8px}
+.security-workbench .check-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:12px 0 4px}
+.security-workbench .check-card{min-width:0;padding:14px 16px;border:1px solid var(--scan-border);border-radius:12px;background:var(--scan-bg);transition:border-color .15s,background .15s}
+.security-workbench .check-card.on{border-color:color-mix(in srgb,var(--scan-accent) 40%,var(--scan-border));background:color-mix(in srgb,var(--scan-accent) 4%,var(--scan-surface))}
+.security-workbench .check-card .check{padding:0}.security-workbench .check-card .check+.muted,.security-workbench .check-card .muted+.check{margin-top:10px}.security-workbench .check-card>p.muted{margin:10px 0 0}
+.security-workbench .check-card .model-details{margin-top:12px}
+.security-workbench .tag.runtime{color:#a05bd0}
+.security-workbench .run-summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:0 0 4px;font-size:12px}
+.security-workbench .chip{padding:1px 8px;border-radius:999px;border:1px solid var(--scan-border);color:var(--scan-muted)}
+.security-workbench .chip.confirmed{color:#d14f59;border-color:color-mix(in srgb,#d14f59 35%,var(--scan-border))}.security-workbench .chip.pending{color:#b97a26;border-color:color-mix(in srgb,#b97a26 35%,var(--scan-border))}
+@media(max-width:760px){.security-workbench .overview{gap:8px}.security-workbench .overview button{padding:12px;flex-wrap:wrap;gap:6px}.security-workbench .overview strong{font-size:22px}.security-workbench .overview span:last-child{display:none}.security-workbench .stepper{flex-wrap:wrap}.security-workbench .stepper li{flex:1 1 40%}.security-workbench .check-cards{grid-template-columns:minmax(0,1fr)}.security-workbench .editor .form-footer{bottom:-16px}}
 `

@@ -1,12 +1,16 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
+import type {} from '@deepseek-ai/dsh-client-file-upload'
+import type { PromptContentPart as HostPromptContentPart } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { SessionRequestId } from '@deepseek-ai/dsh-api-session-controller/types'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { WorkspaceId, type Workspace } from '@deepseek-ai/dsh-workspace'
 import type { AskUserQuestionAnswer } from '@deepseek-ai/dsh-user-questions'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import { ConversationModels } from './models.js'
+import type { BotModel } from './config.js'
 /** Minimal same-process Host API used by the channel plugin. */
 
 export interface RpcRequest<T> {
@@ -101,6 +105,8 @@ export interface HostPreset {
   broken?: string
 }
 
+export type PromptContentPart = HostPromptContentPart | { type: 'file-bytes'; data: string; name: string }
+
 export interface HostApiProxy {
   workspace: {
     list(request: RpcRequest<Record<string, never>>): Promise<RpcResponse<{
@@ -126,6 +132,7 @@ export interface HostApiProxy {
       sessionId: string
       workspaceId?: string
       agentPreset?: string
+      model?: BotModel
     }>): Promise<RpcResponse<{ sessionId: string; agentPreset?: string }>>
     history(request: RpcRequest<{
       sessionId: string
@@ -135,7 +142,7 @@ export interface HostApiProxy {
     prompt(request: RpcRequest<{
       sessionId: string
       mode: 'queue' | 'steer'
-      content: [{ type: 'text'; text: string }]
+      content: PromptContentPart[]
     }>): Promise<RpcResponse<{
       accepted: true
       command?: { kind: 'success'; text?: string }
@@ -217,12 +224,13 @@ export function createHostApi(
   const controller = ctx.sessionController, registry = ctx.workspaceRegistry
   const lifetime = new AbortController()
   const listeners = new Set<(frame: RpcRequest<HostMuxFrame>) => void>()
+  const models = new ConversationModels(ctx)
   const pending = new Map<string, (answer: AskUserQuestionAnswer) => void>()
   const emit = (payload: HostMuxFrame, rpcId = randomUUID()) => { for (const listener of listeners) listener({ rpcId, payload }) }
   ctx.effect(() => () => lifetime.abort())
   ctx.on('session/event', (session, event) => { if (observesSession(session.id)) emit({ type: 'session/event', sessionId: session.id, event }) })
-  // Agent-scoped question dispatch filters sibling plugin fibers; claim
-  // owned turns even when this plugin is not inside the agent scope.
+  // Claim owned turns before the Host Web answerer can wait on another UI.
+  // Global dispatch also keeps agent scoping from filtering this sibling fiber.
   ctx.on('user-questions/request', async (request, next) => {
     const sessionId = request.agent?.id
     if (!sessionId || !routesSession(sessionId) || listeners.size === 0) return next()
@@ -235,7 +243,7 @@ export function createHostApi(
       signal.addEventListener('abort', cancel, { once: true })
       emit({ type: 'question/requested', sessionId, questions: request.questions }, rpcId)
     })
-  }, { global: true })
+  }, { prepend: true, global: true })
   const response = async <T>(request: RpcRequest<unknown>, operation: () => Promise<T>): Promise<RpcResponse<T>> => {
     try { lifetime.signal.throwIfAborted(); return { rpcId: request.rpcId, result: { ok: true, value: await operation() } } }
     catch (error) { return { rpcId: request.rpcId, result: { ok: false, error: { code: error instanceof Error && 'code' in error ? String(error.code) : 'host-error', message: error instanceof Error ? error.message : 'Host operation failed' } } } }
@@ -258,16 +266,16 @@ export function createHostApi(
       }),
     },
     sessions: {
-      create: request => response(request, async () => { const { sessionId, workspaceId, agentPreset } = request.payload; const result = await controller.create({ sessionId: SessionId(sessionId), ...(workspaceId ? { workspaceId: WorkspaceId(workspaceId) } : {}), ...(agentPreset ? { agentPreset } : {}) }); return result }),
+      create: request => response(request, async () => { const { sessionId, workspaceId, agentPreset } = request.payload; const result = await controller.create({ sessionId: SessionId(sessionId), ...(workspaceId ? { workspaceId: WorkspaceId(workspaceId) } : {}), ...(agentPreset ? { agentPreset } : {}) }); if (request.payload.model !== undefined) { const state = await controller.inspect(SessionId(result.sessionId)); if (!state.events.some(event => event.type === 'model/selection' || event.type === 'request/header')) await models.select(result.sessionId, request.payload.model) }; return result }),
       history: request => response(request, async () => { const history = await controller.inspect(SessionId(request.payload.sessionId), lifetime.signal); const before = request.payload.beforeSeq ?? Infinity; const events = history.events.filter(event => event.seq < before); const count = Math.max(1, Math.min(1000, request.payload.maxMessages ?? 100)); return { events: events.slice(-count).map(event => ({ event })), hasMore: events.length > count } }),
-      prompt: request => response(request, async () => { return controller.prompt({ ...request.payload, sessionId: SessionId(request.payload.sessionId), requestId: request.rpcId as SessionRequestId }, lifetime.signal) }),
+      prompt: request => response(request, async () => { const content = await promoteFiles(ctx, request.payload.sessionId, request.payload.content, lifetime.signal); return controller.prompt({ ...request.payload, content, sessionId: SessionId(request.payload.sessionId), requestId: request.rpcId as SessionRequestId }, lifetime.signal) }),
       models: request => response(request, async () => {
         const catalog = await controller.modelCatalog(), resolved = await controller.resolveAgent(SessionId(request.payload.sessionId))
         if ('error' in resolved) throw new Error('session-unavailable')
         const options = resolved.agent.options
-        return { current: { provider: options.provider ?? catalog.default.provider, model: options.model ?? catalog.default.model, ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}) }, groups: catalog.groups.map(group => ({ ...group, models: group.models.map(model => ({ id: model.id, name: model.name, ...(model.reasoning ? { reasoning: { ...model.reasoning, efforts: [...model.reasoning.efforts] } } : {}) })) })) }
+        return { current: await models.describe(request.payload.sessionId) ?? { provider: options.provider ?? catalog.default.provider, model: options.model ?? catalog.default.model, ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}) }, groups: catalog.groups.map(group => ({ ...group, models: group.models.map(model => ({ id: model.id, name: model.name, ...(model.reasoning ? { reasoning: { ...model.reasoning, efforts: [...model.reasoning.efforts] } } : {}) })) })) }
       }),
-      selectModel: request => response(request, () => controller.selectModel({ ...request.payload, sessionId: SessionId(request.payload.sessionId) })),
+      selectModel: request => response(request, async () => ({ selected: await models.select(request.payload.sessionId, request.payload) })),
     },
     events: {
       async *mux(_request, callerSignal) {
@@ -290,4 +298,17 @@ export function createHostApi(
       return { accepted: true }
     },
   }
+}
+
+/** File receipts belong to the receiving Session and are consumed by the public prompt API. */
+async function promoteFiles(ctx: Context, sessionId: string, content: readonly PromptContentPart[], signal: AbortSignal): Promise<HostPromptContentPart[]> {
+  const result: HostPromptContentPart[] = []
+  for (const part of content) {
+    if (part.type !== 'file-bytes') { result.push(part); continue }
+    const resolved = await ctx.sessionController.resolveAgent(SessionId(sessionId))
+    if ('error' in resolved) throw resolved.error
+    const uploaded = await ctx.fileUploads.upload(resolved.agent, { name: part.name, data: part.data }, signal)
+    result.push({ type: 'file', receiptId: uploaded.receiptId })
+  }
+  return result
 }

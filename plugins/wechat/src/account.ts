@@ -3,10 +3,11 @@ import { getUpdates, notifyLifecycle, sendMessage, sendTyping } from './api.js'
 import { DEFAULT_CDN_BASE_URL } from './config.js'
 import { normalizeInboundMessage } from './inbound.js'
 import type { WeChatInboundMessage } from './inbound.js'
-import { uploadImage } from './media.js'
-import type { WeChatAccountCredentials } from './protocol.js'
-import { MessageItemType } from './protocol.js'
+import { uploadImage, uploadMedia } from './media.js'
+import type { MessageItem, WeChatAccountCredentials } from './protocol.js'
+import { MessageItemType, UploadMediaType } from './protocol.js'
 import type { WeChatAccountStore } from './storage.js'
+import type { WeChatDelivery } from './delivery.js'
 
 const DEFAULT_POLL_TIMEOUT_MS = 35_000
 const FAILURE_BACKOFF_MS = 30_000
@@ -48,6 +49,7 @@ export class WeChatAccount {
     private readonly logger: Logger,
     private readonly mediaMaxBytes: number,
     private readonly onMessage: (message: WeChatInboundMessage) => Promise<void>,
+    private readonly delivery?: WeChatDelivery,
   ) {}
 
   start(): void {
@@ -67,12 +69,7 @@ export class WeChatAccount {
   async sendText(userId: string, text: string, contextToken?: string): Promise<void> {
     const replyToken = contextToken ?? this.store.contextToken(this.credentials.accountId, userId)
     for (const chunk of textChunks(text)) {
-      await sendMessage({
-        ...this.credentials,
-        userId,
-        ...replyToken === undefined ? {} : { contextToken: replyToken },
-        item: { type: 1, text_item: { text: chunk } },
-      })
+      await this.send(userId, { type: 1, text_item: { text: chunk } }, replyToken)
     }
   }
 
@@ -84,15 +81,38 @@ export class WeChatAccount {
       bytes,
       cdnBaseUrl: DEFAULT_CDN_BASE_URL,
     })
-    await sendMessage({
-      ...this.credentials,
-      userId,
-      ...replyToken === undefined ? {} : { contextToken: replyToken },
-      item: {
+    await this.send(userId, {
         type: MessageItemType.IMAGE,
         image_item: { media: uploaded.media, mid_size: uploaded.midSize },
-      },
+    }, replyToken)
+  }
+
+  async sendFile(userId: string, bytes: Buffer, name: string, contextToken?: string): Promise<void> {
+    await this.sendBinary(userId, bytes, name, contextToken)
+  }
+
+  async sendVideo(userId: string, bytes: Buffer, contextToken?: string): Promise<void> {
+    await this.sendBinary(userId, bytes, undefined, contextToken)
+  }
+
+  private async sendBinary(userId: string, bytes: Buffer, name: string | undefined, contextToken?: string): Promise<void> {
+    if (bytes.length > this.mediaMaxBytes) throw new Error('wechat: outbound file exceeds mediaMaxBytes')
+    const signal = this.abort.signal
+    signal.throwIfAborted()
+    const uploaded = await uploadMedia({
+      ...this.credentials, userId, bytes, cdnBaseUrl: DEFAULT_CDN_BASE_URL, signal,
+      mediaType: name === undefined ? UploadMediaType.VIDEO : UploadMediaType.FILE,
     })
+    const replyToken = contextToken ?? this.store.contextToken(this.credentials.accountId, userId)
+    await this.send(userId, name === undefined
+        ? { type: MessageItemType.VIDEO, video_item: { media: uploaded.media, video_size: uploaded.ciphertextSize } }
+        : { type: MessageItemType.FILE, file_item: { media: uploaded.media, file_name: name, len: String(bytes.length) } }, replyToken)
+  }
+
+  private async send(userId: string, item: MessageItem, contextToken?: string): Promise<void> {
+    if (this.delivery) return this.delivery.send(this.credentials, userId, item, contextToken, this.abort.signal)
+    await sendMessage({ ...this.credentials, userId, item, signal: this.abort.signal,
+      ...contextToken === undefined ? {} : { contextToken } })
   }
 
   async typing(userId: string, status: 1 | 2, contextToken?: string): Promise<void> {
@@ -126,10 +146,11 @@ export class WeChatAccount {
         for (const raw of update.msgs ?? []) {
           const failureKey = raw.client_id ?? raw.message_id?.toString() ?? JSON.stringify(raw)
           try {
-            const message = await normalizeInboundMessage(this.credentials.accountId, raw, this.mediaMaxBytes)
+            const message = await normalizeInboundMessage(this.credentials.accountId, raw, this.mediaMaxBytes, this.abort.signal)
             if (message.contextToken !== undefined) {
               await this.store.saveContextToken(message.accountId, message.userId, message.contextToken)
             }
+            await this.delivery?.observe(this.credentials, message.userId, message.messageId)
             await this.onMessage(message)
             this.messageFailures.delete(failureKey)
           } catch (error) {
@@ -137,7 +158,12 @@ export class WeChatAccount {
             this.messageFailures.set(failureKey, failures)
             if (failures < 3) throw error
             this.messageFailures.delete(failureKey)
-            this.logger.error(`wechat: skipped callback after 3 failed admissions: ${String(error)}`)
+            this.logger.warn('wechat: skipped callback after 3 failed admissions')
+            if (typeof raw.from_user_id === 'string' && raw.from_user_id !== '') {
+              await this.sendText(raw.from_user_id,
+                '这条消息未能处理；文件可能超限或暂时无法读取，请稍后重试。', raw.context_token)
+                .catch(() => { this.logger.warn('wechat: failed to send admission failure notice') })
+            }
           }
         }
         if (update.get_updates_buf !== undefined && update.get_updates_buf !== cursor) {

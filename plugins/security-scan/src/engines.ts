@@ -1,5 +1,5 @@
 import { readFile, writeFile, lstat } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, join, posix } from 'node:path'
 import { z } from 'zod'
 import { parse as parseYaml } from 'yaml'
 import { enrichAdvisories, osvJson } from './advisory.js'
@@ -7,10 +7,18 @@ import { executable } from './scanner.js'
 import { runScanner } from './process.js'
 import { hash, type Snapshot } from './repository.js'
 import type { Finding, Report } from './report.js'
+import { parseUvLock } from './uv-lock.js'
 
 type Engine = Report['engines'][number]
 export const GITLEAKS_VERSION = '8.24.2'
 export const recommendation = (rule: string): string => {
+  if (/ssrf/u.test(rule)) return '服务端请求的目标只能来自固定域名或白名单；解析 URL 后校验协议和主机，禁止内网地址与跳转绕过。补充指向 127.0.0.1 和云元数据地址的拒绝用例。'
+  if (/redirect/u.test(rule)) return '跳转目标限制为站内相对路径或白名单映射，拒绝 //、\\ 和带协议的地址；补充外部地址被拒绝的测试。'
+  if (/path/u.test(rule)) return '将路径解析为绝对路径后确认仍在目标目录内，或只取文件名；补充 ../ 和绝对路径被拒绝的测试。'
+  if (/template/u.test(rule)) return '模板源码使用固定文件或常量，用户输入只作为模板变量传入；补充包含 {{ }} 表达式的回归测试。'
+  if (/jwt/u.test(rule)) return '使用密钥校验签名并固定允许的算法列表，禁止 none；补充篡改或未签名令牌被拒绝的测试。'
+  if (/debug/u.test(rule)) return '生产环境关闭调试模式，由环境变量显式开启并只监听本机地址；部署使用 WSGI 服务器。'
+  if (/cors/u.test(rule)) return '带凭据的 CORS 只允许明确列出的来源；补充未知 Origin 不返回允许头的测试。'
   if (/shell/u.test(rule)) return '避免将外部输入拼接为 shell 命令；使用固定可执行文件和参数数组，并约束可选参数。补充恶意参数回归测试。'
   if (/sql/u.test(rule)) return '使用参数化 SQL，将表名等无法绑定的标识符限制为明确允许的集合；验证跨租户访问。'
   if (/tls/u.test(rule)) return '启用证书和主机名验证，配置受信任证书链；为错误证书添加拒绝用例。'
@@ -25,7 +33,7 @@ export async function enrich(snapshot: Snapshot, item: { rule: string; file: str
   const { anchor, ...metadata } = item
   const fingerprint = hash(engine + ':' + item.rule + ':' + (anchor ?? hash(normalized)))
   return { ...metadata, id: hash(engine + ':' + item.rule + ':' + item.file + ':' + item.line).slice(0, 24), fingerprint, engine, severity: 'medium', status: 'needs-review', change: 'unknown',
-    evidence: '规则命中位于此文件行；尚未证明攻击者可控输入和可达调用链。', recommendation: recommendation(item.rule), verification: '待 DSH security-review 源码复核；未执行项目或漏洞载荷。' }
+    evidence: '规则命中位于此文件行；尚未证明攻击者可控输入和可达调用链。', recommendation: recommendation(item.rule), verification: '待 DSH dsh-security-review 源码复核；未执行项目或漏洞载荷。' }
 }
 export async function scanSecrets(snapshot: Snapshot, originalRoot: string, binaryName: string, signal: AbortSignal): Promise<{ engine: Engine; findings: Finding[] }> {
   const engine: Engine = { name: 'gitleaks', version: GITLEAKS_VERSION, status: 'unavailable', detail: '密钥扫描器缺失；未执行密钥检查。' }
@@ -51,9 +59,23 @@ export async function scanSecrets(snapshot: Snapshot, originalRoot: string, bina
   } catch (error) { signal.throwIfAborted(); return { engine: { ...engine, status: 'failed', detail: '密钥扫描失败；原始输出未写入报告。' }, findings: [] } }
 }
 interface Dependency { name: string; version: string; ecosystem: 'npm' | 'Go' | 'PyPI'; file: string; line?: number }
-export async function dependencies(snapshot: Snapshot): Promise<{ packages: Dependency[]; unsupported: string[] }> {
-  const packages: Dependency[] = [], unsupported: string[] = []
+export async function dependencies(snapshot: Snapshot): Promise<{ packages: Dependency[]; unsupported: string[]; notes: string[] }> {
+  const packages: Dependency[] = [], unsupported: string[] = [], notes: string[] = []
   const add = (dep: Dependency): void => { if (dep.name.length < 300 && dep.version.length < 200 && !/\s/u.test(dep.name + dep.version)) packages.push(dep) }
+  const coveredPythonProjects = new Set<string>()
+  for (const file of Object.keys(snapshot.files).filter(file => basename(file) === 'uv.lock')) {
+    try {
+      const lock = parseUvLock(await readFile(join(snapshot.path, file), 'utf8'))
+      for (const pkg of lock.packages) add({ ...pkg, ecosystem: 'PyPI', file })
+      coveredPythonProjects.add(posix.join(posix.dirname(file), 'pyproject.toml'))
+      for (const path of lock.projects) {
+        const project = posix.normalize(posix.join(posix.dirname(file), path, 'pyproject.toml'))
+        if (!posix.isAbsolute(path) && project !== '..' && !project.startsWith('../') && Object.hasOwn(snapshot.files, project)) coveredPythonProjects.add(project)
+      }
+      if (lock.unsupported) { unsupported.push(file); notes.push(file + '：' + lock.unsupported + ' 个包条目来源、版本或结构无法用于精确漏洞查询。未访问 Git、URL 或本地归档。') }
+      notes.push(file + '：查询全部锁定的 registry 包版本，包括不同环境标记和开发依赖；不推断当前环境的安装集或依赖可达性。本地工作区包不当作 PyPI 发布包查询。')
+    } catch { unsupported.push(file) }
+  }
   for (const file of Object.keys(snapshot.files)) {
     const name = basename(file)
     if (name === 'package-lock.json') {
@@ -83,17 +105,18 @@ export async function dependencies(snapshot: Snapshot): Promise<{ packages: Depe
         if (match) add({ name: match[1]!.toLowerCase().replace(/[-_.]+/gu, '-'), version: match[2]!, ecosystem: 'PyPI', file, line: index + 1 })
         else unsupported.push(file)
       }
-    } else if (['yarn.lock', 'uv.lock', 'poetry.lock', 'Pipfile.lock'].includes(name)) unsupported.push(file)
+    } else if (['yarn.lock', 'poetry.lock', 'Pipfile.lock'].includes(name)) unsupported.push(file)
     else if (name === 'package.json' && !Object.hasOwn(snapshot.files, file.replace(/package.json$/u, 'package-lock.json')) && !Object.hasOwn(snapshot.files, file.replace(/package.json$/u, 'pnpm-lock.yaml'))) unsupported.push(file)
     else if (name === 'go.mod' && !Object.hasOwn(snapshot.files, file.replace(/go.mod$/u, 'go.sum'))) unsupported.push(file)
-    else if (name === 'pyproject.toml') unsupported.push(file)
+    else if (name === 'pyproject.toml' && !coveredPythonProjects.has(file)) unsupported.push(file)
   }
-  return { packages: [...new Map(packages.map(dep => [JSON.stringify(dep), dep])).values()], unsupported: [...new Set(unsupported)] }
+  return { packages: [...new Map(packages.map(dep => [JSON.stringify(dep), dep])).values()], unsupported: [...new Set(unsupported)], notes }
 }
 /** Explicit opt-in sends only package names and versions to the official OSV API. */
 export async function scanDependencies(snapshot: Snapshot, signal: AbortSignal): Promise<{ engine: Engine; findings: Finding[] }> {
   const found = await dependencies(snapshot), findings: Finding[] = []
-  const engine: Engine = { name: 'osv', version: 'querybatch-v1', status: 'completed', detail: '检查 npm package-lock v2/v3、pnpm lock v9、Go go.sum、Python requirements 精确版本；依赖是否可达仍需复核。' }
+  const engine: Engine = { name: 'osv', version: 'querybatch-v1', status: 'completed', detail: '检查 npm package-lock v2/v3、pnpm lock v9、Go go.sum、Python requirements 精确版本和 uv.lock schema v1；依赖是否可达仍需复核。' }
+  engine.detail += found.notes.slice(0, 20).map(note => ' ' + note).join('')
   if (found.unsupported.length) { engine.status = 'partial'; engine.detail += ' 未解析或未锁定：' + found.unsupported.slice(0, 50).join(', ') }
   try {
     // Query unique package/version pairs once, then retain each manifest occurrence.

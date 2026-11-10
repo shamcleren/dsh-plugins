@@ -191,3 +191,58 @@ describe('WeComRuntimeController', () => {
     await runtime.stop()
   })
 })
+
+
+it('isolates Bot credentials, workspaces and models, and only disconnects the removed Bot', async () => {
+  const clients: FakeClient[] = []
+  const contexts: unknown[] = []
+  const runtime = new WeComRuntimeController({
+    api: api(), logger: logger(), writeSettings,
+    resolveCredentials: async config => config.secretEnv === 'missing' ? undefined
+      : { botId: config.botIdEnv ?? '', secret: 'test-secret' },
+    createClient: () => { const client = new FakeClient(); clients.push(client); return client },
+    prepareContext: async config => { contexts.push(config); return prepareContext() },
+  })
+  const alpha = { id: 'alpha', workspaceId: 'workspace-alpha', model: { provider: 'one', model: 'a' } }
+  const beta = { id: 'beta', workspaceId: 'workspace-beta', model: { provider: 'two', model: 'b' } }
+  runtime.update({ bots: [alpha, beta, { id: 'offline', secretEnv: 'missing' }] })
+  await runtime.ready()
+  expect(clients).toHaveLength(2)
+  expect(contexts).toEqual(expect.arrayContaining([
+    expect.objectContaining({ botIdEnv: 'WECOM_alpha_BOT_ID', ...alpha }),
+    expect.objectContaining({ botIdEnv: 'WECOM_beta_BOT_ID', ...beta }),
+  ]))
+  runtime.update({ bots: [beta] })
+  await runtime.ready()
+  expect(clients[0]?.disconnect).toHaveBeenCalledTimes(1)
+  expect(clients[1]?.disconnect).not.toHaveBeenCalled()
+  expect(clients).toHaveLength(2)
+  runtime.update({ bots: [] })
+  await runtime.ready()
+  expect(clients[1]?.disconnect).toHaveBeenCalledTimes(1)
+  await runtime.stop()
+})
+
+it('rejects a duplicate or unsafe roster before replacing current connections', async () => {
+  const sink = logger(), client = new FakeClient()
+  const runtime = new WeComRuntimeController({ api: api(), logger: sink, writeSettings,
+    resolveCredentials: async () => ({ botId: 'test', secret: 'test' }), createClient: () => client, prepareContext })
+  runtime.update({ bots: [{ id: 'alpha' }] }); await runtime.ready()
+  runtime.update({ bots: [{ id: 'same' }, { id: 'same' }] }); await runtime.ready()
+  runtime.update({ bots: [{ id: '../unsafe' }] }); await runtime.ready()
+  expect(sink.error).toHaveBeenCalledTimes(2)
+  expect(client.disconnect).not.toHaveBeenCalled()
+  await runtime.stop()
+})
+
+it('keeps duplicate actual Bot accounts offline even when their credential references differ', async () => {
+  const client = new FakeClient(), sink = logger(), createClient = vi.fn(() => client)
+  const runtime = new WeComRuntimeController({ api: api(), logger: sink, writeSettings, prepareContext,
+    resolveCredentials: async () => ({ botId: 'same-account', secret: 'test' }), createClient })
+  runtime.update({ bots: [{ id: 'alpha' }, { id: 'beta' }] }); await runtime.ready()
+  expect(createClient).not.toHaveBeenCalled()
+  expect(sink.error).toHaveBeenCalledTimes(2)
+  runtime.update({ bots: [{ id: 'alpha' }] }); await runtime.ready()
+  expect(client.connect).toHaveBeenCalledTimes(1)
+  await runtime.stop()
+})

@@ -17,6 +17,7 @@ describe('HelperProcess', () => {
     temporaryDirectories.push(dir)
     const fixture = join(dir, 'helper-fixture')
     await writeFile(fixture, `#!/bin/sh
+printf 'ready\\n' >&2
 IFS= read -r request
 printf '%s\\n' '{"protocolVersion":1,"kind":"move","position":{"x":321,"y":654},"positionMode":"pet-anchor"}'
 printf '%s\\n' '{"protocolVersion":1,"kind":"closed"}'
@@ -25,15 +26,18 @@ printf '%s\\n' '{"protocolVersion":1,"kind":"closed"}'
 
     const messages: CompanionMessage[] = []
     const errors: Error[] = []
+    let ready!: () => void
+    const started = new Promise<void>(resolve => { ready = resolve })
     const helper = new HelperProcess({
       binaryPath: fixture,
       onMessage: message => messages.push(message),
       onError: error => errors.push(error),
       onExit: () => undefined,
-      onStderr: () => undefined,
+      onStderr: line => { if (line === 'ready') ready() },
     })
 
     helper.start()
+    await started
     const stopping = helper.stop()
     expect(helper.stop()).toBe(stopping)
     await stopping

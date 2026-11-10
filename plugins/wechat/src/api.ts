@@ -6,6 +6,13 @@ import type {
 const API_TIMEOUT_MS = 15_000
 const BASE_INFO = { channel_version: '0.1.0', bot_agent: 'DeepSeekHarness/0.1.0' }
 
+/** Structured failures never include response bodies, which can contain credentials. */
+export class WeChatSendError extends Error {
+  constructor(readonly kind: 'throttled' | 'context' | 'rejected' | 'uncertain', readonly retryAfterMs = 60_000) {
+    super(`wechat: message delivery ${kind}`)
+  }
+}
+
 function headers(token?: string): Record<string, string> {
   const requestHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -52,7 +59,7 @@ async function postJson<T>(request: {
   timeoutMs?: number
   signal?: AbortSignal
 }): Promise<T> {
-  return JSON.parse(await requestText({ ...request, method: 'POST' })) as T
+  return parseProtocolJson(await requestText({ ...request, method: 'POST' })) as T
 }
 
 /** Start one official WeChat QR authorization. */
@@ -160,26 +167,42 @@ export async function sendMessage(request: {
   userId: string
   contextToken?: string
   item: MessageItem
+  signal?: AbortSignal
+  clientId?: string
 }): Promise<void> {
-  const response = await postJson<{ ret?: number; errmsg?: string }>({
-    baseUrl: request.baseUrl,
-    endpoint: 'ilink/bot/sendmessage',
-    token: request.token,
-    body: {
-      msg: {
-        from_user_id: '',
-        to_user_id: request.userId,
-        client_id: `dsh-wechat-${randomUUID()}`,
-        message_type: 2,
-        message_state: 2,
-        item_list: [request.item],
-        context_token: request.contextToken,
-      },
-      base_info: BASE_INFO,
-    },
-  })
-  if (response.ret !== undefined && response.ret !== 0) {
-    throw new Error(`wechat: sendmessage ret=${response.ret}: ${response.errmsg ?? 'unknown error'}`)
+  let response: { ret?: number; errcode?: number; errmsg?: string }
+  try {
+    const timeout = AbortSignal.timeout(API_TIMEOUT_MS)
+    const result = await fetch(apiUrl(request.baseUrl, 'ilink/bot/sendmessage'), {
+      method: 'POST', headers: headers(request.token),
+      signal: request.signal === undefined ? timeout : AbortSignal.any([request.signal, timeout]),
+      body: JSON.stringify({
+        msg: {
+          from_user_id: '', to_user_id: request.userId,
+          client_id: request.clientId ?? `dsh-wechat-${randomUUID()}`,
+          message_type: 2, message_state: 2, item_list: [request.item],
+          context_token: request.contextToken,
+        },
+        base_info: BASE_INFO,
+      }),
+    })
+    if (result.status === 429) {
+      const seconds = Number(result.headers.get('retry-after'))
+      throw new WeChatSendError('throttled', Number.isFinite(seconds) && seconds > 0
+        ? Math.min(seconds * 1_000, 3_600_000) : 60_000)
+    }
+    if (!result.ok) throw new WeChatSendError(result.status >= 500 ? 'uncertain' : 'rejected')
+    response = parseProtocolJson(await result.text()) as typeof response
+    if (response === null || typeof response !== 'object' || Array.isArray(response)
+      || response.ret !== 0 || (response.errcode !== undefined && response.errcode !== 0)) {
+      const reason = typeof response?.errmsg === 'string' ? response.errmsg : ''
+      if (response?.ret === -2 || /prepare failed|rate.?limit/iu.test(reason)) throw new WeChatSendError('context')
+      if (/context|expired/iu.test(reason)) throw new WeChatSendError('context')
+      throw new WeChatSendError(response?.ret === undefined ? 'uncertain' : 'rejected')
+    }
+  } catch (error) {
+    if (error instanceof WeChatSendError) throw error
+    throw new WeChatSendError('uncertain')
   }
 }
 
@@ -222,5 +245,14 @@ export async function notifyLifecycle(
     token: account.token,
     body: { base_info: BASE_INFO },
     timeoutMs: 10_000,
+  })
+}
+
+/** iLink identifiers exceed IEEE-754's exact integer range on recent WeChat clients. */
+export function parseProtocolJson(text: string): unknown {
+  return JSON.parse(text, (key: string, value: unknown, context?: { source?: string }) => {
+    if (!['message_id', 'msg_id', 'svr_id'].includes(key) || typeof value !== 'number' || Number.isSafeInteger(value)) return value
+    if (context?.source === undefined || !/^[0-9]+$/u.test(context.source)) throw new Error('wechat: invalid numeric message id')
+    return context.source
   })
 }

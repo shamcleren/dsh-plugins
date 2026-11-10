@@ -69,15 +69,15 @@ const review = { findingId: 'candidate', status: 'needs-review', severity: 'high
 
 it('uses the native DSH Agent loop and durable tool transcript, redacts credentials, and persists evidence references', async () => {
   const f = await fixture()
-  const adapter = await model((_options, step) => [call('plan_review', { areas: ['entry-points', 'injection'] }), call('read_evidence', { files: [{ file: 'app.py', start: 1, count: 4 }] }), call('submit_review', { reviews: [review], findings: [] }), call('finish_review', {})][step - 1]!)
+  const adapter = await model((_options, step) => [call('dsh_security_scan_review_plan', { areas: ['entry-points', 'injection'] }), call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 1, count: 4 }] }), call('dsh_security_scan_review_submit', { reviews: [review], findings: [] }), call('dsh_security_scan_review_finish', {})][step - 1]!)
   const result = await runAgentReview({ ...f, native: adapter.native })
   const transcript = [...adapter.transcripts.values()][0]!
-  expect(transcript.filter(event => event.type === 'tool/call').map(event => event.data.name)).toEqual(['plan_review', 'read_evidence', 'submit_review', 'finish_review'])
+  expect(transcript.filter(event => event.type === 'tool/call').map(event => event.data.name)).toEqual(['dsh_security_scan_review_plan', 'dsh_security_scan_review_read', 'dsh_security_scan_review_submit', 'dsh_security_scan_review_finish'])
   expect(transcript.filter(event => event.type === 'tool/result')).toHaveLength(4)
   expect(transcript.filter(event => event.type === 'assistant/message')).toHaveLength(5)
   expect(adapter.native.agents.list()).toEqual([])
   expect(result.audit).toMatchObject({ status: 'completed', nativeEnd: 'completed', steps: 5, files: ['app.py'], reviewedFindings: 1, inputTokens: 75, outputTokens: 100, cacheReadTokens: 25 })
-  expect(adapter.requests[2]!.tools!.map(tool => tool.name).sort()).toEqual(['plan_review', 'list_files', 'list_candidates', 'read_evidence', 'submit_review', 'finish_review'].sort())
+  expect(adapter.requests[2]!.tools!.map(tool => tool.name).sort()).toEqual(['dsh_security_scan_review_plan', 'dsh_security_scan_review_files', 'dsh_security_scan_review_candidates', 'dsh_security_scan_review_read', 'dsh_security_scan_review_submit', 'dsh_security_scan_review_finish'].sort())
   expect(JSON.stringify(adapter.requests[2]!.messages)).toContain('[REDACTED]')
   expect(JSON.stringify(adapter.requests[2]!.messages)).not.toContain('sk-12345678901234567890')
   const saved = await reviewReport(f.reportFile, result.reviews, join(f.root, 'reports'), result.findings, result.audit)
@@ -88,7 +88,7 @@ it('uses the native DSH Agent loop and durable tool transcript, redacts credenti
 
 it('rejects invented evidence and ambient shell tools without terminating the native recovery loop', async () => {
   const f = await fixture()
-  const adapter = await model((_options, step) => step <= 6 ? (step % 2 ? call('submit_review', { reviews: [review], findings: [] }) : call('shell', { command: 'upload ~/.ssh' })) : [call('plan_review', { areas: ['injection'] }), call('read_evidence', { files: [{ file: 'app.py', start: 3, count: 2 }] }), call('submit_review', { reviews: [review], findings: [] }), ...Array.from({ length: 4 }, () => call('list_files', {})), done()][step - 7]!)
+  const adapter = await model((_options, step) => step <= 6 ? (step % 2 ? call('dsh_security_scan_review_submit', { reviews: [review], findings: [] }) : call('shell', { command: 'upload ~/.ssh' })) : [call('dsh_security_scan_review_plan', { areas: ['injection'] }), call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 3, count: 2 }] }), call('dsh_security_scan_review_submit', { reviews: [review], findings: [] }), ...Array.from({ length: 4 }, () => call('dsh_security_scan_review_files', {})), done()][step - 7]!)
   const shell = vi.fn(async () => ({ result: 'forbidden' }))
   adapter.native.tools.register({ name: 'shell', description: 'Ambient tool', parameters: { type: 'object' }, output: { schema: { type: 'object' }, render: () => [] }, execute: shell })
   const result = await runAgentReview({ ...f, native: adapter.native, policy: { ...f.policy, maxSteps: 3 } })
@@ -102,7 +102,7 @@ it('deduplicates AI additions against scanner candidates and earlier submissions
   const f = await fixture()
   const duplicate = { file: 'app.py', line: 4, title: 'Repeated eval issue', cwe: 'CWE-95', status: 'needs-review', severity: 'high', evidence: '测试依据：Read eval', recommendation: '测试建议：Use a safe parser', verification: '测试验证：Source only', citations: [citation] }
   const additional = { ...duplicate, line: 3, cwe: 'CWE-20', title: 'Separate input validation question' }
-  const sequence = [call('plan_review', { areas: ['injection'] }), call('read_evidence', { files: [{ file: 'app.py', start: 1, count: 4 }] }), call('submit_review', { reviews: [review], findings: [duplicate, additional] }), call('submit_review', { reviews: [], findings: [additional] }), call('finish_review', {})]
+  const sequence = [call('dsh_security_scan_review_plan', { areas: ['injection'] }), call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 1, count: 4 }] }), call('dsh_security_scan_review_submit', { reviews: [review], findings: [duplicate, additional] }), call('dsh_security_scan_review_submit', { reviews: [], findings: [additional] }), call('dsh_security_scan_review_finish', {})]
   const adapter = await model((_options, step) => sequence[step - 1]!)
   const result = await runAgentReview({ ...f, native: adapter.native })
   expect(result.reviews).toHaveLength(1)
@@ -112,7 +112,7 @@ it('deduplicates AI additions against scanner candidates and earlier submissions
 
 it('rejects out-of-snapshot, sensitive configuration and unread line citations', async () => {
   const f = await fixture()
-  const sequence = [call('plan_review', { areas: ['authorization'] }), call('read_evidence', { files: [{ file: '../private.py', start: 1, count: 4 }] }), call('read_evidence', { files: [{ file: '.env', start: 1, count: 4 }] }), call('read_evidence', { files: [{ file: 'app.py', start: 1, count: 1 }] }), call('submit_review', { reviews: [review], findings: [] }), call('finish_review', {})]
+  const sequence = [call('dsh_security_scan_review_plan', { areas: ['authorization'] }), call('dsh_security_scan_review_read', { files: [{ file: '../private.py', start: 1, count: 4 }] }), call('dsh_security_scan_review_read', { files: [{ file: '.env', start: 1, count: 4 }] }), call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 1, count: 1 }] }), call('dsh_security_scan_review_submit', { reviews: [review], findings: [] }), call('dsh_security_scan_review_finish', {})]
   const adapter = await model((_options, step) => sequence[step - 1]!)
   const result = await runAgentReview({ ...f, native: adapter.native })
   expect(result.audit.status).toBe('incomplete')
@@ -122,14 +122,14 @@ it('rejects out-of-snapshot, sensitive configuration and unread line citations',
 
 it('refuses source changed since scanning and never reports a clean AI completion', async () => {
   const f = await fixture(); await writeFile(join(f.workspace, 'app.py'), 'print("changed")')
-  const adapter = await model((_options, step) => step === 1 ? call('plan_review', { areas: ['injection'] }) : step <= 5 ? call('read_evidence', { files: [{ file: 'app.py', start: 1, count: 4 }] }) : done())
+  const adapter = await model((_options, step) => step === 1 ? call('dsh_security_scan_review_plan', { areas: ['injection'] }) : step <= 5 ? call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 1, count: 4 }] }) : done())
   const result = await runAgentReview({ ...f, native: adapter.native })
   expect(result.audit.status).toBe('incomplete'); expect(result.audit.files).toEqual([])
 })
 
 it('uses the native output-limit outcome and rejects malformed tool JSON', async () => {
   const f = await fixture()
-  const adapter = await model((_options, step) => step === 1 ? [{ type: 'block-end', index: 0, block: { type: 'tool-call', id: CallId(randomUUID()), name: 'plan_review', arguments: '{invalid' } }, { type: 'finish', reason: { kind: 'max-tokens' } }] : done())
+  const adapter = await model((_options, step) => step === 1 ? [{ type: 'block-end', index: 0, block: { type: 'tool-call', id: CallId(randomUUID()), name: 'dsh_security_scan_review_plan', arguments: '{invalid' } }, { type: 'finish', reason: { kind: 'max-tokens' } }] : done())
   const result = await runAgentReview({ ...f, native: adapter.native })
   expect(result.audit.status).toBe('incomplete')
   expect(result.audit.nativeEnd).toBe('max-tokens')
@@ -137,9 +137,9 @@ it('uses the native output-limit outcome and rejects malformed tool JSON', async
   expect(result.audit.areas).toEqual([])
 })
 
-it('lets native final text end a review after structured results, without requiring finish_review', async () => {
+it('lets native final text end a review after structured results, without requiring dsh_security_scan_review_finish', async () => {
   const f = await fixture()
-  const adapter = await model((_options, step) => [call('plan_review', { areas: ['injection'] }), call('read_evidence', { files: [{ file: 'app.py', start: 1, count: 4 }] }), call('submit_review', { reviews: [review], findings: [] }), done()][step - 1]!)
+  const adapter = await model((_options, step) => [call('dsh_security_scan_review_plan', { areas: ['injection'] }), call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 1, count: 4 }] }), call('dsh_security_scan_review_submit', { reviews: [review], findings: [] }), done()][step - 1]!)
   const result = await runAgentReview({ ...f, policy: { ...f.policy, maxSteps: 3 }, native: adapter.native })
   expect(result.audit).toMatchObject({ status: 'completed', nativeEnd: 'completed', reviewedFindings: 1, steps: 4 })
 })
@@ -210,7 +210,7 @@ it('keeps model selection independent and ignores retired output-token overrides
 })
 
 it('captures the inherited model at run start even if DSH defaults change during rule scanning', async () => {
-  const f = await fixture(), adapter = await model((_options, step) => [call('plan_review', { areas: ['entry-points'] }), call('read_evidence', { files: [{ file: 'app.py', start: 1, count: 4 }] }), call('finish_review', {})][step - 1]!)
+  const f = await fixture(), adapter = await model((_options, step) => [call('dsh_security_scan_review_plan', { areas: ['entry-points'] }), call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 1, count: 4 }] }), call('dsh_security_scan_review_finish', {})][step - 1]!)
   let selected = 'before', started!: () => void, release!: () => void
   const starting = new Promise<void>(resolve => { started = resolve }), held = new Promise<void>(resolve => { release = resolve })
   const service = await SecurityTasks.open({ root: join(f.root, 'model-tasks'),
@@ -229,7 +229,7 @@ it('keeps hundreds of dependency advisories out of source review and provides pa
   const f = await fixture(), report = await readReport(f.reportFile), candidate = report.findings[0]!
   report.findings = [...Array.from({ length: 501 }, (_, index) => ({ ...candidate, id: 'dependency-' + index, engine: 'osv', file: 'uv.lock', line: 1 })), candidate]
   const saved = await writeReport(join(f.root, 'large'), report)
-  const sequence = [call('plan_review', { areas: ['injection'] }), call('list_candidates', { offset: 0 }), call('read_evidence', { files: [{ file: 'app.py', start: 3, count: 2 }] }), call('submit_review', { reviews: [review], findings: [] }), call('finish_review', {})]
+  const sequence = [call('dsh_security_scan_review_plan', { areas: ['injection'] }), call('dsh_security_scan_review_candidates', { offset: 0 }), call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 3, count: 2 }] }), call('dsh_security_scan_review_submit', { reviews: [review], findings: [] }), call('dsh_security_scan_review_finish', {})]
   const adapter = await model((_options, step) => sequence[step - 1]!)
   const result = await runAgentReview({ ...f, reportFile: saved.json, native: adapter.native })
   expect(result.audit).toMatchObject({ status: 'completed', eligibleCandidates: 1, excludedCandidates: 501, reviewedFindings: 1 })
@@ -239,7 +239,7 @@ it('keeps hundreds of dependency advisories out of source review and provides pa
 })
 it('returns actionable safe tool errors and accepts a corrected request without weakening citations', async () => {
   const f = await fixture()
-  const sequence = [call('plan_review', { areas: ['injection'] }), call('read_evidence', { files: [{ file: 'app.py', start: 0, count: 999 }] }), call('read_evidence', { files: [{ file: 'app.py', start: 3, count: 2 }] }), call('submit_review', { reviews: [review], findings: [] }), call('finish_review', {})]
+  const sequence = [call('dsh_security_scan_review_plan', { areas: ['injection'] }), call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 0, count: 999 }] }), call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 3, count: 2 }] }), call('dsh_security_scan_review_submit', { reviews: [review], findings: [] }), call('dsh_security_scan_review_finish', {})]
   const adapter = await model((_options, step) => sequence[step - 1]!)
   const result = await runAgentReview({ ...f, native: adapter.native })
   expect(result.audit.status).toBe('completed')
@@ -251,9 +251,9 @@ it('returns actionable safe tool errors and accepts a corrected request without 
 
 it('uses one native execution flow for manual and conversation launches and creates the session before rules run', async () => {
   const f = await fixture(), adapter = await model((_options, step) => [
-    call('plan_review', { areas: ['injection'] }),
-    call('read_evidence', { files: [{ file: 'app.py', start: 1, count: 4 }] }),
-    call('finish_review', {}), done(),
+    call('dsh_security_scan_review_plan', { areas: ['injection'] }),
+    call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 1, count: 4 }] }),
+    call('dsh_security_scan_review_finish', {}), done(),
   ][(step - 1) % 4]!)
   const mirror = { start: vi.fn(async () => 'unused'), publish: vi.fn(async () => {}) }
   const service = await SecurityTasks.open({ root: join(f.root, 'entry-tasks'), session: () => mirror,
@@ -283,10 +283,10 @@ it('uses one native execution flow for manual and conversation launches and crea
   expect(mirror.publish).not.toHaveBeenCalledWith('original-chat', expect.objectContaining({ phase: 'finished' }))
   expect(adapter.native.agents.get(SessionId('original-chat'))).toBe(original.agent)
   expect(adapter.native.agents.list()).toHaveLength(1)
-  expect(original.agent.ctx.tools.get('plan_review', original.agent)).toBeUndefined()
+  expect(original.agent.ctx.tools.get('dsh_security_scan_review_plan', original.agent)).toBeUndefined()
   for (const run of runs) {
     const transcript = adapter.transcripts.get(run.sessionId!)!
-    expect(transcript.filter(event => event.type === 'tool/call').map(event => event.data.name)).toEqual(['plan_review', 'read_evidence', 'finish_review'])
+    expect(transcript.filter(event => event.type === 'tool/call').map(event => event.data.name)).toEqual(['dsh_security_scan_review_plan', 'dsh_security_scan_review_read', 'dsh_security_scan_review_finish'])
     expect(JSON.stringify(transcript.at(-1))).toContain(run.reportId)
     expect(JSON.stringify(transcript.at(-1))).toContain('report.html')
     expect(transcript.filter(event => event.type === 'turn/start')).toHaveLength(run.originSessionId ? 1 : 2)
@@ -294,7 +294,7 @@ it('uses one native execution flow for manual and conversation launches and crea
 })
 
 it('exposes a new execution session through a model-free first turn before rules run', async () => {
-  const f = await fixture(), adapter = await model((_options, step) => [call('plan_review', { areas: ['injection'] }), done()][step - 1]!)
+  const f = await fixture(), adapter = await model((_options, step) => [call('dsh_security_scan_review_plan', { areas: ['injection'] }), done()][step - 1]!)
   const seen: Array<{ events: string[]; requests: number }> = [], order: string[] = []
   const result = await runAgentReview({ ...f, native: adapter.native, keepSession: true,
     onSession: async id => { order.push('session'); seen.push({ events: adapter.native.agents.get(SessionId(id))!.session.snapshotEvents().map(event => event.type), requests: adapter.requests.length }) },
@@ -338,13 +338,13 @@ it('accepts native session cancellation and keeps incomplete results', async () 
 
 
 it('retains the native session while releasing run tools and unregisters it when its owner unloads', async () => {
-  const f = await fixture(), adapter = await model((_options, step) => [call('plan_review', { areas: ['injection'] }), call('read_evidence', { files: [{ file: 'app.py', start: 1, count: 4 }] }), call('finish_review', {})][step - 1]!)
+  const f = await fixture(), adapter = await model((_options, step) => [call('dsh_security_scan_review_plan', { areas: ['injection'] }), call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 1, count: 4 }] }), call('dsh_security_scan_review_finish', {})][step - 1]!)
   const removed = vi.fn(); adapter.native.on('session/disposed', removed)
   const owner = await adapter.native.plugin({ name: 'audit-owner-fixture', inject: ['agents', 'sessions', 'tools', 'systemPrompt'], apply() {} })
   await runAgentReview({ ...f, native: owner.ctx, keepSession: true })
   const agent = adapter.native.agents.list()[0]!
   expect(agent.status).toBe('idle')
-  expect(agent.ctx.tools.get('read_evidence')).toBeUndefined()
+  expect(agent.ctx.tools.get('dsh_security_scan_review_read')).toBeUndefined()
   expect(removed).not.toHaveBeenCalled()
   await owner.dispose()
   expect(removed).toHaveBeenCalledOnce()
@@ -376,7 +376,7 @@ it('does not allow evidence redaction to become proof that a secret is a false p
   report.id = randomUUID(); report.findings[0]!.engine = 'gitleaks'; report.findings[0]!.line = 2
   const saved = await writeReport(join(f.root, 'reports'), report)
   const decision = { ...review, status: 'dismissed', citations: [{ file: 'app.py', start: 2, end: 2 }], evidence: '测试依据：The value is [REDACTED], so it is a placeholder.' }
-  const sequence = [call('plan_review', { areas: ['data-exposure'] }), call('read_evidence', { files: [{ file: 'app.py', start: 1, count: 4 }] }), call('submit_review', { reviews: [decision], findings: [] }), call('submit_review', { reviews: [{ ...decision, status: 'needs-review', evidence: '测试依据：Original value is hidden; authorized verification is needed.' }], findings: [] }), done()]
+  const sequence = [call('dsh_security_scan_review_plan', { areas: ['data-exposure'] }), call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 1, count: 4 }] }), call('dsh_security_scan_review_submit', { reviews: [decision], findings: [] }), call('dsh_security_scan_review_submit', { reviews: [{ ...decision, status: 'needs-review', evidence: '测试依据：Original value is hidden; authorized verification is needed.' }], findings: [] }), done()]
   const adapter = await model(async (_options, step) => sequence[step - 1]!)
   const result = await runAgentReview({ ...f, reportFile: saved.json, native: adapter.native })
   expect(result.audit.events).toContainEqual(expect.objectContaining({ kind: 'rejected', code: 'redacted-secret' }))
@@ -387,7 +387,7 @@ it('asks the native agent to correct English-only report text and archives the c
   const f = await fixture()
   const english = { ...review, evidence: 'Observed source only.', recommendation: 'Check callers.', verification: 'Not executed.' }
   const chinese = { ...review, evidence: '已读取该行，尚未确认外部输入可达。', recommendation: '追踪调用者并约束输入。', verification: '仅阅读源码，未运行测试。' }
-  const sequence = [call('plan_review', { areas: ['injection'] }), call('read_evidence', { files: [{ file: 'app.py', start: 1, count: 4 }] }), call('submit_review', { reviews: [english], findings: [] }), call('submit_review', { reviews: [chinese], findings: [] }), done()]
+  const sequence = [call('dsh_security_scan_review_plan', { areas: ['injection'] }), call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 1, count: 4 }] }), call('dsh_security_scan_review_submit', { reviews: [english], findings: [] }), call('dsh_security_scan_review_submit', { reviews: [chinese], findings: [] }), done()]
   const adapter = await model(async (_options, step) => sequence[step - 1]!)
   const result = await runAgentReview({ ...f, native: adapter.native })
   expect(result.audit.events).toContainEqual(expect.objectContaining({ code: 'chinese-required' }))
@@ -400,13 +400,13 @@ it('accepts the observed 20-review submission without a redundant empty findings
   const f = await fixture(), report = await readReport(f.reportFile)
   report.id = randomUUID(); report.findings = Array.from({ length: 20 }, (_, i) => ({ ...report.findings[0]!, id: 'candidate-' + i }))
   const saved = await writeReport(join(f.root, 'reports'), report)
-  const sequence = [call('plan_review', { areas: ['injection'] }), call('read_evidence', { files: [{ file: 'app.py', start: 3, count: 2 }] }), call('submit_review', { reviews: report.findings.map(item => ({ ...review, findingId: item.id })) }), done()]
+  const sequence = [call('dsh_security_scan_review_plan', { areas: ['injection'] }), call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 3, count: 2 }] }), call('dsh_security_scan_review_submit', { reviews: report.findings.map(item => ({ ...review, findingId: item.id })) }), done()]
   const adapter = await model((_options, step) => sequence[step - 1]!)
   const result = await runAgentReview({ ...f, reportFile: saved.json, native: adapter.native })
   expect(result.audit).toMatchObject({ nativeEnd: 'completed', status: 'completed', reviewedFindings: 20 })
   expect(result.audit.events.filter(item => item.kind === 'rejected')).toEqual([])
   expect(result.findings).toEqual([])
-  const schema = adapter.requests[0]!.tools!.find(tool => tool.name === 'submit_review')!.parameters as { required?: string[] }
+  const schema = adapter.requests[0]!.tools!.find(tool => tool.name === 'dsh_security_scan_review_submit')!.parameters as { required?: string[] }
   expect(schema.required ?? []).not.toContain('findings')
   expect(schema.required ?? []).not.toContain('reviews')
 })
@@ -414,7 +414,7 @@ it('accepts the observed 20-review submission without a redundant empty findings
 it('accepts additions alone but still rejects null, wrong types, missing citations and empty submissions', async () => {
   const f = await fixture()
   const extra = { file: 'app.py', line: 4, title: '新增授权检查候选', cwe: 'CWE-862', status: 'needs-review', severity: 'medium', evidence: '尚未确认调用者权限。', recommendation: '检查调用链的授权。', verification: '只读复核，未执行代码。', citations: [citation] }
-  const sequence = [call('plan_review', { areas: ['authorization'] }), call('read_evidence', { files: [{ file: 'app.py', start: 3, count: 2 }] }), call('submit_review', {}), call('submit_review', { reviews: [review], findings: null }), call('submit_review', { reviews: [{ ...review, citations: undefined }] }), call('submit_review', { reviews: [review], findings: {} }), call('submit_review', { findings: [extra] }), call('submit_review', { reviews: [review] }), done()]
+  const sequence = [call('dsh_security_scan_review_plan', { areas: ['authorization'] }), call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 3, count: 2 }] }), call('dsh_security_scan_review_submit', {}), call('dsh_security_scan_review_submit', { reviews: [review], findings: null }), call('dsh_security_scan_review_submit', { reviews: [{ ...review, citations: undefined }] }), call('dsh_security_scan_review_submit', { reviews: [review], findings: {} }), call('dsh_security_scan_review_submit', { findings: [extra] }), call('dsh_security_scan_review_submit', { reviews: [review] }), done()]
   const adapter = await model((_options, step) => sequence[step - 1]!)
   const result = await runAgentReview({ ...f, native: adapter.native })
   expect(result.findings).toHaveLength(1)
@@ -433,14 +433,15 @@ it('keeps the official bash tool in native review, preserves host guards and sti
   const adapter = await model((_options, step) => [
     call('bash', { command: 'blocked', description: 'Test host denial' }),
     call('bash', { command: 'pwd', description: 'Inspect fixture location' }),
-    call('plan_review', { areas: ['injection'] }),
-    call('submit_review', { reviews: [review] }),
-    call('read_evidence', { files: [{ file: 'app.py', start: 3, count: 2 }] }),
-    call('submit_review', { reviews: [review] }), done(),
+    call('dsh_security_scan_review_plan', { areas: ['injection'] }),
+    call('dsh_security_scan_review_submit', { reviews: [review] }),
+    call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 3, count: 2 }] }),
+    call('dsh_security_scan_review_submit', { reviews: [review] }), done(),
   ][step - 1]!)
   const shell = vi.fn(async (_request: unknown) => ({ exitCode: 0, signal: null, timedOut: false, aborted: false, timeoutMs: 1000, stdout: { text: 'fixture-shell-ok', truncated: false }, stderr: { text: '', truncated: false } }))
   adapter.native.provide('shell', { resolve: (request: unknown) => request, execute: async (request: unknown) => ({ result: () => shell(request) }) } as never)
   adapter.native.provide('shellEnv', { collect: () => ({}) } as never)
+  adapter.native.provide('workingDirectory', { ensure: async () => f.workspace } as never)
   await adapter.native.plugin(Bash)
   adapter.native.tools.guard(exec => exec.name === 'bash' && (exec.arguments as { command?: string }).command === 'blocked' ? 'Fixture host denial' : undefined)
   const result = await runAgentReview({ ...f, native: adapter.native })
@@ -459,10 +460,10 @@ it('queues an audit behind the initiating turn, preserves its model, then releas
   const adapter = await model(async (options, step) => {
     expect(options.model).toBe('conversation-model')
     if (step === 1) { started(); await gate; return done() }
-    if (step === 2) { expect(options.tools?.some(tool => tool.name === 'plan_review')).toBe(true); return call('plan_review', { areas: ['injection'] }) }
-    if (step === 3) return call('read_evidence', { files: [{ file: 'app.py', start: 3, count: 2 }] })
-    if (step === 4) return call('submit_review', { reviews: [review] })
-    if (step === 6) expect(options.tools?.some(tool => tool.name === 'plan_review')).toBe(false)
+    if (step === 2) { expect(options.tools?.some(tool => tool.name === 'dsh_security_scan_review_plan')).toBe(true); return call('dsh_security_scan_review_plan', { areas: ['injection'] }) }
+    if (step === 3) return call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 3, count: 2 }] })
+    if (step === 4) return call('dsh_security_scan_review_submit', { reviews: [review] })
+    if (step === 6) expect(options.tools?.some(tool => tool.name === 'dsh_security_scan_review_plan')).toBe(false)
     return done()
   })
   const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
@@ -472,7 +473,7 @@ it('queues an audit behind the initiating turn, preserves its model, then releas
   await running
   const pending = runAgentReview({ ...f, native: adapter.native, existingAgent: original.agent })
   await vi.waitFor(() => expect(original.agent.inbox.nextTurn).toHaveLength(1))
-  expect(original.agent.ctx.tools.get('plan_review', original.agent)).toBeUndefined()
+  expect(original.agent.ctx.tools.get('dsh_security_scan_review_plan', original.agent)).toBeUndefined()
   original.agent.followup(message('Continue ordinary work'))
   release()
   const result = await pending
@@ -480,7 +481,7 @@ it('queues an audit behind the initiating turn, preserves its model, then releas
   expect(result.audit).toMatchObject({ status: 'completed', model: 'conversation-model', steps: 4 })
   expect(original.agent.session.snapshotEvents().filter(event => event.type === 'turn/end')).toHaveLength(3)
   expect(adapter.native.agents.list()).toEqual([original.agent])
-  expect(original.agent.ctx.tools.get('plan_review', original.agent)).toBeUndefined()
+  expect(original.agent.ctx.tools.get('dsh_security_scan_review_plan', original.agent)).toBeUndefined()
   expect(adapter.requests).toHaveLength(6)
 })
 
@@ -501,7 +502,7 @@ it('cancelling a queued audit removes only its prompt without interrupting the u
   expect(original.agent.inbox.nextTurn.map(item => item.id)).toEqual([later.id])
   release(); await original.agent.whenIdle()
   expect(adapter.requests).toHaveLength(2)
-  expect(original.agent.ctx.tools.get('plan_review', original.agent)).toBeUndefined()
+  expect(original.agent.ctx.tools.get('dsh_security_scan_review_plan', original.agent)).toBeUndefined()
 })
 
 it('cancels only the active audit turn and preserves subsequent conversation input', async () => {
@@ -510,7 +511,7 @@ it('cancels only the active audit turn and preserves subsequent conversation inp
   const running = new Promise<void>(resolve => { started = resolve })
   const adapter = await model(async (options, step) => {
     if (step === 1) { started(); await new Promise<void>(resolve => options.signal!.addEventListener('abort', () => resolve(), { once: true })); return [] }
-    expect(options.tools?.some(tool => tool.name === 'plan_review')).toBe(false)
+    expect(options.tools?.some(tool => tool.name === 'dsh_security_scan_review_plan')).toBe(false)
     return done()
   })
   const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
@@ -522,7 +523,7 @@ it('cancels only the active audit turn and preserves subsequent conversation inp
   expect((await pending).audit).toMatchObject({ reason: 'cancelled', nativeEnd: 'aborted' })
   await original.agent.whenIdle()
   expect(original.agent.inbox.nextTurn).toHaveLength(1)
-  expect(original.agent.ctx.tools.get('plan_review', original.agent)).toBeUndefined()
+  expect(original.agent.ctx.tools.get('dsh_security_scan_review_plan', original.agent)).toBeUndefined()
   expect(adapter.native.agents.get(original.agent.id)).toBe(original.agent)
 })
 
@@ -533,11 +534,11 @@ it('reports every actionable batch evidence issue without saving partial reviews
   const saved = await writeReport(join(f.root, 'reports'), report)
   const secret = { ...review, findingId: 'secret', status: 'dismissed', citations: [{ file: 'app.py', start: 2, end: 2 }] }
   const sequence = [
-    call('plan_review', { areas: ['data-exposure'] }),
-    call('read_evidence', { files: [{ file: 'app.py', start: 2, count: 1 }] }),
-    call('submit_review', { reviews: [review, secret] }),
-    call('read_evidence', { files: [{ file: 'app.py', start: 3, count: 2 }] }),
-    call('submit_review', { reviews: [review, { ...secret, status: 'needs-review' }] }), done(),
+    call('dsh_security_scan_review_plan', { areas: ['data-exposure'] }),
+    call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 2, count: 1 }] }),
+    call('dsh_security_scan_review_submit', { reviews: [review, secret] }),
+    call('dsh_security_scan_review_read', { files: [{ file: 'app.py', start: 3, count: 2 }] }),
+    call('dsh_security_scan_review_submit', { reviews: [review, { ...secret, status: 'needs-review' }] }), done(),
   ]
   const progress: number[] = []
   const adapter = await model((_options, step) => sequence[step - 1]!)
@@ -565,7 +566,7 @@ it('reports every actionable batch evidence issue without saving partial reviews
 
 it('bounds batch validation feedback and identifies omitted issues', async () => {
   const f = await fixture()
-  const adapter = await model((_options, step) => step === 1 ? call('submit_review', { reviews: Array.from({ length: 30 }, (_, index) => ({ ...review, findingId: 'unknown-' + index })) }) : done())
+  const adapter = await model((_options, step) => step === 1 ? call('dsh_security_scan_review_submit', { reviews: Array.from({ length: 30 }, (_, index) => ({ ...review, findingId: 'unknown-' + index })) }) : done())
   const result = await runAgentReview({ ...f, native: adapter.native })
   const transcript = [...adapter.transcripts.values()][0]!
   const messages = transcript.filter(entry => entry.type === 'tool/result').map(entry => entry.data.message)

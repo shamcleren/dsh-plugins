@@ -163,7 +163,7 @@ test('listing includes every catalog plugin and resolves installed release and l
   await writeFile(join(sourcePath, 'package.json'), JSON.stringify({ name: source.package, version: source.version }))
   await symlink(sourcePath, join(f.profile, 'node_modules', source.package))
   // A stale node_modules entry without a declared dependency is not an installed profile plugin.
-  const stale = catalog.plugins.find(entry => entry.id === 'codex-controller')
+  const stale = catalog.plugins.find(entry => entry.id === 'desktop-share')
   await mkdir(join(f.profile, 'node_modules', stale.package), { recursive: true })
   await writeFile(join(f.profile, 'node_modules', stale.package, 'package.json'), JSON.stringify({ name: stale.package, version: stale.version }))
   const before = await readFile(manifestPath)
@@ -174,7 +174,7 @@ test('listing includes every catalog plugin and resolves installed release and l
   assert.match(output, new RegExp(String.raw`^wecom-tools\s+已安装\s+${localVersion('wecom-tools')} / ${localVersion('wecom-tools')}$`, 'm'))
   assert.match(output, new RegExp(String.raw`^web-search\s+安装不完整\s+- / ${localVersion('web-search')}$`, 'm'))
   assert.match(output, new RegExp(String.raw`^marketplace\s+未安装\s+- / ${localVersion('trusted-marketplace')}$`, 'm'))
-  assert.match(output, new RegExp(String.raw`^codex-controller\s+未安装\s+- / ${localVersion('codex-controller')}$`, 'm'))
+  assert.match(output, new RegExp(String.raw`^desktop-share\s+未安装\s+- / ${localVersion('desktop-share')}$`, 'm'))
   for (const entry of catalog.plugins) {
     const name = entry.id === 'trusted-marketplace' ? 'marketplace' : entry.id
     assert.equal(f.logs.filter(line => line.startsWith(name + ' ')).length, 1)
@@ -262,7 +262,7 @@ test('update --all --source still rebuilds a plugin already at the catalog versi
 test('./dhp plugin list works with private Node and a quoted --dir, without Node on PATH', async t => {
   const f = await fixture(t)
   await mkdir(join(f.repo, 'scripts'))
-  for (const file of ['dhp.mjs', 'plugins.mjs', 'process.mjs', 'installation.mjs', 'service.mjs']) {
+  for (const file of ['dhp.mjs', 'plugins.mjs', 'retired-plugins.mjs', 'process.mjs', 'installation.mjs', 'service.mjs']) {
     await cp(join(repository, 'scripts', file), join(f.repo, 'scripts', file))
   }
   await cp(join(repository, 'dhp'), join(f.repo, 'dhp'))

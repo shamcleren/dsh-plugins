@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Logger } from '@deepseek-ai/cordis'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { generateReqId } from '@wecom/aibot-node-sdk'
 import type {
@@ -41,8 +41,12 @@ import {
   fallbackReply,
   TurnProjection,
 } from './reply.js'
+import { inboundContent } from './media.js'
+import { collectFileBytes } from './files.js'
+import type { OutboundFileBytes } from './files.js'
+import type { TurnOutcome } from './reply.js'
 import type { ConversationBindings } from './bindings.js'
-import type { WeComSettingsPatch } from './config.js'
+import type { BotModel, WeComSettingsPatch } from './config.js'
 
 const HISTORY_PAGE_MESSAGES = 100
 const MAX_CARD_BUTTONS = 6
@@ -114,14 +118,7 @@ function whoamiReply(userId: string): string {
   return `${identityHint(userId)}\n把它填进插件设置的「允许的用户 ID」或「管理员用户 ID」即可授权。`
 }
 
-/**
- * Selecting a model is deployment-wide upstream: `sessions.selectModel` installs
- * the Session choice and then saves it as the default for every future Agent,
- * and the desktop client's own `/model` runs the same code. No public API sets a
- * Session model without that save, so the channel states the reach instead of
- * implying an isolation it cannot provide.
- */
-const GLOBAL_MODEL_NOTICE = '注意：这会同时改变 DSH 的全局默认模型，桌面端之后新建的对话也会用它。'
+const LOCAL_MODEL_NOTICE = '此选择仅作用于当前企微会话。'
 
 const COMMAND_HELP = [
   '可用命令：',
@@ -131,8 +128,8 @@ const COMMAND_HELP = [
   '/new - 新建并切换会话',
   '/workspace [名称或 ID|reset] - 查看或切换工作区',
   '/preset [<id>|reset] - 查看或切换本渠道的 Agent 预设',
-  '/model [provider model [effort]] - 查看或切换模型（会改全局默认）',
-  '/effort [level] - 查看或调整推理强度（会改全局默认）',
+  '/model [provider model [effort]] - 查看或切换模型（仅当前会话）',
+  '/effort [level] - 查看或调整推理强度（仅当前会话）',
   '/compact - 压缩当前会话',
   '/answer <答案> - 回答当前交互问题',
 ].join('\n')
@@ -157,11 +154,11 @@ export interface WeComReplyClient {
   ): Promise<WsFrame>
   uploadMedia(
     fileBuffer: Buffer,
-    options: { type: 'image'; filename: string },
+    options: { type: 'image' | 'file' | 'video'; filename: string },
   ): Promise<{ media_id: string }>
   sendMediaMessage(
     targetId: string,
-    mediaType: 'image',
+    mediaType: 'image' | 'file' | 'video',
     mediaId: string,
   ): Promise<WsFrame>
   updateTemplateCard(
@@ -174,6 +171,8 @@ export interface WeComReplyClient {
 export type WeComTemplateCardEventFrame = WsFrame<EventMessageWith<TemplateCardEventData>>
 
 export interface RouterConfig {
+  model?: BotModel
+  mediaMaxBytes?: number
   allowedUsers: readonly string[]
   adminUsers: readonly string[]
   agentPreset?: string
@@ -186,6 +185,8 @@ export interface RouterRuntimeContext {
   defaultWorkspace: HostWorkspace
   /** Durable image bytes, absent when the deployment has no attachment store. */
   readImage?: (ref: ImageAttachmentRef) => Promise<Uint8Array>
+  readFile?: (ref: FileAttachmentRef, signal: AbortSignal) => AsyncIterable<Uint8Array>
+  readPresentedFile?: (sessionId: string, path: string, maxBytes: number, signal: AbortSignal) => Promise<OutboundFileBytes>
 }
 
 export interface ChannelApprovalRequest {
@@ -201,12 +202,6 @@ export interface ChannelApprovalRequest {
 export interface ChannelApprovalAnswer {
   outcome: 'allowed-once' | 'rejected'
   actorRef: string
-}
-
-interface TurnOutcome {
-  text: string
-  images: readonly ImageAttachmentRef[]
-  reason: unknown
 }
 
 interface TurnWaitOptions {
@@ -309,6 +304,7 @@ export class WeComConversationRouter {
   private muxTask: Promise<void> | undefined
   private muxFailure: Error | undefined
   private stopping = false
+  private deliveryAbort = new AbortController()
   /** Live channel preset; `/preset` moves it without reopening the socket. */
   private agentPreset: string | undefined
 
@@ -335,6 +331,7 @@ export class WeComConversationRouter {
   start(): void {
     if (this.muxTask !== undefined) return
     this.stopping = false
+    this.deliveryAbort = new AbortController()
     this.muxFailure = undefined
     const abort = new AbortController()
     this.muxAbort = abort
@@ -365,6 +362,7 @@ export class WeComConversationRouter {
   async stop(): Promise<void> {
     if (this.stopping) return
     this.stopping = true
+    this.deliveryAbort.abort()
     for (const pending of [...this.pendingApprovals.values()]) {
       this.withdrawApproval(pending)
     }
@@ -755,7 +753,7 @@ export class WeComConversationRouter {
         payload: {
           sessionId,
           mode: this.activeTurns.has(sessionId) ? 'steer' : 'queue',
-          content: [{ type: 'text', text: message.text }],
+          content: await inboundContent(message, this.config.mediaMaxBytes ?? 10 * 1024 * 1024, this.deliveryAbort.signal),
         },
       }))
       if (accepted.command !== undefined) {
@@ -797,13 +795,14 @@ export class WeComConversationRouter {
       // The stream still has to be finished, so an image-only turn needs a lead-in
       // rather than an empty final frame; the images follow as their own messages.
       const textReply = body
-        || (outcome.images.length > 0 ? IMAGE_LEAD_IN : fallbackReply(outcome.reason))
+        || (outcome.files.length > 0 ? '附件如下：' : outcome.images.length > 0 ? IMAGE_LEAD_IN : fallbackReply(outcome.reason))
       if (activeTurn.outputMode === 'proactive') {
         await this.sendProactiveText(activeTurn, textReply)
       } else {
         await this.finish(activeTurn.frame, activeTurn.streamId, textReply)
       }
       await this.sendImages(activeTurn, outcome.images)
+      await this.sendFiles(activeTurn, outcome.files)
     } catch (error: unknown) {
       this.logger.error(error)
       if (!this.stopping) {
@@ -1202,6 +1201,41 @@ export class WeComConversationRouter {
       .catch((error: unknown) => { this.logger.error(error) })
   }
 
+  private async sendFiles(activeTurn: ActiveTurn, files: TurnOutcome['files']): Promise<void> {
+    let failed = 0
+    const signal = this.deliveryAbort.signal
+    for (const file of files) {
+      if (this.stopping) return
+      try {
+        let loaded: OutboundFileBytes
+        if (file.kind === 'presented') {
+          if (this.runtime.readPresentedFile === undefined) throw new Error('presented file reader unavailable')
+          loaded = await this.runtime.readPresentedFile(activeTurn.sessionId, file.path, (this.config.mediaMaxBytes ?? 10 * 1024 * 1024), signal)
+        } else {
+          if (file.attachment.bytes > (this.config.mediaMaxBytes ?? 10 * 1024 * 1024)) throw new Error('file exceeds mediaMaxBytes')
+          if (this.runtime.readFile === undefined) throw new Error('file attachment store unavailable')
+          const bytes = await collectFileBytes(this.runtime.readFile(file.attachment, signal), (this.config.mediaMaxBytes ?? 10 * 1024 * 1024), signal)
+          if (bytes.length !== file.attachment.bytes) throw new Error('file attachment length mismatch')
+          loaded = { name: file.attachment.name, bytes }
+        }
+        signal.throwIfAborted()
+        if (loaded.bytes.length > (this.config.mediaMaxBytes ?? 10 * 1024 * 1024)) throw new Error('file exceeds mediaMaxBytes')
+        const name = loaded.name.split(/[\\/]/u).at(-1) || 'attachment'
+        const type = /\.(mp4|m4v|mov)$/iu.test(name) ? 'video' : 'file'
+        const media = await this.replies.uploadMedia(loaded.bytes, { type, filename: name })
+        signal.throwIfAborted()
+        await this.replies.sendMediaMessage(activeTurn.targetId, type, media.media_id)
+      } catch {
+        failed += 1
+        // Signed CDN parameters and local paths must not enter channel logs.
+        this.logger.warn('wecom-aibot: file/video delivery failed')
+      }
+    }
+    if (failed === 0 || this.stopping) return
+    await this.sendProactiveText(activeTurn,
+      `本轮 ${files.length} 个文件或视频中的 ${failed} 个未能发送到企微，请在 DSH 会话中查看；可能超过媒体大小限制或上传失败。`)
+  }
+
   private async ensureSession(conversationKey: string, requestedSessionId: string): Promise<string> {
     const workspaceId = await this.workspaceIdForSession(requestedSessionId)
       ?? this.runtime.defaultWorkspace.workspaceId
@@ -1223,6 +1257,7 @@ export class WeComConversationRouter {
     unwrap(await this.api.sessions.create(apiRequest({
       sessionId,
       workspaceId,
+      ...this.config.model === undefined ? {} : { model: this.config.model },
       ...this.agentPreset === undefined ? {} : { agentPreset: this.agentPreset },
     })))
   }
@@ -1310,7 +1345,7 @@ export class WeComConversationRouter {
   /**
    * Move the channel's agent preset.
    *
-   * Unlike `/model`, this stays inside WeCom: the preset lives in this plugin's
+   * The Bot-local preset lives in this plugin's
    * own settings section, and a session names its preset at creation, so the
    * switch persists for the channel and takes effect on a rebuilt session
    * instead of leaking into any deployment-wide default.
@@ -1411,7 +1446,7 @@ export class WeComConversationRouter {
       sessionId, provider, model,
       ...reasoningEffort === undefined ? {} : { reasoningEffort },
     }))).selected
-    return `已切换到 ${selected.provider} / ${selected.model}，Effort：${selected.reasoningEffort ?? '默认'}。\n${GLOBAL_MODEL_NOTICE}`
+    return `已切换到 ${selected.provider} / ${selected.model}，Effort：${selected.reasoningEffort ?? '默认'}。\n${LOCAL_MODEL_NOTICE}`
   }
 
   private async effort(sessionId: string, args: readonly string[]): Promise<string> {
@@ -1433,7 +1468,7 @@ export class WeComConversationRouter {
       model: models.current.model,
       reasoningEffort,
     }))).selected
-    return `Effort 已切换为 ${selected.reasoningEffort ?? reasoningEffort}。\n${GLOBAL_MODEL_NOTICE}`
+    return `Effort 已切换为 ${selected.reasoningEffort ?? reasoningEffort}。\n${LOCAL_MODEL_NOTICE}`
   }
 
   private sessionState(sessionId: string): Promise<SessionState> {
@@ -1496,6 +1531,10 @@ export class WeComConversationRouter {
       resolveOutcome = resolve
       rejectOutcome = reject
     })
+    // Admission can still be uploading a file when shutdown or timeout settles
+    // observation; retain the rejection for its eventual observer without an
+    // unhandled rejection escaping in the meantime.
+    void outcome.catch(() => undefined)
     const settle = (result: TurnOutcome | Error): void => {
       if (settled) return
       settled = true
@@ -1539,7 +1578,7 @@ export class WeComConversationRouter {
     }, this.config.turnTimeoutMs)
     return {
       outcome,
-      dispose: () => settle({ text: '', images: [], reason: { kind: 'aborted' } }),
+      dispose: () => settle({ text: '', images: [], files: [], reason: { kind: 'aborted' } }),
     }
   }
 

@@ -38,7 +38,8 @@ export function mergeArchives(report: Report, additions?: EvidenceArchive): Evid
 export async function captureScanEvidence(report: Report, root: string): Promise<EvidenceArchive> {
   const archive: EvidenceArchive = { snippets: [], omitted: 0 }
   const directory = await realpath(root)
-  for (const file of new Set(report.findings.map(item => item.file))) {
+  // Runtime findings describe an HTTP response, not a repository file.
+  for (const file of new Set(report.findings.filter(item => item.engine !== 'http').map(item => item.file))) {
     const target = join(directory, file), stat = await lstat(target)
     if (!Object.hasOwn(report.source.files, file) || !stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024 || !inside(directory, await realpath(target))) throw new Error('Unsafe evidence source')
     const handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW)

@@ -2,7 +2,7 @@ import type { ConnectionRpcHandler } from '@deepseek-ai/dsh-client-connection'
 import { z } from 'zod'
 import type { SecurityTasks } from './tasks.js'
 import { TaskError } from './tasks.js'
-import { RepairRequestSchema, HookRequestSchema, SettingsSchema, TaskConfigSchema } from './ui-contract.js'
+import { RepairRequestSchema, HookRequestSchema, SettingsSchema, SuppressRequestSchema, TaskConfigSchema } from './ui-contract.js'
 const empty = z.object({}).strict()
 const id = z.object({ id: z.string().uuid() }).strict()
 const task = id.extend({ revision: z.number().int().positive() })
@@ -24,6 +24,10 @@ export function createSecurityRpc(ready: Promise<SecurityTasks>, log: (error: un
         case 'reportActions': value = await service.reportActions(id.parse(payload).id); break
         case 'repair': { const request = RepairRequestSchema.parse(payload); value = await service.repair(request.id, request.findingIds, request.mode, request.expectedRevision); break }
         case 'rescan': value = await service.rescan(id.parse(payload).id); break
+        case 'continueRepair': value = await service.continueRepair(id.parse(payload).id); break
+        case 'suppress': { const request = SuppressRequestSchema.parse(payload); value = await service.suppress(request.id, request.findingIds, request.reason); break }
+        case 'suppressions': empty.parse(payload); value = await service.suppressions(); break
+        case 'unsuppress': await service.unsuppress(id.parse(payload).id); value = null; break
         case 'cancel': await service.cancel(id.parse(payload).id); value = null; break
         case 'settings': await service.settings(SettingsSchema.parse(payload)); value = null; break
         case 'hook': await service.hook(HookRequestSchema.parse(payload)); value = null; break

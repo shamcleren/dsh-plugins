@@ -1,6 +1,6 @@
 # WeCom AI Bot channel
 
-Status: in progress
+Status: implemented; live Bot credential smoke pending
 
 ## Problem
 
@@ -14,7 +14,7 @@ The official `WecomTeam/wecom-openclaw-plugin` is a behavioral reference for WeC
 
 Office actions are intentionally outside this Channel. The independent `@shamcleren/dsh-wecom-tools` bundle owns the `wecom-unified` Skill and its separate `wecom-cli` user authorization, so neither installation nor credential lifecycle is coupled to Bot ID/Secret configuration.
 
-## Version 0.1 scope
+## Channel behavior
 
 - Bot WebSocket connection using `botId` and `secret`.
 - Text messages in direct chats.
@@ -58,16 +58,16 @@ plugins/wecom-aibot/
 
 Split a protocol helper into `packages/` only after another plugin has a real need for the same contract.
 
+## Multi-Bot configuration and media
+
+The [plugin README](../../plugins/wecom-aibot/README.md#multiple-bots) is the configuration reference for independent Bot credentials, Workspaces and models, backward compatibility, and supported inbound/outbound media. `/model` and `/effort` use public Agent hooks without saving a deployment default.
+
 ## Deferred
 
 - HTTP Bot webhook mode.
 - Agent encrypted-XML callback mode.
-- Voice, video, and files. Outbound images ship: durable image attachments are uploaded as temporary media and sent as their own messages after the text.
 - Proactive sends not associated with a conversation turn.
-- Multiple Bot accounts in one plugin instance.
-- Administration UI and interactive onboarding.
 - A group policy beyond the callbacks WeCom delivers to the AI Bot.
-- A channel-local model selection. Upstream `sessions.selectModel` installs the Session choice and then saves it as the deployment-wide default for every future Agent, and the desktop client's `/model` runs the same code; no public API sets a Session model without that save, and `agentDefaultModel` is read from the controller's own context, so an agent preset cannot shadow it either. `/model` and `/effort` therefore state that reach in their reply rather than this plugin faking an isolation it cannot enforce. Removing the coupling needs an upstream session-local selection API.
 
 ## Acceptance criteria
 

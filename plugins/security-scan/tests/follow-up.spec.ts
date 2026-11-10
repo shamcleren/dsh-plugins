@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { findingItem, compareFollowUp, repairPrompt } from '../src/follow-up.js'
+import { findingItem, compareFollowUp, repairGuidance, repairPrompt } from '../src/follow-up.js'
 import { ReportSchema, type Finding, type Report } from '../src/report.js'
 const finding = (id: string, engine = 'semgrep'): Finding => ({ id, fingerprint: id, engine, rule: 'rule', file: 'a.py', line: 2, title: id, cwe: '', severity: 'high', status: 'needs-review', change: 'unknown', evidence: 'untrusted evidence', recommendation: 'review first', verification: 'not verified' })
 function report(findings: Finding[]): Report {
@@ -37,4 +37,24 @@ it('rejects changed incremental scope and frames report content as evidence, wit
 
 it.each([['semgrep', 'sourceRisk'], ['llm', 'sourceRisk'], ['osv', 'dependencyRisk'], ['gitleaks', 'secretRisk']])('exposes %s category for bulk repair filtering', (engine, category) => {
   expect(findingItem(finding('category', engine))).toMatchObject({ id: 'category', category })
+})
+
+const runtime = (id: string): Finding => ({ ...finding(id, 'http'), rule: 'dynamic.header-csp', file: 'http/127.0.0.1:3000', line: 1, endpoint: { url: 'http://127.0.0.1:3000/', method: 'GET', status: 200 } })
+it('maps runtime findings to their endpoint and keeps runtime comparisons tied to the same URL', () => {
+  expect(findingItem(runtime('csp'))).toMatchObject({ category: 'dynamicRisk', endpoint: 'http://127.0.0.1:3000/' })
+  const before = report([runtime('csp')]), after = report([])
+  before.policy.dynamic = 'http://127.0.0.1:3000/'; after.policy.dynamic = 'http://127.0.0.1:4000/'
+  expect(compareFollowUp(before, after).comparable).toBe(false)
+})
+it('guides a closed repair loop with category guidance, regression tests and a tool-driven rescan', () => {
+  const source = { ...finding('cmd'), cwe: 'CWE-78' }
+  const prompt = repairPrompt(report([source, runtime('csp')]), [source, runtime('csp')], 'dsh://report')
+  for (const text of ['逐项核实', '最小修复', '回归验证', 'dsh_security_scan_repair_rescan', '参数数组', '响应头中间件', '[回到扫描报告](dsh://report)']) expect(prompt).toContain(text)
+  const evidence = JSON.parse(prompt.slice(prompt.lastIndexOf('\n\n[') + 2))
+  expect(evidence[1]).toMatchObject({ endpoint: { url: 'http://127.0.0.1:3000/' } })
+  expect(evidence[1].file).toBeUndefined()
+  expect(repairPrompt(report([source]), [source], undefined, undefined, 2)).toContain('第 2 轮')
+  expect(repairGuidance({ engine: 'osv', cwe: '', rule: 'x' })).toContain('锁文件')
+  expect(repairGuidance({ engine: 'gitleaks', cwe: '', rule: 'x' })).toContain('轮换')
+  expect(repairGuidance({ engine: 'semgrep', cwe: 'CWE-999', rule: 'x' })).toContain('回归测试')
 })

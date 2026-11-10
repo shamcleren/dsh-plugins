@@ -50,4 +50,23 @@ describe('WeCom inbound routing', () => {
   it('rejects a group frame without a chat id', () => {
     expect(() => normalizeTextFrame(frame({ chattype: 'group' }))).toThrow('missing chatid')
   })
+
+  it('accepts channel text delivered through the group compatibility callback', () => {
+    const message = normalizeTextFrame(frame({
+      chattype: 'group',
+      chatid: 'channel-conversation',
+      text: { content: '@dsh ，你可以做什么？' },
+      compat_info: { source: 'channel' },
+    }))
+
+    expect(message).toMatchObject({
+      chatType: 'group',
+      conversationId: 'channel-conversation',
+      text: '@dsh ，你可以做什么？',
+    })
+    expect(sessionIdFor(message)).toBe(sessionIdFor(normalizeTextFrame(frame({
+      chattype: 'group',
+      chatid: 'channel-conversation',
+    }))))
+  })
 })

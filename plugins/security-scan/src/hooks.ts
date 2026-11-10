@@ -5,7 +5,7 @@ import { git } from './repository.js'
 export const DEFAULT_EDIT_TOOLS = ['write', 'edit', 'str_replace_editor', 'write_file', 'edit_file', 'apply_patch']
 /** The official multi-command editor also has a read-only view operation. */
 export function isConfiguredEdit(name: string, args: unknown, names: readonly string[]): boolean {
-  if (!names.includes(name) || name.startsWith('security_')) return false
+  if (!names.includes(name) || name.startsWith('dsh_security_scan_')) return false
   if (name !== 'str_replace_editor') return true
   if (!args || typeof args !== 'object' || !('command' in args)) return false
   return ['create', 'str_replace', 'insert'].includes(String(args.command))

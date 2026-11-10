@@ -26,6 +26,9 @@ export function createMarketplaceRpcHandler(service: BrowserService, report: (er
       }
       return { ok: true, value }
     } catch (error) {
+      if (error instanceof Error && error.message === 'marketplace-update-offline') return {
+        ok: false, error: { code: 'update-offline', message: error.message, details: {} },
+      }
       report(error)
       if (error instanceof z.ZodError) return { ok: false, error: {
         code: 'bad-request', message: 'Invalid Marketplace request', details: { issues: error.issues },

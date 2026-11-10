@@ -17,8 +17,9 @@ export async function ensureWeComWorkspace(
   api: HostApiProxy,
   dshHome: string,
   title: string,
+  botId?: string,
 ): Promise<string> {
-  const path = join(dshHome, 'channels', 'wecom-aibot')
+  const path = join(dshHome, 'channels', 'wecom-aibot', ...(botId === undefined ? [] : ['bots', botId]))
   await mkdir(path, { recursive: true, mode: 0o700 })
   const created = unwrap(await api.workspace.create(request({ path })))
   if (created.created && created.workspace.title !== title) {
@@ -37,6 +38,7 @@ export async function resolveDefaultWorkspace(
   dshHome: string,
   workspaceId: string | undefined,
   fallbackTitle: string,
+  botId?: string,
 ): Promise<HostWorkspace> {
   if (workspaceId !== undefined) {
     const workspaces = unwrap(await api.workspace.list(request({}))).items
@@ -46,7 +48,7 @@ export async function resolveDefaultWorkspace(
     }
     return selected
   }
-  const fallbackId = await ensureWeComWorkspace(api, dshHome, fallbackTitle)
+  const fallbackId = await ensureWeComWorkspace(api, dshHome, fallbackTitle, botId)
   const workspaces = unwrap(await api.workspace.list(request({}))).items
   const fallback = workspaces.find(workspace => workspace.workspaceId === fallbackId)
   if (fallback === undefined) {

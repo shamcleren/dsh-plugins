@@ -10,18 +10,28 @@
       "metadata": {
         "cwe": "CWE-78"
       },
-      "pattern-either": [
+      "patterns": [
         {
-          "pattern": "subprocess.run(..., shell=True, ...)"
+          "pattern-either": [
+            {
+              "pattern": "subprocess.$FN($CMD, ..., shell=True, ...)"
+            },
+            {
+              "pattern": "os.system($CMD)"
+            },
+            {
+              "pattern": "os.popen($CMD, ...)"
+            }
+          ]
         },
         {
-          "pattern": "subprocess.Popen(..., shell=True, ...)"
+          "pattern-not": "subprocess.$FN(\"...\", ..., shell=True, ...)"
         },
         {
-          "pattern": "subprocess.call(..., shell=True, ...)"
+          "pattern-not": "os.system(\"...\")"
         },
         {
-          "pattern": "subprocess.check_output(..., shell=True, ...)"
+          "pattern-not": "os.popen(\"...\", ...)"
         }
       ]
     },
@@ -35,12 +45,22 @@
       "metadata": {
         "cwe": "CWE-95"
       },
-      "pattern-either": [
+      "patterns": [
         {
-          "pattern": "eval($CODE, ...)"
+          "pattern-either": [
+            {
+              "pattern": "eval($CODE, ...)"
+            },
+            {
+              "pattern": "exec($CODE, ...)"
+            }
+          ]
         },
         {
-          "pattern": "exec($CODE, ...)"
+          "pattern-not": "eval(\"...\", ...)"
+        },
+        {
+          "pattern-not": "exec(\"...\", ...)"
         }
       ]
     },
@@ -60,6 +80,9 @@
         },
         {
           "pattern": "pickle.load(...)"
+        },
+        {
+          "pattern": "pickle.Unpickler(...)"
         }
       ]
     },
@@ -75,13 +98,13 @@
       },
       "pattern-either": [
         {
-          "pattern": "requests.get(..., verify=False, ...)"
+          "pattern": "requests.$FN(..., verify=False, ...)"
         },
         {
-          "pattern": "requests.post(..., verify=False, ...)"
+          "pattern": "httpx.$FN(..., verify=False, ...)"
         },
         {
-          "pattern": "requests.request(..., verify=False, ...)"
+          "pattern": "ssl._create_unverified_context(...)"
         }
       ]
     },
@@ -101,6 +124,9 @@
         },
         {
           "pattern": "yaml.load(..., Loader=yaml.UnsafeLoader, ...)"
+        },
+        {
+          "pattern": "yaml.load(..., Loader=yaml.Loader, ...)"
         }
       ]
     },
@@ -114,15 +140,34 @@
       "metadata": {
         "cwe": "CWE-78"
       },
-      "pattern-either": [
+      "patterns": [
         {
-          "pattern": "exec.Command(\"sh\", \"-c\", ...)"
+          "pattern-either": [
+            {
+              "pattern": "exec.Command(\"sh\", \"-c\", ...)"
+            },
+            {
+              "pattern": "exec.Command(\"bash\", \"-c\", ...)"
+            },
+            {
+              "pattern": "exec.CommandContext($CTX, \"sh\", \"-c\", ...)"
+            },
+            {
+              "pattern": "exec.CommandContext($CTX, \"bash\", \"-c\", ...)"
+            }
+          ]
         },
         {
-          "pattern": "exec.Command(\"bash\", \"-c\", ...)"
+          "pattern-not": "exec.Command(\"sh\", \"-c\", \"...\")"
         },
         {
-          "pattern": "exec.CommandContext($CTX, \"sh\", \"-c\", ...)"
+          "pattern-not": "exec.Command(\"bash\", \"-c\", \"...\")"
+        },
+        {
+          "pattern-not": "exec.CommandContext($CTX, \"sh\", \"-c\", \"...\")"
+        },
+        {
+          "pattern-not": "exec.CommandContext($CTX, \"bash\", \"-c\", \"...\")"
         }
       ]
     },
@@ -154,10 +199,113 @@
       },
       "pattern-either": [
         {
-          "pattern": "$DB.Query(fmt.Sprintf(...), ...)"
+          "patterns": [
+            {
+              "pattern": "$DB.$FN($QUERY, ...)"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$FN",
+                "regex": "^(Query|QueryRow|Exec|Prepare|Raw|Where|Order|Group|Having)$"
+              }
+            },
+            {
+              "metavariable-pattern": {
+                "metavariable": "$QUERY",
+                "patterns": [
+                  {
+                    "pattern-either": [
+                      {
+                        "pattern": "fmt.Sprintf(...)"
+                      },
+                      {
+                        "pattern": "\"...\" + $VALUE"
+                      }
+                    ]
+                  },
+                  {
+                    "pattern-not": "\"...\" + \"...\""
+                  }
+                ]
+              }
+            }
+          ]
         },
         {
-          "pattern": "$DB.Exec(fmt.Sprintf(...), ...)"
+          "patterns": [
+            {
+              "pattern": "$DB.$FN($CTX, $QUERY, ...)"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$FN",
+                "regex": "^(QueryContext|QueryRowContext|ExecContext|PrepareContext)$"
+              }
+            },
+            {
+              "metavariable-pattern": {
+                "metavariable": "$QUERY",
+                "patterns": [
+                  {
+                    "pattern-either": [
+                      {
+                        "pattern": "fmt.Sprintf(...)"
+                      },
+                      {
+                        "pattern": "\"...\" + $VALUE"
+                      }
+                    ]
+                  },
+                  {
+                    "pattern-not": "\"...\" + \"...\""
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern-inside": "$QUERY := $BUILT\n...\n"
+                },
+                {
+                  "pattern-inside": "$QUERY = $BUILT\n...\n"
+                }
+              ]
+            },
+            {
+              "pattern": "$DB.$FN($QUERY, ...)"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$FN",
+                "regex": "^(Query|QueryRow|Exec|Prepare|Raw|Where|Order|Group|Having)$"
+              }
+            },
+            {
+              "metavariable-pattern": {
+                "metavariable": "$BUILT",
+                "patterns": [
+                  {
+                    "pattern-either": [
+                      {
+                        "pattern": "fmt.Sprintf(...)"
+                      },
+                      {
+                        "pattern": "\"...\" + $VALUE"
+                      }
+                    ]
+                  },
+                  {
+                    "pattern-not": "\"...\" + \"...\""
+                  }
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -172,12 +320,40 @@
       "metadata": {
         "cwe": "CWE-95"
       },
-      "pattern-either": [
+      "patterns": [
         {
-          "pattern": "eval($CODE)"
+          "pattern-either": [
+            {
+              "pattern": "eval($CODE)"
+            },
+            {
+              "pattern": "new Function(...)"
+            },
+            {
+              "pattern": "vm.runInNewContext($CODE, ...)"
+            },
+            {
+              "pattern": "vm.runInThisContext($CODE, ...)"
+            },
+            {
+              "pattern": "vm.runInContext($CODE, ...)"
+            },
+            {
+              "pattern": "new vm.Script($CODE, ...)"
+            }
+          ]
         },
         {
-          "pattern": "new Function(...)"
+          "pattern-not": "eval(\"...\")"
+        },
+        {
+          "pattern-not": "vm.runInNewContext(\"...\", ...)"
+        },
+        {
+          "pattern-not": "vm.runInThisContext(\"...\", ...)"
+        },
+        {
+          "pattern-not": "vm.runInContext(\"...\", ...)"
         }
       ]
     },
@@ -192,12 +368,28 @@
       "metadata": {
         "cwe": "CWE-78"
       },
-      "pattern-either": [
+      "patterns": [
         {
-          "pattern": "child_process.exec(...)"
+          "pattern-either": [
+            {
+              "pattern": "child_process.exec($CMD, ...)"
+            },
+            {
+              "pattern": "child_process.execSync($CMD, ...)"
+            },
+            {
+              "pattern": "child_process.spawn($CMD, $ARGS, {..., shell: true, ...})"
+            },
+            {
+              "pattern": "child_process.spawnSync($CMD, $ARGS, {..., shell: true, ...})"
+            }
+          ]
         },
         {
-          "pattern": "child_process.execSync(...)"
+          "pattern-not": "child_process.exec(\"...\", ...)"
+        },
+        {
+          "pattern-not": "child_process.execSync(\"...\", ...)"
         }
       ]
     },
@@ -215,6 +407,9 @@
       "pattern-either": [
         {
           "pattern": "{..., rejectUnauthorized: false, ...}"
+        },
+        {
+          "pattern": "process.env.NODE_TLS_REJECT_UNAUTHORIZED = \"0\""
         }
       ]
     },
@@ -229,9 +424,1376 @@
       "metadata": {
         "cwe": "CWE-79"
       },
+      "patterns": [
+        {
+          "pattern-either": [
+            {
+              "pattern": "$ELEMENT.innerHTML = $HTML"
+            },
+            {
+              "pattern": "$ELEMENT.outerHTML = $HTML"
+            },
+            {
+              "pattern": "$ELEMENT.insertAdjacentHTML($WHERE, $HTML)"
+            },
+            {
+              "pattern": "document.write($HTML)"
+            },
+            {
+              "pattern": "{__html: $HTML}"
+            }
+          ]
+        },
+        {
+          "pattern-not": "$ELEMENT.innerHTML = \"...\""
+        },
+        {
+          "pattern-not": "$ELEMENT.outerHTML = \"...\""
+        },
+        {
+          "pattern-not": "$ELEMENT.insertAdjacentHTML($WHERE, \"...\")"
+        },
+        {
+          "pattern-not": "document.write(\"...\")"
+        },
+        {
+          "pattern-not": "{__html: \"...\"}"
+        },
+        {
+          "pattern-not": "$ELEMENT.innerHTML = DOMPurify.sanitize(...)"
+        },
+        {
+          "pattern-not": "$ELEMENT.insertAdjacentHTML($WHERE, DOMPurify.sanitize(...))"
+        },
+        {
+          "pattern-not": "{__html: DOMPurify.sanitize(...)}"
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.python-sql",
+      "languages": [
+        "python"
+      ],
+      "severity": "WARNING",
+      "message": "SQL text built with an f-string, % formatting, format() or concatenation: confirm values use bind parameters.",
+      "metadata": {
+        "cwe": "CWE-89"
+      },
       "pattern-either": [
         {
-          "pattern": "$ELEMENT.innerHTML = $HTML"
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern": "$CUR.execute($QUERY, ...)"
+                },
+                {
+                  "pattern": "$CUR.executemany($QUERY, ...)"
+                },
+                {
+                  "pattern": "$MODEL.objects.raw($QUERY, ...)"
+                },
+                {
+                  "pattern": "sqlalchemy.text($QUERY)"
+                }
+              ]
+            },
+            {
+              "metavariable-pattern": {
+                "metavariable": "$QUERY",
+                "patterns": [
+                  {
+                    "pattern-either": [
+                      {
+                        "pattern": "f\"...\""
+                      },
+                      {
+                        "pattern": "\"...\" % $VALUE"
+                      },
+                      {
+                        "pattern": "\"...\".format(...)"
+                      },
+                      {
+                        "pattern": "\"...\" + $VALUE"
+                      }
+                    ]
+                  },
+                  {
+                    "pattern-not": "\"...\" + \"...\""
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "patterns": [
+            {
+              "pattern-inside": "$QUERY = $BUILT\n..."
+            },
+            {
+              "pattern-either": [
+                {
+                  "pattern": "$CUR.execute($QUERY, ...)"
+                },
+                {
+                  "pattern": "$CUR.executemany($QUERY, ...)"
+                },
+                {
+                  "pattern": "$MODEL.objects.raw($QUERY, ...)"
+                },
+                {
+                  "pattern": "sqlalchemy.text($QUERY)"
+                }
+              ]
+            },
+            {
+              "metavariable-pattern": {
+                "metavariable": "$BUILT",
+                "patterns": [
+                  {
+                    "pattern-either": [
+                      {
+                        "pattern": "f\"...\""
+                      },
+                      {
+                        "pattern": "\"...\" % $VALUE"
+                      },
+                      {
+                        "pattern": "\"...\".format(...)"
+                      },
+                      {
+                        "pattern": "\"...\" + $VALUE"
+                      }
+                    ]
+                  },
+                  {
+                    "pattern-not": "\"...\" + \"...\""
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.python-template",
+      "languages": [
+        "python"
+      ],
+      "severity": "WARNING",
+      "message": "Template source built at runtime: user-controlled template text can execute server-side expressions.",
+      "metadata": {
+        "cwe": "CWE-1336"
+      },
+      "patterns": [
+        {
+          "pattern-either": [
+            {
+              "pattern": "flask.render_template_string($TEMPLATE, ...)"
+            },
+            {
+              "pattern": "jinja2.Template($TEMPLATE, ...)"
+            },
+            {
+              "pattern": "jinja2.Environment(...).from_string($TEMPLATE, ...)"
+            }
+          ]
+        },
+        {
+          "pattern-not": "flask.render_template_string(\"...\", ...)"
+        },
+        {
+          "pattern-not": "jinja2.Template(\"...\", ...)"
+        },
+        {
+          "pattern-not": "jinja2.Environment(...).from_string(\"...\", ...)"
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.python-html",
+      "languages": [
+        "python"
+      ],
+      "severity": "WARNING",
+      "message": "Value marked as safe HTML bypasses template escaping: confirm it cannot contain user content.",
+      "metadata": {
+        "cwe": "CWE-79"
+      },
+      "patterns": [
+        {
+          "pattern-either": [
+            {
+              "pattern": "django.utils.safestring.mark_safe($HTML)"
+            },
+            {
+              "pattern": "django.utils.safestring.SafeString($HTML)"
+            },
+            {
+              "pattern": "markupsafe.Markup($HTML)"
+            },
+            {
+              "pattern": "flask.Markup($HTML)"
+            }
+          ]
+        },
+        {
+          "pattern-not": "django.utils.safestring.mark_safe(\"...\")"
+        },
+        {
+          "pattern-not": "django.utils.safestring.SafeString(\"...\")"
+        },
+        {
+          "pattern-not": "markupsafe.Markup(\"...\")"
+        },
+        {
+          "pattern-not": "flask.Markup(\"...\")"
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.python-debug",
+      "languages": [
+        "python"
+      ],
+      "severity": "WARNING",
+      "message": "Flask debug mode enables the interactive Werkzeug debugger; never expose it outside local development.",
+      "metadata": {
+        "cwe": "CWE-489"
+      },
+      "patterns": [
+        {
+          "pattern-inside": "$APP = flask.Flask(...)\n..."
+        },
+        {
+          "pattern": "$APP.run(..., debug=True, ...)"
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.python-jwt",
+      "languages": [
+        "python"
+      ],
+      "severity": "WARNING",
+      "message": "JWT signature verification is disabled or the none algorithm is accepted.",
+      "metadata": {
+        "cwe": "CWE-347"
+      },
+      "pattern-either": [
+        {
+          "pattern": "jwt.decode(..., options={..., \"verify_signature\": False, ...}, ...)"
+        },
+        {
+          "pattern": "jwt.decode(..., verify=False, ...)"
+        },
+        {
+          "pattern": "jwt.decode(..., algorithms=[..., \"none\", ...], ...)"
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.python-ssrf",
+      "languages": [
+        "python"
+      ],
+      "severity": "WARNING",
+      "message": "Server-side request to a request-controlled URL: enforce an allowed destination policy.",
+      "metadata": {
+        "cwe": "CWE-918"
+      },
+      "mode": "taint",
+      "pattern-sources": [
+        {
+          "pattern": "flask.request.$ATTR"
+        },
+        {
+          "pattern": "flask.request.get_json(...)"
+        },
+        {
+          "patterns": [
+            {
+              "pattern": "$REQ.$PART"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$REQ",
+                "regex": "^(self\\.)?request$"
+              }
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$PART",
+                "regex": "^(GET|POST|COOKIES|FILES|META|body|data|query_params|headers)$"
+              }
+            }
+          ]
+        }
+      ],
+      "pattern-sanitizers": [
+        {
+          "patterns": [
+            {
+              "pattern": "$EXPR"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$EXPR",
+                "regex": "^f?[\"'`]https?://[^/\"'`{$]+/"
+              }
+            }
+          ]
+        },
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern": "$MAP[...]"
+                },
+                {
+                  "pattern": "$MAP.get(...)"
+                }
+              ]
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$MAP",
+                "regex": "^[A-Z][A-Z0-9_]*$"
+              }
+            }
+          ]
+        }
+      ],
+      "pattern-sinks": [
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern": "requests.$FN($SINK, ...)"
+                },
+                {
+                  "pattern": "requests.request($METHOD, $SINK, ...)"
+                },
+                {
+                  "pattern": "httpx.$FN($SINK, ...)"
+                },
+                {
+                  "pattern": "urllib.request.urlopen($SINK, ...)"
+                }
+              ]
+            },
+            {
+              "focus-metavariable": "$SINK"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.python-path",
+      "languages": [
+        "python"
+      ],
+      "severity": "WARNING",
+      "message": "File path built from request input: confirm the resolved path stays inside the intended directory.",
+      "metadata": {
+        "cwe": "CWE-22"
+      },
+      "mode": "taint",
+      "pattern-sources": [
+        {
+          "pattern": "flask.request.$ATTR"
+        },
+        {
+          "pattern": "flask.request.get_json(...)"
+        },
+        {
+          "patterns": [
+            {
+              "pattern": "$REQ.$PART"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$REQ",
+                "regex": "^(self\\.)?request$"
+              }
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$PART",
+                "regex": "^(GET|POST|COOKIES|FILES|META|body|data|query_params|headers)$"
+              }
+            }
+          ]
+        }
+      ],
+      "pattern-sanitizers": [
+        {
+          "pattern": "os.path.basename(...)"
+        },
+        {
+          "pattern": "werkzeug.utils.secure_filename(...)"
+        },
+        {
+          "patterns": [
+            {
+              "pattern-inside": "if not $X.startswith(...):\n    ...\n..."
+            },
+            {
+              "pattern": "$X"
+            }
+          ]
+        },
+        {
+          "patterns": [
+            {
+              "pattern-inside": "if not $X.is_relative_to(...):\n    ...\n..."
+            },
+            {
+              "pattern": "$X"
+            }
+          ]
+        }
+      ],
+      "pattern-sinks": [
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern": "open($SINK, ...)"
+                },
+                {
+                  "pattern": "flask.send_file($SINK, ...)"
+                },
+                {
+                  "pattern": "os.remove($SINK)"
+                },
+                {
+                  "pattern": "shutil.rmtree($SINK, ...)"
+                }
+              ]
+            },
+            {
+              "focus-metavariable": "$SINK"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.python-redirect",
+      "languages": [
+        "python"
+      ],
+      "severity": "WARNING",
+      "message": "Redirect target controlled by the request: restrict it to same-site paths or an allow list.",
+      "metadata": {
+        "cwe": "CWE-601"
+      },
+      "mode": "taint",
+      "pattern-sources": [
+        {
+          "pattern": "flask.request.$ATTR"
+        },
+        {
+          "pattern": "flask.request.get_json(...)"
+        },
+        {
+          "patterns": [
+            {
+              "pattern": "$REQ.$PART"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$REQ",
+                "regex": "^(self\\.)?request$"
+              }
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$PART",
+                "regex": "^(GET|POST|COOKIES|FILES|META|body|data|query_params|headers)$"
+              }
+            }
+          ]
+        }
+      ],
+      "pattern-sanitizers": [
+        {
+          "patterns": [
+            {
+              "pattern": "$EXPR"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$EXPR",
+                "regex": "^f?[\"'`]/[^/\\\\\"'`]"
+              }
+            }
+          ]
+        },
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern": "$MAP[...]"
+                },
+                {
+                  "pattern": "$MAP.get(...)"
+                }
+              ]
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$MAP",
+                "regex": "^[A-Z][A-Z0-9_]*$"
+              }
+            }
+          ]
+        },
+        {
+          "pattern": "flask.url_for(...)"
+        },
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern-inside": "if url_has_allowed_host_and_scheme($X, ...):\n    ..."
+                },
+                {
+                  "pattern-inside": "if not url_has_allowed_host_and_scheme($X, ...):\n    ...\n..."
+                }
+              ]
+            },
+            {
+              "pattern": "$X"
+            }
+          ]
+        }
+      ],
+      "pattern-sinks": [
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern": "flask.redirect($SINK, ...)"
+                },
+                {
+                  "pattern": "django.shortcuts.redirect($SINK, ...)"
+                },
+                {
+                  "pattern": "django.http.HttpResponseRedirect($SINK, ...)"
+                }
+              ]
+            },
+            {
+              "focus-metavariable": "$SINK"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.js-sql",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "severity": "WARNING",
+      "message": "SQL text built with concatenation or template interpolation: confirm values use bind parameters.",
+      "metadata": {
+        "cwe": "CWE-89"
+      },
+      "pattern-either": [
+        {
+          "patterns": [
+            {
+              "pattern": "$DB.$FN($QUERY, ...)"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$FN",
+                "regex": "^(query|execute|raw|\\$queryRawUnsafe|\\$executeRawUnsafe)$"
+              }
+            },
+            {
+              "metavariable-pattern": {
+                "metavariable": "$QUERY",
+                "patterns": [
+                  {
+                    "pattern-either": [
+                      {
+                        "pattern": "\"...\" + $VALUE"
+                      },
+                      {
+                        "pattern": "`...${$VALUE}...`"
+                      }
+                    ]
+                  },
+                  {
+                    "pattern-not": "\"...\" + \"...\""
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "patterns": [
+            {
+              "pattern-inside": "$QUERY = $BUILT;\n..."
+            },
+            {
+              "pattern": "$DB.$FN($QUERY, ...)"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$FN",
+                "regex": "^(query|execute|raw|\\$queryRawUnsafe|\\$executeRawUnsafe)$"
+              }
+            },
+            {
+              "metavariable-pattern": {
+                "metavariable": "$BUILT",
+                "patterns": [
+                  {
+                    "pattern-either": [
+                      {
+                        "pattern": "\"...\" + $VALUE"
+                      },
+                      {
+                        "pattern": "`...${$VALUE}...`"
+                      }
+                    ]
+                  },
+                  {
+                    "pattern-not": "\"...\" + \"...\""
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.js-ssrf",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "severity": "WARNING",
+      "message": "Server-side request to a request-controlled URL: enforce an allowed destination policy.",
+      "metadata": {
+        "cwe": "CWE-918"
+      },
+      "mode": "taint",
+      "pattern-sources": [
+        {
+          "patterns": [
+            {
+              "pattern": "$REQ.$PART"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$REQ",
+                "regex": "^(req|request|ctx|ctx\\.request)$"
+              }
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$PART",
+                "regex": "^(query|body|params|headers|cookies)$"
+              }
+            }
+          ]
+        },
+        {
+          "pattern": "$REQ.nextUrl.searchParams"
+        }
+      ],
+      "pattern-sanitizers": [
+        {
+          "patterns": [
+            {
+              "pattern": "$EXPR"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$EXPR",
+                "regex": "^f?[\"'`]https?://[^/\"'`{$]+/"
+              }
+            }
+          ]
+        },
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern": "$MAP[...]"
+                },
+                {
+                  "pattern": "$MAP.get(...)"
+                }
+              ]
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$MAP",
+                "regex": "^[A-Z][A-Z0-9_]*$"
+              }
+            }
+          ]
+        }
+      ],
+      "pattern-sinks": [
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern": "fetch($SINK, ...)"
+                },
+                {
+                  "pattern": "axios($SINK, ...)"
+                },
+                {
+                  "pattern": "axios.$FN($SINK, ...)"
+                },
+                {
+                  "pattern": "got($SINK, ...)"
+                },
+                {
+                  "pattern": "got.$FN($SINK, ...)"
+                },
+                {
+                  "pattern": "http.get($SINK, ...)"
+                },
+                {
+                  "pattern": "https.get($SINK, ...)"
+                },
+                {
+                  "pattern": "http.request($SINK, ...)"
+                },
+                {
+                  "pattern": "https.request($SINK, ...)"
+                }
+              ]
+            },
+            {
+              "focus-metavariable": "$SINK"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.js-redirect",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "severity": "WARNING",
+      "message": "Redirect target controlled by the request: restrict it to same-site paths or an allow list.",
+      "metadata": {
+        "cwe": "CWE-601"
+      },
+      "mode": "taint",
+      "pattern-sources": [
+        {
+          "patterns": [
+            {
+              "pattern": "$REQ.$PART"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$REQ",
+                "regex": "^(req|request|ctx|ctx\\.request)$"
+              }
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$PART",
+                "regex": "^(query|body|params|headers|cookies)$"
+              }
+            }
+          ]
+        },
+        {
+          "pattern": "$REQ.nextUrl.searchParams"
+        }
+      ],
+      "pattern-sanitizers": [
+        {
+          "patterns": [
+            {
+              "pattern": "$EXPR"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$EXPR",
+                "regex": "^f?[\"'`]/[^/\\\\\"'`]"
+              }
+            }
+          ]
+        },
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern": "$MAP[...]"
+                },
+                {
+                  "pattern": "$MAP.get(...)"
+                }
+              ]
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$MAP",
+                "regex": "^[A-Z][A-Z0-9_]*$"
+              }
+            }
+          ]
+        }
+      ],
+      "pattern-sinks": [
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern": "$RES.redirect($SINK)"
+                },
+                {
+                  "pattern": "$RES.redirect($STATUS, $SINK)"
+                },
+                {
+                  "pattern": "NextResponse.redirect($SINK, ...)"
+                }
+              ]
+            },
+            {
+              "focus-metavariable": "$SINK"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.js-path",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "severity": "WARNING",
+      "message": "File path built from request input: confirm the resolved path stays inside the intended directory.",
+      "metadata": {
+        "cwe": "CWE-22"
+      },
+      "mode": "taint",
+      "pattern-sources": [
+        {
+          "patterns": [
+            {
+              "pattern": "$REQ.$PART"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$REQ",
+                "regex": "^(req|request|ctx|ctx\\.request)$"
+              }
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$PART",
+                "regex": "^(query|body|params|headers|cookies)$"
+              }
+            }
+          ]
+        },
+        {
+          "pattern": "$REQ.nextUrl.searchParams"
+        }
+      ],
+      "pattern-sanitizers": [
+        {
+          "pattern": "path.basename(...)"
+        },
+        {
+          "patterns": [
+            {
+              "pattern-inside": "if (!$X.startsWith(...)) { ... }\n..."
+            },
+            {
+              "pattern": "$X"
+            }
+          ]
+        }
+      ],
+      "pattern-sinks": [
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "patterns": [
+                    {
+                      "pattern": "fs.$FN($SINK, ...)"
+                    },
+                    {
+                      "metavariable-regex": {
+                        "metavariable": "$FN",
+                        "regex": "^(readFile|readFileSync|createReadStream|writeFile|writeFileSync|appendFile|appendFileSync|unlink|unlinkSync|rm|rmSync|open|openSync)$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "patterns": [
+                    {
+                      "pattern": "$RES.sendFile($SINK, ...)"
+                    },
+                    {
+                      "pattern-not": "$RES.sendFile($SINK, {..., root: $ROOT, ...}, ...)"
+                    }
+                  ]
+                },
+                {
+                  "pattern": "$RES.download($SINK, ...)"
+                }
+              ]
+            },
+            {
+              "focus-metavariable": "$SINK"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.js-cors",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "severity": "WARNING",
+      "message": "CORS reflects any origin while allowing credentials: restrict origins to an explicit list.",
+      "metadata": {
+        "cwe": "CWE-942"
+      },
+      "pattern-either": [
+        {
+          "pattern": "cors({..., origin: true, ..., credentials: true, ...})"
+        },
+        {
+          "pattern": "cors({..., credentials: true, ..., origin: true, ...})"
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.go-path",
+      "languages": [
+        "go"
+      ],
+      "severity": "WARNING",
+      "message": "File path built from request input: confirm the resolved path stays inside the intended directory.",
+      "metadata": {
+        "cwe": "CWE-22"
+      },
+      "mode": "taint",
+      "pattern-sources": [
+        {
+          "pattern": "($R : *http.Request).URL.Query()"
+        },
+        {
+          "pattern": "($R : *http.Request).FormValue(...)"
+        },
+        {
+          "pattern": "($R : *http.Request).PostFormValue(...)"
+        },
+        {
+          "pattern": "($R : *http.Request).PathValue(...)"
+        },
+        {
+          "pattern": "mux.Vars(...)"
+        },
+        {
+          "patterns": [
+            {
+              "pattern": "($C : *gin.Context).$M(...)"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$M",
+                "regex": "^(Query|DefaultQuery|Param|PostForm|DefaultPostForm|GetHeader)$"
+              }
+            }
+          ]
+        },
+        {
+          "patterns": [
+            {
+              "pattern": "($C : echo.Context).$M(...)"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$M",
+                "regex": "^(QueryParam|Param|FormValue)$"
+              }
+            }
+          ]
+        }
+      ],
+      "pattern-sanitizers": [
+        {
+          "pattern": "filepath.Base(...)"
+        },
+        {
+          "patterns": [
+            {
+              "pattern-inside": "if !filepath.IsLocal($X) {\n  ...\n}\n...\n"
+            },
+            {
+              "pattern": "$X"
+            }
+          ]
+        },
+        {
+          "patterns": [
+            {
+              "pattern-inside": "if !strings.HasPrefix($X, ...) {\n  ...\n}\n...\n"
+            },
+            {
+              "pattern": "$X"
+            }
+          ]
+        }
+      ],
+      "pattern-sinks": [
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern": "os.ReadFile($SINK)"
+                },
+                {
+                  "pattern": "os.Open($SINK)"
+                },
+                {
+                  "pattern": "os.OpenFile($SINK, ...)"
+                },
+                {
+                  "pattern": "os.Create($SINK)"
+                },
+                {
+                  "pattern": "os.Remove($SINK)"
+                },
+                {
+                  "pattern": "os.RemoveAll($SINK)"
+                },
+                {
+                  "pattern": "http.ServeFile($W, $REQ, $SINK)"
+                },
+                {
+                  "pattern": "($CTX : *gin.Context).File($SINK)"
+                },
+                {
+                  "pattern": "($CTX : *gin.Context).FileAttachment($SINK, ...)"
+                },
+                {
+                  "pattern": "($CTX : echo.Context).File($SINK)"
+                }
+              ]
+            },
+            {
+              "focus-metavariable": "$SINK"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.go-redirect",
+      "languages": [
+        "go"
+      ],
+      "severity": "WARNING",
+      "message": "Redirect target controlled by the request: restrict it to same-site paths or an allow list.",
+      "metadata": {
+        "cwe": "CWE-601"
+      },
+      "mode": "taint",
+      "pattern-sources": [
+        {
+          "pattern": "($R : *http.Request).URL.Query()"
+        },
+        {
+          "pattern": "($R : *http.Request).FormValue(...)"
+        },
+        {
+          "pattern": "($R : *http.Request).PostFormValue(...)"
+        },
+        {
+          "pattern": "($R : *http.Request).PathValue(...)"
+        },
+        {
+          "pattern": "mux.Vars(...)"
+        },
+        {
+          "patterns": [
+            {
+              "pattern": "($C : *gin.Context).$M(...)"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$M",
+                "regex": "^(Query|DefaultQuery|Param|PostForm|DefaultPostForm|GetHeader)$"
+              }
+            }
+          ]
+        },
+        {
+          "patterns": [
+            {
+              "pattern": "($C : echo.Context).$M(...)"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$M",
+                "regex": "^(QueryParam|Param|FormValue)$"
+              }
+            }
+          ]
+        }
+      ],
+      "pattern-sanitizers": [
+        {
+          "patterns": [
+            {
+              "pattern": "$EXPR"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$EXPR",
+                "regex": "^f?[\"'`]/[^/\\\\\"'`]"
+              }
+            }
+          ]
+        },
+        {
+          "patterns": [
+            {
+              "pattern": "$MAP[...]"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$MAP",
+                "regex": "^(?i:allowed|allow|trusted|known|safe)[A-Za-z0-9_]*$"
+              }
+            }
+          ]
+        },
+        {
+          "pattern": "url.PathEscape(...)"
+        },
+        {
+          "pattern": "url.QueryEscape(...)"
+        }
+      ],
+      "pattern-sinks": [
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern": "http.Redirect($W, $REQ, $SINK, ...)"
+                },
+                {
+                  "pattern": "($CTX : *gin.Context).Redirect($STATUS, $SINK)"
+                },
+                {
+                  "pattern": "($CTX : echo.Context).Redirect($STATUS, $SINK)"
+                }
+              ]
+            },
+            {
+              "focus-metavariable": "$SINK"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.go-ssrf",
+      "languages": [
+        "go"
+      ],
+      "severity": "WARNING",
+      "message": "Server-side request to a request-controlled URL: enforce an allowed destination policy.",
+      "metadata": {
+        "cwe": "CWE-918"
+      },
+      "mode": "taint",
+      "pattern-sources": [
+        {
+          "pattern": "($R : *http.Request).URL.Query()"
+        },
+        {
+          "pattern": "($R : *http.Request).FormValue(...)"
+        },
+        {
+          "pattern": "($R : *http.Request).PostFormValue(...)"
+        },
+        {
+          "pattern": "($R : *http.Request).PathValue(...)"
+        },
+        {
+          "pattern": "mux.Vars(...)"
+        },
+        {
+          "patterns": [
+            {
+              "pattern": "($C : *gin.Context).$M(...)"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$M",
+                "regex": "^(Query|DefaultQuery|Param|PostForm|DefaultPostForm|GetHeader)$"
+              }
+            }
+          ]
+        },
+        {
+          "patterns": [
+            {
+              "pattern": "($C : echo.Context).$M(...)"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$M",
+                "regex": "^(QueryParam|Param|FormValue)$"
+              }
+            }
+          ]
+        }
+      ],
+      "pattern-sanitizers": [
+        {
+          "patterns": [
+            {
+              "pattern": "$EXPR"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$EXPR",
+                "regex": "^f?[\"'`]https?://[^/\"'`{$]+/"
+              }
+            }
+          ]
+        },
+        {
+          "patterns": [
+            {
+              "pattern": "$MAP[...]"
+            },
+            {
+              "metavariable-regex": {
+                "metavariable": "$MAP",
+                "regex": "^(?i:allowed|allow|trusted|known|safe)[A-Za-z0-9_]*$"
+              }
+            }
+          ]
+        },
+        {
+          "pattern": "url.PathEscape(...)"
+        },
+        {
+          "pattern": "url.QueryEscape(...)"
+        }
+      ],
+      "pattern-sinks": [
+        {
+          "patterns": [
+            {
+              "pattern-either": [
+                {
+                  "pattern": "http.Get($SINK)"
+                },
+                {
+                  "pattern": "http.Post($SINK, ...)"
+                },
+                {
+                  "pattern": "http.Head($SINK)"
+                },
+                {
+                  "pattern": "http.NewRequest($METHOD, $SINK, ...)"
+                },
+                {
+                  "pattern": "http.NewRequestWithContext($CTX, $METHOD, $SINK, ...)"
+                },
+                {
+                  "pattern": "($CLIENT : *http.Client).Get($SINK)"
+                }
+              ]
+            },
+            {
+              "focus-metavariable": "$SINK"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsh-security.go-html",
+      "languages": [
+        "go"
+      ],
+      "severity": "WARNING",
+      "message": "Value converted to trusted html/template content bypasses escaping: confirm it cannot contain user content.",
+      "metadata": {
+        "cwe": "CWE-79"
+      },
+      "patterns": [
+        {
+          "pattern-either": [
+            {
+              "pattern": "template.HTML($VALUE)"
+            },
+            {
+              "pattern": "template.JS($VALUE)"
+            },
+            {
+              "pattern": "template.HTMLAttr($VALUE)"
+            },
+            {
+              "pattern": "template.URL($VALUE)"
+            }
+          ]
+        },
+        {
+          "pattern-not": "template.HTML(\"...\")"
+        },
+        {
+          "pattern-not": "template.JS(\"...\")"
+        },
+        {
+          "pattern-not": "template.HTMLAttr(\"...\")"
+        },
+        {
+          "pattern-not": "template.URL(\"...\")"
         }
       ]
     }

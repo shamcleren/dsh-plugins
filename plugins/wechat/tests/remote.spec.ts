@@ -1,4 +1,8 @@
 import * as Cordis from '@deepseek-ai/cordis'
+import { readFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { dirname, resolve } from 'node:path'
+import { runInThisContext } from 'node:vm'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -69,7 +73,10 @@ async function loadBrowserGateway(): Promise<Cordis.Plugin.Object> {
   }
   Object.defineProperty(globalThis, 'window', { configurable: true, value: browser })
   try {
-    await import('@deepseek-ai/dsh-api-gateway/client')
+    const manifestPath = createRequire(import.meta.url).resolve('@deepseek-ai/dsh-api-gateway/package.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    const browserEntry = resolve(dirname(manifestPath), manifest.exports['./client'].browser)
+    runInThisContext(await readFile(browserEntry, 'utf8'), { filename: browserEntry })
   } finally {
     Reflect.deleteProperty(globalThis, 'window')
   }
