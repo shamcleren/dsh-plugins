@@ -91,7 +91,7 @@ async function fixture(empty = false, encrypted: boolean | 'gpg' = false) {
     await vi.waitFor(async () => {
       task = (await call<Activity>('activity')).tasks.find(task => task.id === id)
       expect(task && ['complete', 'failed', 'cancelled'].includes(task.status)).toBe(true)
-    }, { timeout: 10_000, interval: 25 })
+    }, { timeout: 10_000, interval: 100 })
     return task!
   }
   return { base, bare, seed, home, service, call, git, registry, project, status, preview, commands, remoteChange, control, finished, keyFile }

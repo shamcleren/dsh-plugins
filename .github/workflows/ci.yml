@@ -38,7 +38,8 @@ jobs:
         run: pnpm build
       - if: runner.os == 'Linux'
         run: pnpm -r --filter '!@shamcleren/dsh-pet' run build
-      - run: pnpm test
+      - run: pnpm test:bootstrap
+      - run: pnpm --recursive --workspace-concurrency=1 run test
       - if: runner.os == 'macOS'
         run: pnpm test:macos
       - if: runner.os == 'Linux'
