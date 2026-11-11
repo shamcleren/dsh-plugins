@@ -18,6 +18,7 @@ interface ActiveAccount {
 
 interface ActiveRuntime {
   key: string
+  labelKey: string
   accounts: ActiveAccount[]
   wake: IdleSleepAssertion | undefined
 }
@@ -105,8 +106,15 @@ export class WeChatRuntimeController {
     // settings service, which reconciles us back synchronously, and tearing the
     // account connections down there would drop the command's own reply.
     const { agentPreset, ...connectionPolicy } = resolveRuntimeConfig(config)
-    const key = JSON.stringify([accounts, connectionPolicy, config.workspaceId, config.workspaceName])
+    const key = JSON.stringify([accounts, connectionPolicy, config.workspaceId])
+    const labelKey = JSON.stringify([config.workspaceName])
     if (this.active?.key === key) {
+      if (this.active.labelKey !== labelKey) {
+        const context = await this.options.prepareContext(config)
+        if (this.stopped || generation !== this.generation) return
+        for (const active of this.active.accounts) active.router.setDefaultWorkspace(context.defaultWorkspace)
+        this.active.labelKey = labelKey
+      }
       for (const active of this.active.accounts) active.router.setAgentPreset(agentPreset)
       return
     }
@@ -162,7 +170,7 @@ export class WeChatRuntimeController {
       await wake?.stop()
       throw error
     }
-    this.active = { key, accounts, wake }
+    this.active = { key, labelKey: JSON.stringify([config.workspaceName]), accounts, wake }
     this.options.delivery?.resume()
   }
 

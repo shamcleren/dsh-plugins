@@ -11,6 +11,7 @@ import { Config as ConfigSchema, configuredBots, DEFAULT_BOT_ID_ENV, DEFAULT_SEC
 import type { WeComSettingsPatch } from './config.js'
 import { onCredentialsUpdated, resolveCredentials } from './credentials.js'
 import { createHostApi } from './host-api.js'
+import { channelWorkspaceTitle } from '../../core/workspace-title.js'
 import { WeComRuntimeController } from './runtime.js'
 import { ConversationBindings } from './bindings.js'
 import { resolveDefaultWorkspace } from './workspace.js'
@@ -78,8 +79,10 @@ export function apply(ctx: Context, config: PlainConfig | Volatile<PlainConfig>)
         api,
         resolveDshHome(),
         current.workspaceId,
-        current.workspaceName ?? DEFAULT_WORKSPACE_NAME,
+        channelWorkspaceTitle('企业微信', current.name ?? (current.workspaceName !== DEFAULT_WORKSPACE_NAME ? current.workspaceName : undefined),
+          current.id === undefined || current.id === 'default' ? '默认机器人' : current.id),
         settings().bots === undefined || current.id === 'default' ? undefined : current.id,
+        [DEFAULT_WORKSPACE_NAME, current.workspaceName ?? DEFAULT_WORKSPACE_NAME],
       ),
       readFile: (ref, signal) => {
         if (attachments === undefined) throw new Error('this deployment has no attachment store')

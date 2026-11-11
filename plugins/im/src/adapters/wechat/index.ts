@@ -14,6 +14,7 @@ import { ConversationBindings } from './bindings.js'
 import { Config as ConfigSchema, DEFAULT_WORKSPACE_NAME } from './config.js'
 import type { WeChatSettingsPatch } from './config.js'
 import { createHostApi } from './host-api.js'
+import { channelWorkspaceTitle, accountLabel } from '../../core/workspace-title.js'
 import { WeChatRuntimeController } from './runtime.js'
 import { WeChatAccountStore } from './storage.js'
 import { WeChatLoginService } from './login.js'
@@ -63,7 +64,9 @@ export function apply(ctx: Context, config: PlainConfig | Volatile<PlainConfig>)
           api,
           resolveDshHome(),
           current.workspaceId,
-          current.workspaceName ?? DEFAULT_WORKSPACE_NAME,
+          channelWorkspaceTitle('微信', current.workspaceName === DEFAULT_WORKSPACE_NAME ? undefined : current.workspaceName,
+            accountLabel(store.accounts([]).map(account => account.accountId))),
+          [DEFAULT_WORKSPACE_NAME, current.workspaceName ?? DEFAULT_WORKSPACE_NAME],
         ),
         readFile: (ref, signal) => {
           if (attachments === undefined) throw new Error('this deployment has no attachment store')

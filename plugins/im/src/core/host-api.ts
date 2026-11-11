@@ -232,7 +232,9 @@ export function createHostApi(
   const cancellations = new Map<string, { sessionId: string; cancel(): void }>()
   const emit = (payload: HostMuxFrame, rpcId = randomUUID()) => { for (const listener of listeners) listener({ rpcId, payload }) }
   ctx.effect(() => () => lifetime.abort())
-  ctx.on('session/event', (session, event) => { if (observesSession(session.id)) emit({ type: 'session/event', sessionId: session.id, event }) })
+  // Sessions dispatch with their Agent carrier. A sibling channel must observe
+  // globally, then enforce its own session ownership before forwarding.
+  ctx.on('session/event', (session, event) => { if (observesSession(session.id)) emit({ type: 'session/event', sessionId: session.id, event }) }, { global: true })
   // Claim owned turns before the Host Web answerer can wait on another UI.
   // Global dispatch also keeps agent scoping from filtering this sibling fiber.
   ctx.on('user-questions/request', async (request, next) => {

@@ -8,6 +8,7 @@ export const DEFAULT_WORKSPACE_NAME = '企业微信机器人'
 
 /** Settings used to authenticate and run one WeCom Bot account. */
 export interface Config {
+  name?: string
   connectionEnabled?: boolean
   /** When present, replaces the legacy single Bot configuration; [] disconnects all. */
   bots?: BotConfig[]
@@ -50,6 +51,7 @@ function resolveModel(value: Partial<BotModel> | undefined): BotModel | undefine
 }
 
 const fields = {
+  name: z.string().min(1).max(80),
   mediaMaxBytes: z.number().step(1).min(1024).default(10 * 1024 * 1024),
   model: z.object({ provider: z.string().min(1), model: z.string().min(1), reasoningEffort: z.string().min(1) }),
   botIdEnv: z.string().min(1).role('credential-ref').default(DEFAULT_BOT_ID_ENV),

@@ -8,6 +8,7 @@ const observed = vi.hoisted(() => ({
   started: 0,
   stopped: 0,
   presets: [] as Array<string | undefined>,
+  titles: [] as string[],
 }))
 
 vi.mock('../../src/adapters/wechat/account.js', () => ({
@@ -20,6 +21,7 @@ vi.mock('../../src/adapters/wechat/account.js', () => ({
 vi.mock('../../src/adapters/wechat/router.js', () => ({
   WeChatConversationRouter: class {
     setAgentPreset(next: string | undefined): void { observed.presets.push(next) }
+    setDefaultWorkspace(next: { title: string }): void { observed.titles.push(next.title) }
     start(): void {}
     async stop(): Promise<void> {}
   },
@@ -34,6 +36,7 @@ describe('WeChatRuntimeController', () => {
     observed.started = 0
     observed.stopped = 0
     observed.presets = []
+    observed.titles = []
     const store = {
       accounts: () => [{ accountId: 'account-a', userId: 'owner', token: 'token', baseUrl: 'https://example.invalid' }],
     } as unknown as WeChatAccountStore
@@ -41,9 +44,9 @@ describe('WeChatRuntimeController', () => {
       api: {} as HostApiProxy,
       logger: logger(),
       store,
-      prepareContext: async () => ({
+      prepareContext: async config => ({
         bindings: { current: (_key: string, fallback: string) => fallback, set: async () => undefined },
-        defaultWorkspace: { workspaceId: 'workspace-a', path: '/tmp', title: '微信', sessionIds: [] },
+        defaultWorkspace: { workspaceId: 'workspace-a', path: '/tmp', title: config.workspaceName ?? '微信', sessionIds: [] },
       }),
       writeSettings: async () => undefined,
     })
@@ -53,6 +56,11 @@ describe('WeChatRuntimeController', () => {
     runtime.update({ agentPreset: 'dsh-security-audit' })
     await vi.waitFor(() => { expect(observed.presets).toContain('dsh-security-audit') })
 
+    expect(observed.started).toBe(1)
+    expect(observed.stopped).toBe(0)
+    runtime.update({ agentPreset: 'dsh-security-audit', workspaceName: '生活助手' })
+    await runtime.ready()
+    expect(observed.titles).toEqual(['生活助手'])
     expect(observed.started).toBe(1)
     expect(observed.stopped).toBe(0)
     await runtime.stop()

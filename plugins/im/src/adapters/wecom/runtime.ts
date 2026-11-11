@@ -13,6 +13,7 @@ type RuntimeClient = WeComBotClient & WeComReplyClient
 
 interface ActiveConnection {
   key: string
+  labelKey: string
   account: WeComBotAccount
   router: WeComConversationRouter
   wake: IdleSleepAssertion | undefined
@@ -103,10 +104,16 @@ class SingleBotRuntimeController {
       credentials,
       connectionPolicy,
       config.workspaceId,
-      config.workspaceName,
       config.preventIdleSleep,
     ])
+    const labelKey = JSON.stringify([config.name, config.workspaceName])
     if (this.active?.key === key) {
+      if (this.active.labelKey !== labelKey) {
+        const context = await this.options.prepareContext(config)
+        if (this.stopped || generation !== this.generation) return
+        this.active.router.setDefaultWorkspace(context.defaultWorkspace)
+        this.active.labelKey = labelKey
+      }
       this.active.router.setAgentPreset(agentPreset)
       return
     }
@@ -143,7 +150,7 @@ class SingleBotRuntimeController {
       await wake?.stop()
       throw error
     }
-    this.active = { key, account, router, wake }
+    this.active = { key, labelKey: JSON.stringify([config.name, config.workspaceName]), account, router, wake }
   }
 
   private async stopActive(): Promise<void> {

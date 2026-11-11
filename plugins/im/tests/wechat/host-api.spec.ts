@@ -2,6 +2,22 @@ import { Context } from '@deepseek-ai/cordis'
 import { expect, it, vi } from 'vitest'
 import { createHostApi } from '../../src/adapters/wechat/host-api.js'
 
+it('forwards scoped Session events from a sibling fiber while excluding foreign sessions', async () => {
+  const ctx = new Context()
+  ctx.provide('sessionController', {} as never); ctx.provide('workspaceRegistry', {} as never)
+  let api!: ReturnType<typeof createHostApi>
+  await ctx.plugin({ apply(inner: Context) { api = createHostApi(inner, id => id === 'owned') } })
+  const abort = new AbortController(), stream = api.events.mux({ rpcId: 'stream', payload: {} }, abort.signal)[Symbol.asyncIterator]()
+  try {
+    const next = stream.next(), carrier = { [Context.filter]: () => false }
+    ctx.emit(carrier as never, 'session/event', { id: 'foreign' } as never, { type: 'turn/end', seq: 0, data: {} } as never)
+    ctx.emit(carrier as never, 'session/event', { id: 'owned' } as never, { type: 'turn/end', seq: 1, data: {} } as never)
+    // An unscoped barrier makes a dropped scoped event fail immediately.
+    ctx.emit('session/event', { id: 'owned' } as never, { type: 'turn/end', seq: 2, data: {} } as never)
+    expect((await next).value).toMatchObject({ payload: { sessionId: 'owned', event: { seq: 1 } } })
+  } finally { abort.abort(); await stream.return?.(); await ctx.fiber.dispose() }
+})
+
 it('uses public controllers for prompt identity, workspace rename and event routing', async () => {
   const ctx = new Context(), active = new Set(['owned'])
   const prompt = vi.fn(async () => ({ accepted: true as const }))

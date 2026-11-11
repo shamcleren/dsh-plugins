@@ -1,4 +1,6 @@
 export const zh = {
+  workspaceName: '微信工作区名称', namePlaceholder: '例如：生活助手', saveName: '保存名称', discardName: '撤销',
+  workspaceNameHint: '显示为“微信 · 名称”。仅修改渠道默认工作区；手动选择的其他工作区及已有会话保留。留空恢复账号标识。',
   title: 'IM 工作台', intro: '一个入口，连接聊天应用与个人工作区。', platform: '聊天平台', wechat: '个人微信', wecom: '企业微信',
   reception: '消息接收', enabled: '已启用', disabled: '已停用', workspace: '默认工作区', defaultWorkspace: '使用渠道默认工作区',
   state_disabled: '已停用', state_waiting: '等待配置', state_starting: '正在连接', state_running: '运行中', state_failed: '连接异常',
@@ -14,6 +16,8 @@ export const zh = {
 } as const
 export type LocaleKey = keyof typeof zh
 export const en: Record<LocaleKey, string> = {
+  workspaceName: 'WeChat workspace name', namePlaceholder: 'For example: Personal assistant', saveName: 'Save name', discardName: 'Discard',
+  workspaceNameHint: 'Shown as “WeChat · name”. Applies to the channel default only; selected workspaces and existing sessions are preserved. Clear to use the account identifier.',
   title: 'IM workbench', intro: 'One place for your chats and personal workspaces.', platform: 'Messaging platform', wechat: 'WeChat', wecom: 'WeCom',
   reception: 'Receive messages', enabled: 'Enabled', disabled: 'Disabled', workspace: 'Default workspace', defaultWorkspace: 'Use the channel default',
   state_disabled: 'Disabled', state_waiting: 'Setup needed', state_starting: 'Connecting', state_running: 'Running', state_failed: 'Connection issue',

@@ -23,6 +23,7 @@ const FIELD_LABELS: Readonly<Record<string, LocaleKey>> = {
   agentPreset: 'agentPreset',
   thinkingText: 'thinkingText',
   turnTimeoutMs: 'timeout',
+  name: 'botName',
 }
 
 interface ValueFieldProps {
@@ -241,7 +242,7 @@ export function WeComCard(props: WeComCardProps) {
       {emptyBots ? <p style={styles.hint}>{t('emptyBots')}</p> : <>
       <section style={styles.section} aria-labelledby="wecom-section-connection">
         <h3 id="wecom-section-connection" style={styles.sectionHeading}>{t('sectionConnection')}</h3>
-        {state.multiBot ? valueField('name', 'wecom-bot-name', 'botName', 'botNameHint') : null}
+        {valueField('name', 'wecom-bot-name', 'botName', 'botNameHint')}
         <SecretField id="wecom-bot-id" label={t('botId')} hint={t('botIdHint')} state={state.botId} configured={state.botIdConfigured} configuredLabel={t('configured')} unconfiguredLabel={t('unconfigured')} disabled={!state.botIdWritable} onEdit={text => { props.edit('botId', text) }} />
         <SecretField id="wecom-secret" label={t('secret')} hint={t('secretHint')} state={state.secret} configured={state.secretConfigured} configuredLabel={t('configured')} unconfiguredLabel={t('unconfigured')} disabled={!state.secretWritable} onEdit={text => { props.edit('secret', text) }} />
         {state.credentialFailure === undefined ? null : (

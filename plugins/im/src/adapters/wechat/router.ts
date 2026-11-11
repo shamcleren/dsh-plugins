@@ -153,6 +153,8 @@ export class WeChatConversationRouter {
     this.agentPreset = next
   }
 
+  setDefaultWorkspace(workspace: HostWorkspace): void { this.runtime.defaultWorkspace = workspace }
+
   start(): void {
     if (this.muxTask !== undefined) return
     this.stopping = false

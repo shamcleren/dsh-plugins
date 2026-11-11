@@ -11,6 +11,7 @@ import type { LocaleKey as WeChatLocaleKey } from '../adapters/wechat/client/loc
 import type { LocaleKey as WeComLocaleKey } from '../adapters/wecom/client/locales.js'
 import type { IMAdapterView } from '../hub.js'
 import type { LocaleKey } from './locales.js'
+import { styles } from './forms.js'
 
 type Store<T> = { subscribe(listener: () => void): () => void; getSnapshot(): T }
 function useStore<T>(store: Store<T>): T { return useSyncExternalStore(listener => store.subscribe(listener), () => store.getSnapshot(), () => store.getSnapshot()) }
@@ -33,13 +34,15 @@ export function Panel(props: PanelProps) {
   const [workspaces, setWorkspaces] = useState<readonly { workspaceId: string; title: string; path: string }[]>([])
   const [workspaceFailed, setWorkspaceFailed] = useState(false), [statusFailed, setStatusFailed] = useState(false)
   const [error, setError] = useState(false), [saving, setSaving] = useState(false)
+  const [workspaceNameDraft, setWorkspaceNameDraft] = useState<string>()
   const mounted = useRef(true), pending = useRef(false), refreshing = useRef<Promise<void>>()
   const wechat = props.wechat.inject(), wecom = props.wecom.inject()
   const wechatState = useStore(wechat.hooks.weChatCard), wecomState = useStore(wecom.hooks.weComCard)
   const wechatForm = useStore(props.wechatForm), wecomForm = useStore(props.wecomForm)
   const scope = platform === 'wechat' ? props.wechatForm : props.wecomForm
   const snapshot = platform === 'wechat' ? wechatForm : wecomForm
-  const dirty = platform === 'wechat' ? wechatState.dirty : platform === 'wecom' ? wecomState.dirty : false
+  const nameDirty = workspaceNameDraft !== undefined && workspaceNameDraft !== (wechatForm.value?.workspaceName ?? '')
+  const dirty = platform === 'wechat' ? wechatState.dirty || nameDirty : platform === 'wecom' ? wecomState.dirty : false
   const selected = adapters.find(adapter => adapter.id === platform)
   const knownPlatform = platform === 'wechat' || platform === 'wecom'
   const enabled = knownPlatform ? snapshot.value?.connectionEnabled === true : selected?.enabled === true
@@ -94,6 +97,20 @@ export function Panel(props: PanelProps) {
     {selected?.lastFailure && <p className="imw-notice is-error" role="status">{t('recentFailure')} · {t(('error_' + selected.lastFailure.kind) as LocaleKey)} · {new Date(selected.lastFailure.at).toLocaleTimeString()}</p>}
     <div className="imw-capabilities" aria-label={t('capabilities')}>{selected?.capabilities.map(capability => <span key={capability}>{t(('cap_' + capability) as LocaleKey)}</span>)}</div>
     <p className="imw-guidance">{dirty ? t('switchingHint') : t('setupHint')}</p>
+    {platform === 'wechat' && <section style={{ ...styles.section, marginBottom: 16 }} aria-labelledby="imw-name-label">
+      <label id="imw-name-label" htmlFor="imw-name" style={styles.label}>{t('workspaceName')}</label>
+      <div className="imw-name-row"><input id="imw-name" style={styles.input} maxLength={80}
+        value={workspaceNameDraft ?? wechatForm.value?.workspaceName ?? ''} placeholder={t('namePlaceholder')}
+        disabled={!wechatForm.writable || busy} onChange={event => { setWorkspaceNameDraft(event.target.value); setError(false) }} />
+        <button style={styles.save} disabled={!nameDirty || !wechatForm.writable || busy} onClick={() => { void change(async () => {
+          const name = workspaceNameDraft?.trim() ?? ''
+          const saved = name === '' ? await props.wechatForm.unset('workspaceName') : await props.wechatForm.set('workspaceName', name)
+          if (saved && mounted.current) setWorkspaceNameDraft(undefined)
+          return saved
+        }) }}>{t('saveName')}</button>
+        <button style={styles.button} disabled={!nameDirty || busy} onClick={() => { setWorkspaceNameDraft(undefined); setError(false) }}>{t('discardName')}</button>
+      </div><p style={styles.hint}>{t('workspaceNameHint')}</p>
+    </section>}
     {platform === 'wechat' && <WeChatCard {...wechat} t={props.wechatT} useWeChatCard={<T,>(select: (state: WeChatCardState) => T) => select(useStore(wechat.hooks.weChatCard))} beginLogin={() => {
       if (enabled) wechat.beginLogin()
       else void change(async () => { if (!await props.wechatForm.set('connectionEnabled', true)) return false; wechat.beginLogin(); return true })

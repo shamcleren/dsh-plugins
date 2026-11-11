@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { HostApiProxy, HostWorkspace, RpcRequest } from './host-api.js'
 import { unwrap } from './host-api.js'
+import { nameManagedWorkspace } from '../../core/workspace-title.js'
 
 let requestSequence = 0
 
@@ -17,18 +18,12 @@ export async function ensureWeChatWorkspace(
   api: HostApiProxy,
   dshHome: string,
   title: string,
+  legacyTitles: readonly string[] = [],
 ): Promise<string> {
   const path = join(dshHome, 'workspaces', 'wechat')
   await mkdir(path, { recursive: true, mode: 0o700 })
   const created = unwrap(await api.workspace.create(request({ path })))
-  if (created.created && created.workspace.title !== title) {
-    const renamed = unwrap(await api.workspace.rename(request({
-      workspaceId: created.workspace.workspaceId,
-      title,
-    })))
-    return renamed.workspace.workspaceId
-  }
-  return created.workspace.workspaceId
+  return nameManagedWorkspace(api, dshHome, created, path, title, legacyTitles)
 }
 
 /** Resolve an explicit default Workspace or create the channel fallback. */
@@ -37,6 +32,7 @@ export async function resolveDefaultWorkspace(
   dshHome: string,
   workspaceId: string | undefined,
   fallbackTitle: string,
+  legacyTitles: readonly string[] = [],
 ): Promise<HostWorkspace> {
   if (workspaceId !== undefined) {
     const workspaces = unwrap(await api.workspace.list(request({}))).items
@@ -46,7 +42,7 @@ export async function resolveDefaultWorkspace(
     }
     return selected
   }
-  const fallbackId = await ensureWeChatWorkspace(api, dshHome, fallbackTitle)
+  const fallbackId = await ensureWeChatWorkspace(api, dshHome, fallbackTitle, legacyTitles)
   const workspaces = unwrap(await api.workspace.list(request({}))).items
   const fallback = workspaces.find(workspace => workspace.workspaceId === fallbackId)
   if (fallback === undefined) {

@@ -314,6 +314,8 @@ export class WeComConversationRouter {
     this.agentPreset = next
   }
 
+  setDefaultWorkspace(workspace: HostWorkspace): void { this.runtime.defaultWorkspace = workspace }
+
   /** Begin the one Host event stream shared by every WeCom conversation. */
   start(): void {
     if (this.muxTask !== undefined) return
