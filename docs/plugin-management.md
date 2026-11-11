@@ -106,4 +106,6 @@ dhp plugin install wecom-tools --source
 
 安装和卸载命令会通过 profile 中的 `.local-plugin.lock` 串行保护，遇到已有锁时拒绝执行。正常结束或失败会释放锁；异常退出遗留的锁需确认原进程已结束后再处理。失败时会恢复 profile manifest 和 lockfile，但不删除插件数据，也不承诺撤销已经产生的开发构建文件或所有依赖目录变动。
 
+`dhp update` 另外持有安装目录的 `.bootstrap.lock` 与数据目录的 `.dhp-install.lock`。`dhp stop` 负责停止 DSH；它不终止安装器。更新遇到这两个锁时，会核实私有普通文件及记录的 PID：只有进程明确不存在才备份旧锁并继续，备份名为原文件名加 `.stale-<PID>-<标识>`。活进程、无法确认的进程、空文件、异常内容或符号链接均保留，`dhp doctor` 可只读区分活进程与已退出的持有者。运行时和 profile 的事务记录仍按原恢复流程处理，不作为锁删除。
+
 明确退役的 `codex-controller` 不再发布或安装。`dhp update` 在可回滚的 profile 暂存事务内经官方 CLI 卸载旧包，保留配置、凭据与会话；也可以在退出 DSH 后执行 `dhp plugin remove codex-controller`。仅从 catalog 消失而没有退役声明的其他插件不会自动删除。

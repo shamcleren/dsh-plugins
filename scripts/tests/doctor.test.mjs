@@ -3,6 +3,8 @@ import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { doctor } from '../doctor.mjs'
 import { runDhp } from '../dhp.mjs'
 import { treeDigest } from '../installation-integrity.mjs'
@@ -55,4 +57,17 @@ test('doctor reports an uninitialized directory without claiming it', async t =>
   const missing = join(f.root, 'not-installed')
   assert.equal((await doctor({ ...f, directory: missing })).ok, false)
   await assert.rejects(readFile(join(missing, 'bootstrap-state.json')), { code: 'ENOENT' })
+})
+
+test('doctor distinguishes exited and live installer owners without changing either lock', async t => {
+  const f = await fixture(t), dead = spawn(process.execPath, ['-e', ''])
+  await once(dead, 'close')
+  const bootstrap = join(f.root, '.bootstrap.lock'), shared = join(f.home, '.dhp-install.lock')
+  await writeFile(bootstrap, dead.pid + '\n', { mode: 0o600 })
+  await writeFile(shared, process.pid + '\n', { mode: 0o600 })
+  const result = await doctor(f)
+  assert.match(result.checks.find(item => item.name === 'Installer lock').detail, /has exited.*dhp update/)
+  assert.match(result.checks.find(item => item.name === 'Shared-home lock').detail, /is running/)
+  assert.equal(await readFile(bootstrap, 'utf8'), dead.pid + '\n')
+  assert.equal(await readFile(shared, 'utf8'), process.pid + '\n')
 })

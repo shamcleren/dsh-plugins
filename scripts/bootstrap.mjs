@@ -1,7 +1,7 @@
 import { lockDshHome, checkCredentials, backupLegacySettings, prepareHomeProfile, publishHomeProfile, recoverHomeProfile, discardHomeProfile } from './home-compatibility.mjs'
 /** Install the locked official runtime with an optional verified Marketplace. */
 import { createHash, randomUUID } from 'node:crypto'
-import { cp, lstat, mkdir, open, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -9,6 +9,7 @@ import { run } from './process.mjs'
 import { publishUserDhp, writeDhpLauncher } from './dhp-command.mjs'
 import { assertInstallationIdle, installationDigests, readInstallationState, recoverInstallation, updateInstallation } from './update-installation.mjs'
 import { installationIntegrity, treeDigest } from './installation-integrity.mjs'
+import { acquireInstallerLock } from './installer-lock.mjs'
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)))
 const owner = 'shamcleren/dsh-plugin/bootstrap-v1'
@@ -123,15 +124,10 @@ export async function bootstrap({ directory, desktop, marketplace, dshHome, rebu
     if ((state.marketplaceSha256 != null) !== marketplace) throw new Error('Installation options differ; resume with the original options')
   }
   const lockPath = join(root, '.bootstrap.lock')
-  let lock
-  try { lock = await open(lockPath, 'wx', 0o600) } catch (error) {
-    if (error.code === 'EEXIST') throw new Error('Another installer holds .bootstrap.lock; do not remove it while that process runs')
-    throw error
-  }
+  const unlockBootstrap = await acquireInstallerLock(lockPath, { busy: 'Another installer holds .bootstrap.lock', log })
   let unlockHome, profileUpdate, committed = false
   try {
-    unlockHome = await lockDshHome(expected.dshHome)
-    await lock.writeFile(String(process.pid) + '\n')
+    unlockHome = await lockDshHome(expected.dshHome, { log })
     for (const name of ['runtime', 'home', 'agents', 'artifacts', 'bin', 'cache', 'apps', 'node']) {
       const stat = await exists(join(root, name))
       if (stat && (!stat.isDirectory() || stat.isSymbolicLink())) throw new Error('Unsafe installation path: ' + name)
@@ -217,7 +213,7 @@ export async function bootstrap({ directory, desktop, marketplace, dshHome, rebu
       await writeState(root, { ...expected, status: 'failed' })
       throw error
     }
-  } finally { await unlockHome?.(); await lock.close(); await unlink(lockPath) }
+  } finally { try { await unlockHome?.() } finally { await unlockBootstrap() } }
 }
 
 function shellQuote(value) {

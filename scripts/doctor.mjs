@@ -3,6 +3,7 @@ import { createServer } from 'node:net'
 import { lstat, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { releaseInfo } from './bootstrap.mjs'
+import { inspectInstallerLock } from './installer-lock.mjs'
 import { defaultDirectory, listOwnedProcesses, readNativeApp, repositoryRoot } from './installation.mjs'
 import { readInstallationState } from './update-installation.mjs'
 import { homeProfileUpdates, profilePeerIssues } from './home-compatibility.mjs'
@@ -32,7 +33,13 @@ export async function doctor({ directory = defaultDirectory(), repo = repository
   add('Data directory', true, home)
   for (const [label, path] of [['Installer lock', join(root, '.bootstrap.lock')], ['Runtime transaction', join(root, '.update-transaction.json')],
     ['Shared-home lock', join(home, '.dhp-install.lock')], ['Profile transaction', join(home, '.dhp-profile-update.json')]]) {
-    add(label, !(await optional(path)), (await optional(path)) ? 'Present; finish the owning operation before updating.' : 'clear')
+    const present = await optional(path)
+    const lock = present && path.endsWith('.lock') ? await inspectInstallerLock(path) : undefined
+    add(label, !present, !present ? 'clear' : lock?.status === 'dead'
+      ? 'Present; PID ' + lock.pid + ' has exited. The next dhp update can recover this lock.'
+      : lock?.status === 'alive' ? 'Present; PID ' + lock.pid + ' is running. Finish that operation before updating.'
+        : lock ? 'Present; ownership is unverified. Inspect the owning operation before updating.'
+          : 'Present; finish the owning operation before updating.')
   }
   const running = await listOwnedProcesses(root, inspect ? { inspect } : {})
   add('Processes', running.length === 0, running.length ? 'Exit this installation before updating (PID ' + running.map(p => p.pid).join(', ') + ').' : 'stopped')

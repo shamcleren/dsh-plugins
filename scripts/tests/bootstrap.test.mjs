@@ -8,6 +8,7 @@ import test from 'node:test'
 import { execFileSync, fork } from 'node:child_process'
 import { bootstrap, parseArgs, releaseInfo } from '../bootstrap.mjs'
 import { run } from '../process.mjs'
+import { lockDshHome } from '../home-lock.mjs'
 
 const repo = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
 async function fixture(t) {
@@ -204,6 +205,14 @@ test('overlapping installers use an exclusive lock', async t => {
   finally { release(); await first }
 })
 
+test('failure to acquire the shared home releases the installation lock', async t => {
+  const options = await fixture(t), releaseHome = await lockDshHome(options.dshHome)
+  try { await assert.rejects(bootstrap({ ...options, execute: fakeInstall }), /Another installer/) }
+  finally { await releaseHome() }
+  await assert.rejects(readFile(join(options.directory, '.bootstrap.lock')), { code: 'ENOENT' })
+  await bootstrap({ ...options, execute: fakeInstall })
+})
+
 for (const marketplace of [false, true]) test(`macOS initialization builds a reusable app (marketplace=${marketplace})`, async t => {
   const options = { ...await fixture(t), desktop: true, marketplace }
   const calls = []
@@ -263,4 +272,20 @@ test('a separate installer process cannot mutate a locked installation', async t
     clearTimeout(timeout)
     assert.deepEqual(result, { code: 0, signal: null })
   }
+})
+
+test('a killed installer leaves both PID locks recoverable by the next real bootstrap', async t => {
+  const options = await fixture(t), logs = []
+  const child = fork(fileURLToPath(new URL('./bootstrap-lock.fixture.mjs', import.meta.url)), [options.directory, repo, options.dshHome], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })
+  const exited = new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', resolve) })
+  const timeout = setTimeout(() => child.kill('SIGKILL'), 15000)
+  try {
+    await Promise.race([new Promise(resolve => child.once('message', resolve)), exited.then(() => { throw new Error('Fixture exited before locking') })])
+    child.kill('SIGKILL'); await exited
+    for (const path of [join(options.directory, '.bootstrap.lock'), join(options.dshHome, '.dhp-install.lock')]) assert.equal(await readFile(path, 'utf8'), child.pid + '\n')
+    await bootstrap({ ...options, execute: fakeInstall, log: line => logs.push(line) })
+    assert.equal(JSON.parse(await readFile(join(options.directory, 'bootstrap-state.json'))).status, 'ready')
+    assert.equal(logs.filter(line => line.startsWith('Recovered stale ')).length, 2)
+    for (const path of [join(options.directory, '.bootstrap.lock'), join(options.dshHome, '.dhp-install.lock')]) await assert.rejects(readFile(path), { code: 'ENOENT' })
+  } finally { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await exited; clearTimeout(timeout) }
 })
