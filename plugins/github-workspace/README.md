@@ -80,4 +80,6 @@ pnpm --filter @shamcleren/dsh-github-workspace build
 
 回归测试用临时本地 bare 仓库替代网络传输，执行真实 Git 克隆、审阅、提交、推送和拉取，覆盖空仓库、暂存区保留、过期预览、敏感路径、锁、远端分叉、组织分页、后台取消、自动同步暂停、认证 RPC 和退出清理。浏览器验收使用隔离演示数据，检查组织选择、仓库搜索、后台任务期间的交互、取消、差异预览以及窄窗口和深色主题。这些检查不代替真实 GitHub 账号与组织授权验收。
 
+布局回归须将 catalog 发布包安装到隔离的官方 Web profile，在 **插件 → 已安装插件 → GitHub Workspace** 中检查。分别以 1280、627、390 像素窗口验证面板填满配置区（上限 1180 像素）、仓库选择自动换行，以及展开本地密钥和高级设置后输入框仍处于卡片内。宿主配置插槽中的 flex 布局与面板的 inline-size containment 共同决定宽度，独立预览须补充此集成检查。
+
 交互参考：[GitHub Desktop](https://docs.github.com/en/desktop/adding-and-cloning-repositories/cloning-and-forking-repositories-from-github-desktop) 的仓库选择、[Obsidian Git](https://github.com/Vinzent03/obsidian-git) 的按间隔自动同步，以及 DSH 社区的 [dsh-worktree](https://github.com/Eleven-is-cool/dsh-worktree) 和 [dsh-git-graph](https://github.com/WhitePlusMS/dsh-git-graph)。参考交互与功能边界，没有引入这些插件的运行时或源码依赖；它们与本项目锁定 DSH 的兼容性需要单独验证。
