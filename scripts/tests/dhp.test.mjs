@@ -25,7 +25,7 @@ test('Make exposes only init and help, with daily commands documented as dhp', (
     cwd: repository, encoding: 'utf8', timeout: 5000,
   })
   assert.equal(help.status, 0, help.stderr)
-  assert.match(help.stdout, /^ {2}dhp plugin install wechat$/m)
+  assert.match(help.stdout, /^ {2}dhp plugin install im$/m)
   const removed = spawnSync('/usr/bin/make', ['plugin-install'], {
     cwd: repository, encoding: 'utf8', timeout: 5000,
   })

@@ -13,6 +13,7 @@ import { verifyProfilePeers } from './home-compatibility.mjs'
 import { releaseArtifact } from './plugins.mjs'
 import { releaseInfo } from './bootstrap.mjs'
 import { smokeTarget } from './smoke-target.mjs'
+import { installedRetirements } from './retired-plugins.mjs'
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const update = process.argv.includes('--update')
@@ -103,19 +104,42 @@ try {
     const settings = '# Isolated update fixture: preserve user configuration.\nagent-presets:\n  default: dsh-security-audit\n'
     await writeFile(join(home, 'settings.yaml'), settings)
     const before = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'))
+    const legacyWechat = Object.hasOwn(before.dependencies, '@shamcleren/dsh-wechat')
+    const legacyWecom = Object.hasOwn(before.dependencies, '@shamcleren/dsh-wecom-aibot')
+    const yaml = createRequire(join(runtime, 'package.json'))('yaml')
+    if (legacyWechat || legacyWecom) {
+      const patchPath = join(profile, 'cordis.patch.yml')
+      const patch = yaml.parseDocument(await readFile(patchPath, 'utf8').catch(error => { if (error.code === 'ENOENT') return '[]'; throw error }))
+      if (!yaml.isSeq(patch.contents)) throw new Error('Invalid fixture profile')
+      if (legacyWechat) patch.contents.add(patch.createNode({ id: 'wechat', config: { enabled: false, agentPreset: 'standard' } }))
+      if (legacyWecom) patch.contents.add(patch.createNode({ id: 'wecom-aibot', disabled: true, config: { adminUsers: ['fixture-owner'], secretEnv: 'FIXTURE_UNCONFIGURED_SECRET' } }))
+      await writeFile(patchPath, patch.toString())
+      await mkdir(join(home, 'channels/wechat'), { recursive: true })
+      await writeFile(join(home, 'channels/wechat/migration-fixture.txt'), 'owned fixture data retained\n', { mode: 0o600 })
+    }
     await command([join(repo, 'scripts/dhp.mjs'), '--dir', installation, 'update'])
     const after = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'))
     assert.ok(before.dependencies['@shamcleren/dsh-codex-controller'])
     assert.equal(after.dependencies['@shamcleren/dsh-codex-controller'], undefined)
-    assert.deepEqual(Object.keys(after.dependencies).sort(), Object.keys(before.dependencies).filter(name => name !== '@shamcleren/dsh-codex-controller').sort())
-    const retained = catalog.plugins.filter(entry => Object.hasOwn(before.dependencies, entry.package))
-    const introduced = catalog.plugins.filter(entry => !Object.hasOwn(before.dependencies, entry.package))
+    const retirements = installedRetirements(before)
+    const retained = catalog.plugins.filter(entry => Object.hasOwn(before.dependencies, entry.package) || retirements.some(retired => retired.replacement === entry.id))
+    const introduced = catalog.plugins.filter(entry => !retained.includes(entry))
+    assert.deepEqual(Object.keys(after.dependencies).sort(), [...new Set([...Object.keys(before.dependencies).filter(name => !retirements.some(retired => retired.package === name)), ...retained.map(entry => entry.package)])].sort())
     for (const entry of retained) {
       const installed = JSON.parse(await readFile(join(profile, 'node_modules', entry.package, 'package.json'), 'utf8'))
       assert.equal(installed.version, entry.version, entry.id + ': dhp update installed release')
     }
     assert.equal(await readFile(join(home, 'settings.yaml'), 'utf8'), settings)
     assert.match(await readFile(join(profile, 'cordis.patch.yml'), 'utf8'), /selectedDefault: dsh-security-audit/)
+    if (legacyWechat || legacyWecom) {
+      const rows = yaml.parse(await readFile(join(profile, 'cordis.patch.yml'), 'utf8'))
+      if (legacyWechat) { const row = rows.find(row => row.id === 'wechat'); assert.equal(row.config.connectionEnabled, true); assert.equal(row.config.enabled, false); assert.equal(row.config.agentPreset, 'standard') }
+      if (legacyWecom) { const row = rows.find(row => row.id === 'wecom-aibot'); assert.equal(row.config.connectionEnabled, false); assert.equal(row.disabled, undefined); assert.deepEqual(row.config.adminUsers, ['fixture-owner']); assert.equal(row.config.secretEnv, 'FIXTURE_UNCONFIGURED_SECRET') }
+      assert.equal(await readFile(join(home, 'channels/wechat/migration-fixture.txt'), 'utf8'), 'owned fixture data retained\n')
+      const bundles = after.dsh.profile.bundles
+      assert.ok(bundles.indexOf('@shamcleren/dsh-im') < bundles.indexOf('@deepseek-ai/dsh-web-app'), 'replacement preserves catalog placement')
+      console.log('Legacy IM: channel settings, enable intent, credential references and data preserved')
+    }
     const again = await command([join(repo, 'scripts/dhp.mjs'), '--dir', installation, 'update'])
     assert.match(again, /Already up to date/)
     for (const entry of introduced) assert.equal(after.dependencies[entry.package], undefined, entry.id + ': update must not install new optional plugins')
@@ -236,6 +260,20 @@ ${startupOnly ? '' : `    - id: upgrade-probe
     const crossOrigin = await fetch(endpoint, { method: 'POST', headers: { cookie, origin: 'https://external.invalid', 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(5000) })
     assert.equal(crossOrigin.status, 403)
     console.log('GitHub Workspace packaged Host: authenticated RPC passed, anonymous and foreign-origin requests rejected; no live account used')
+  }
+  if (catalog.plugins.some(entry => entry.id === 'im')) {
+    const endpoint = `http://127.0.0.1:${port}/im/state`
+    const body = JSON.stringify({ type: 'client-request', rpcId: 'im-smoke', method: 'state', payload: {} })
+    const headers = { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' }
+    assert.equal((await fetch(endpoint, { method: 'POST', body, headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(5000) })).status, 401)
+    assert.equal((await fetch(endpoint, { method: 'POST', body, headers: { ...headers, origin: 'https://external.invalid' }, signal: AbortSignal.timeout(5000) })).status, 403)
+    const response = await fetch(endpoint, { method: 'POST', body, headers, signal: AbortSignal.timeout(5000) })
+    assert.equal(response.status, 200)
+    const result = (await response.json()).result
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.value.map(adapter => adapter.id).sort(), ['wechat', 'wecom'])
+    assert.ok(result.value.every(adapter => adapter.accounts === 0 && ['disabled', 'waiting'].includes(adapter.status)), 'isolated IM adapters must not access any live account')
+    console.log('Unified IM packaged Host: both adapters registered; authenticated RPC passed, anonymous and foreign-origin requests rejected')
   }
   if (startupOnly) {
     const response = await fetch(`http://127.0.0.1:${port}/security-scan/state`, { method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: 'startup', method: 'state', payload: {} }), signal: AbortSignal.timeout(5000) })

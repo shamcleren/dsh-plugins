@@ -32,7 +32,7 @@ Linux 安装后使用 `./dist/bin/dsh` 启动 Web 版。首次打开 DSH，按�
 ./dhp status                          # 查看运行状态、DSH/App 版本和待更新项
 ./dhp doctor                          # 只读检查安装、升级兼容性、端口与备份
 ./dhp plugin install security-scan    # 安装或更新安全扫描
-./dhp plugin install wechat           # 安装或更新微信插件
+./dhp plugin install im               # 统一接入微信与企业微信
 ./dhp plugin install web-search       # 免费联网搜索，无需 API Key
 ./dhp plugin update --all             # 更新所有已安装的本仓库插件
 ./dhp restart                        # 启动 DSH
@@ -47,8 +47,7 @@ Linux 安装后使用 `./dist/bin/dsh` 启动 Web 版。首次打开 DSH，按�
 | `github-workspace` | [自动准备 GitHub CLI，按组织接入仓库，解锁 git-crypt 并按项目同步](plugins/github-workspace/README.md) |
 | `desktop-share` | [macOS 分享与微信转发文件导入草稿](plugins/desktop-share/README.md) |
 | `dsh-pet` | [macOS 桌面悬浮宠物与任务状态卡](plugins/dsh-pet/README.md) |
-| `wechat` | [扫码绑定个人微信，接收对话与跨会话、定时任务主动通知](plugins/wechat/README.md) |
-| `wecom-aibot` | [企业微信机器人](plugins/wecom-aibot/README.md) |
+| `im` | [统一管理微信与企业微信、工作区、对话、审批和消息通知](plugins/im/README.md) |
 | `wecom-tools` | [企业微信办公工具](plugins/wecom-tools/README.md) |
 | `marketplace` | [Git 仓库市场](plugins/marketplace/README.md) |
 

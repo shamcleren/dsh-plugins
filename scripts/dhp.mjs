@@ -31,8 +31,8 @@ Commands:
   help
 
 Examples:
-  dhp plugin install wechat
-  dhp plugin install wechat --source
+  dhp plugin install im
+  dhp plugin install im --source
   dhp plugin update --all
   dhp plugin exec security-scan -- scan --target /absolute/path/project
   dhp --dir /path/dsh-plugins plugin list

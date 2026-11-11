@@ -4,8 +4,9 @@ import { cp, lstat, mkdir, open, readFile, readdir, readlink, rename, rm, symlin
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { releaseArtifact } from './plugins.mjs'
+import { releaseArtifact, placeBundle } from './plugins.mjs'
 import { installedRetirements } from './retired-plugins.mjs'
+import { captureLegacyIm, applyLegacyIm } from './im-migration.mjs'
 
 const journalName = '.dhp-profile-update.json'
 const owner = 'dhp-profile-update-v1'
@@ -218,7 +219,7 @@ export async function homeProfileUpdates({ home, repo, release }) {
     let current
     try { current = (await json(join(profile, 'node_modules', entry.package, 'package.json'))).version }
     catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error }
-    return { id: entry.id, current: current ?? 'missing/unknown', target: entry.version ?? 'removed (retired)',
+    return { id: entry.id, current: current ?? 'missing/unknown', target: entry.replacement ? 'replaced by ' + entry.replacement : entry.version ?? 'removed (retired)',
       source: linksRepositorySource(profile, manifest.dependencies[entry.package], repo) }
   }))
 }
@@ -232,10 +233,14 @@ function linksRepositorySource(profile, spec, repo) {
 
 async function catalogReplacements(profile, manifest, repo, release, marketplace) {
   const catalog = await json(join(repo, 'marketplace.json'))
+  for (const retired of installedRetirements(manifest)) {
+    if (retired.replacement && !catalog.plugins.some(entry => entry.id === retired.replacement)) throw new Error('Missing catalog replacement for ' + retired.id)
+  }
   const entries = []
   for (const entry of catalog.plugins) {
     const installed = manifest?.dependencies?.[entry.package]
-    if (!installed && !(marketplace && entry.id === 'trusted-marketplace')) continue
+    const replacement = installedRetirements(manifest).some(retired => retired.replacement === entry.id)
+    if (!installed && !replacement && !(marketplace && entry.id === 'trusted-marketplace')) continue
     if (entry.dshVersion !== release.dshVersion) throw new Error('Catalog runtime does not match ' + entry.package)
     if (linksRepositorySource(profile, installed, repo)) { entries.push(entry); continue }
     let current
@@ -310,11 +315,17 @@ export async function prepareHomeProfile({ root, home, repo, runtime, release, n
     log('Preparing compatible plugins: ' + replacements.map(item => item.entry.id).join(', '))
     const buildEnv = { ...env, DSH_HOME: stagingHome, PATH: dirname(nodeExecutable) + ':' + join(runtime, 'node_modules/.bin') + ':' + env.PATH }
     const cli = join(runtime, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
+    // Compose legacy migrations before the CLI edits and IM replacement; a
+    // later whole-document write would restore retired rows and lose IM flags.
+    if (presetPatch !== undefined) await writeFile(join(stagedProfile, 'cordis.patch.yml'), presetPatch, { mode: 0o600 })
+    const legacyIm = await captureLegacyIm(stagedProfile, manifest, runtime)
     if (retirements.length) {
       log('Removing retired repository plugins (data retained): ' + retirements.map(entry => entry.id).join(', '))
       await execute(nodeExecutable, [cli, 'plugin', '--profile', 'web', '--config.ignore-scripts=true', 'remove', ...retirements.map(entry => entry.package)], { cwd: runtime, env: buildEnv })
     }
     if (artifacts.length || retainedLinks.length) await execute(nodeExecutable, [cli, 'plugin', '--profile', 'web', '--config.ignore-scripts=true', 'add', ...artifacts, ...retainedLinks.map(({ name, target }) => name + '@link:' + target), '--save-exact'], { cwd: runtime, env: buildEnv })
+    for (const { entry } of replacements) if (!Object.hasOwn(manifest?.dependencies ?? {}, entry.package)) await placeBundle(join(stagedProfile, 'package.json'), entry)
+    await applyLegacyIm(stagedProfile, legacyIm, runtime)
     // Explicit add refreshes pnpm's relative lock entry for staging. Absolute
     // links remain valid when this staged profile is published at its final path.
     for (const { name, target } of retainedLinks) {
@@ -334,7 +345,6 @@ export async function prepareHomeProfile({ root, home, repo, runtime, release, n
       bundles.splice(bundles.indexOf('@deepseek-ai/dsh-web-app') + (entry.placement === 'after-web-app' ? 1 : 0), 0, entry.package)
     }
     await writeFile(join(stagedProfile, 'package.json'), JSON.stringify(next, null, 2) + '\n')
-    if (presetPatch !== undefined) await writeFile(join(stagedProfile, 'cordis.patch.yml'), presetPatch, { mode: 0o600 })
     await execute(nodeExecutable, [cli, '--profile', 'web', '--dump-config'], { cwd: runtime, env: buildEnv, stdio: ['ignore', 'ignore', 'inherit'] })
     await stabilizeProfileLock(stagedProfile, runtime)
     return { root, home, stageName, runtimeDigest: release.runtimeDigest, existed: !!manifest, before }

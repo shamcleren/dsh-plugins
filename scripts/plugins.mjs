@@ -13,6 +13,7 @@ const repository = repositoryRoot
 const capture = promisify(execFile)
 const packagePattern = /^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
+const installedRetirementsForIm = manifest => retiredPlugins.filter(entry => entry.replacement === 'im' && Object.hasOwn(manifest?.dependencies ?? {}, entry.package))
 
 async function optionalFile(path) {
   try {
@@ -44,7 +45,8 @@ async function readCatalog(repo) {
 
 async function catalogEntry(repo, name, allowRetired = false) {
   const plugins = [...await readCatalog(repo), ...(allowRetired ? retiredPlugins : [])]
-  const id = name === 'marketplace' ? 'trusted-marketplace' : name
+  const legacyIm = ['wechat', 'wecom-aibot', '@shamcleren/dsh-wechat', '@shamcleren/dsh-wecom-aibot'].includes(name)
+  const id = name === 'marketplace' ? 'trusted-marketplace' : legacyIm && !allowRetired ? 'im' : name
   const entries = plugins.filter(entry => entry.id === id || entry.package === id)
   if (entries.length !== 1) throw new Error('Choose a plugin name. Available: ' + plugins.map(entry => entry.id === 'trusted-marketplace' ? 'marketplace' : entry.id).join(', '))
   const entry = entries[0]
@@ -84,7 +86,7 @@ async function listPlugins(repo, profile, log) {
     log(pluginName(entry).padEnd(18) + ' ' + status + '  ' + (installed ?? '-') + ' / ' + entry.version)
   }
   for (const entry of retiredPlugins) if (Object.hasOwn(dependencies, entry.package)) {
-    log(entry.id.padEnd(18) + ' 已退役；dhp update 将卸载（保留会话与配置）')
+    log(entry.id.padEnd(18) + (entry.replacement ? ' 将合并到 ' + entry.replacement + '；dhp update 保留账号、会话与配置' : ' 已退役；dhp update 将卸载（保留会话与配置）'))
   }
 }
 
@@ -131,7 +133,7 @@ async function validateBuiltSource({ path, manifest }) {
   }
 }
 
-async function placeBundle(manifestPath, entry) {
+export async function placeBundle(manifestPath, entry) {
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
   const bundles = manifest.dsh?.profile?.bundles
   if (!Array.isArray(bundles) || !bundles.every(item => typeof item === 'string')) throw new Error('Invalid profile bundle list')
@@ -159,6 +161,16 @@ export async function managePlugin({ action, plugin, source = false, repo = repo
     return
   }
   const entry = await catalogEntry(repo, plugin, action === 'remove')
+  if (action === 'install' && entry.id === 'im') {
+    const installed = await optionalFile(manifestPath)
+    const legacy = installedRetirementsForIm(installed ? JSON.parse(installed) : undefined)
+    if (legacy.length) {
+      if (source) throw new Error('Use dhp update to consolidate legacy IM plugins with a verified catalog release')
+      log('Combining legacy IM plugins through the transactional dhp update; existing channel settings are retained.')
+      await execute(process.execPath, [join(repo, 'scripts/dhp.mjs'), '--dir', root, 'update'], { cwd: repo, env })
+      return
+    }
+  }
   let bytes, sourcePackage
   if (action === 'install') {
     const runtime = JSON.parse(await readFile(join(root, 'runtime/node_modules/@deepseek-ai/dsh/package.json'), 'utf8'))
@@ -215,6 +227,12 @@ export async function managePlugin({ action, plugin, source = false, repo = repo
 export async function updateInstalledPlugins({ source = false, repo = repository, directory = defaultDirectory(repo), execute = run, log = console.log }) {
   const installation = await readInstallation(directory, repo)
   log('DSH profile: ' + installation.profile)
+  const installed = await optionalFile(join(installation.profile, 'package.json'))
+  if (installedRetirementsForIm(installed ? JSON.parse(installed) : undefined).length) {
+    if (source) throw new Error('Use dhp update to consolidate legacy IM plugins with a verified catalog release')
+    await execute(process.execPath, [join(repo, 'scripts/dhp.mjs'), '--dir', installation.root, 'update'], { cwd: repo, env: { ...process.env, DSH_HOME: installation.dshHome } })
+    return
+  }
   const declared = await declaredCatalogEntries(repo, installation.profile)
   if (declared.length === 0) {
     log('No catalog plugins are installed.')

@@ -1,0 +1,343 @@
+/** Self-contained WeCom settings card contributed through `plugins.bundle.config`. */
+
+import type { FieldState } from './form.js'
+import type { PresetOption, WeComCardFace, WeComCardState, WorkspaceOption } from './controller.js'
+import type { LocaleKey } from './locales.js'
+import { styles } from './styles.js'
+import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
+
+export type WeComCardProps = Omit<WeComCardFace, 'hooks'> & {
+  embedded?: boolean
+  t(key: LocaleKey): string
+  useWeComCard<T>(select: (state: WeComCardState) => T): T
+}
+
+/** Field labels used when naming exactly which writes a deployment refused. */
+const FIELD_LABELS: Readonly<Record<string, LocaleKey>> = {
+  botId: 'botId',
+  secret: 'secret',
+  allowedUsers: 'allowedUsers',
+  adminUsers: 'adminUsers',
+  workspaceId: 'workspace',
+  preventIdleSleep: 'preventIdleSleep',
+  agentPreset: 'agentPreset',
+  thinkingText: 'thinkingText',
+  turnTimeoutMs: 'timeout',
+}
+
+interface ValueFieldProps {
+  id: string
+  label: string
+  hint: string
+  state: FieldState
+  disabled: boolean
+  numeric?: boolean
+  invalidLabel: string
+  overriddenLabel: string
+  resetLabel: string
+  onEdit(text: string): void
+  onReset(): void
+}
+
+function ValueField(props: ValueFieldProps) {
+  return (
+    <div style={styles.field}>
+      <div style={styles.fieldHead}>
+        <label htmlFor={props.id} style={styles.label}>{props.label}</label>
+        {props.state.overridden
+          ? <><span style={styles.badge}>{props.overriddenLabel}</span><button type="button" style={styles.reset} disabled={props.disabled} onClick={props.onReset}>{props.resetLabel}</button></>
+          : null}
+      </div>
+      <input
+        id={props.id}
+        type="text"
+        style={{ ...styles.input, ...(props.state.invalid ? { borderColor: 'var(--dsw-alias-label-error)' } : {}) }}
+        value={props.state.text}
+        disabled={props.disabled}
+        {...props.numeric === true ? { inputMode: 'numeric' as const } : {}}
+        {...props.state.invalid ? { 'aria-invalid': true } : {}}
+        onChange={event => { props.onEdit(event.target.value) }}
+      />
+      <p style={props.state.invalid ? styles.error : styles.hint}>
+        {props.state.invalid ? props.invalidLabel : props.hint}
+      </p>
+    </div>
+  )
+}
+
+function SecretField(props: {
+  id: string
+  label: string
+  hint: string
+  state: FieldState
+  configured: boolean
+  configuredLabel: string
+  unconfiguredLabel: string
+  disabled: boolean
+  onEdit(text: string): void
+}) {
+  return (
+    <div style={styles.field}>
+      <div style={styles.fieldHead}>
+        <label htmlFor={props.id} style={styles.label}>{props.label}</label>
+        <span style={props.configured ? styles.badge : styles.mutedBadge}>
+          {props.configured ? props.configuredLabel : props.unconfiguredLabel}
+        </span>
+      </div>
+      <input
+        id={props.id}
+        type="password"
+        autoComplete="off"
+        style={styles.input}
+        value={props.state.text}
+        disabled={props.disabled}
+        onChange={event => { props.onEdit(event.target.value) }}
+      />
+      <p style={styles.hint}>{props.hint}</p>
+    </div>
+  )
+}
+
+function PresetField(props: {
+  state: FieldState
+  options: readonly PresetOption[]
+  loading: boolean
+  failed: boolean
+  disabled: boolean
+  label: string
+  hint: string
+  inheritLabel: string
+  loadingLabel: string
+  failedLabel: string
+  missingLabel: string
+  unavailableLabel: string
+  overriddenLabel: string
+  resetLabel: string
+  onEdit(value: string): void
+  onReset(): void
+}) {
+  const selectedExists = props.state.text === ''
+    || props.options.some(option => option.id === props.state.text)
+  return (
+    <div style={styles.field}>
+      <div style={styles.fieldHead}>
+        <label htmlFor="wecom-agent-preset" style={styles.label}>{props.label}</label>
+        {props.state.overridden
+          ? <><span style={styles.badge}>{props.overriddenLabel}</span><button type="button" style={styles.reset} disabled={props.disabled} onClick={props.onReset}>{props.resetLabel}</button></>
+          : null}
+      </div>
+      <select
+        id="wecom-agent-preset"
+        style={styles.select}
+        value={props.state.text}
+        disabled={props.disabled || props.loading || props.failed}
+        onChange={event => { props.onEdit(event.target.value) }}
+      >
+        <option value="">{props.loading
+          ? props.loadingLabel
+          : props.failed ? props.failedLabel : props.inheritLabel}</option>
+        {!selectedExists ? <option value={props.state.text}>{props.missingLabel}</option> : null}
+        {props.options.map(option => (
+          <option key={option.id} value={option.id} disabled={option.broken !== undefined}>
+            {option.name === undefined ? option.id : `${option.id}（${option.name}）`}
+            {option.broken === undefined ? '' : ` [${props.unavailableLabel}: ${option.broken}]`}
+          </option>
+        ))}
+      </select>
+      <p style={styles.hint}>{props.failed ? props.failedLabel : props.hint}</p>
+    </div>
+  )
+}
+
+function WorkspaceField(props: {
+  state: FieldState
+  options: readonly WorkspaceOption[]
+  loading: boolean
+  failed: boolean
+  disabled: boolean
+  label: string
+  hint: string
+  defaultLabel: string
+  loadingLabel: string
+  failedLabel: string
+  missingLabel: string
+  overriddenLabel: string
+  resetLabel: string
+  onEdit(value: string): void
+  onReset(): void
+}) {
+  const selectedExists = props.state.text === ''
+    || props.options.some(option => option.id === props.state.text)
+  return (
+    <div style={styles.field}>
+      <div style={styles.fieldHead}>
+        <label htmlFor="wecom-workspace" style={styles.label}>{props.label}</label>
+        {props.state.overridden
+          ? <><span style={styles.badge}>{props.overriddenLabel}</span><button type="button" style={styles.reset} disabled={props.disabled} onClick={props.onReset}>{props.resetLabel}</button></>
+          : null}
+      </div>
+      <select
+        id="wecom-workspace"
+        style={styles.select}
+        value={props.state.text}
+        disabled={props.disabled || props.loading}
+        onChange={event => { props.onEdit(event.target.value) }}
+      >
+        <option value="">{props.loading
+          ? props.loadingLabel
+          : props.failed ? props.failedLabel : props.defaultLabel}</option>
+        {!selectedExists ? <option value={props.state.text}>{props.missingLabel}</option> : null}
+        {props.options.map(option => (
+          <option key={option.id} value={option.id}>{option.title} — {option.path}</option>
+        ))}
+      </select>
+      <p style={styles.hint}>{props.hint}</p>
+    </div>
+  )
+}
+
+/** Render the WeCom configuration contribution. */
+export function WeComCard(props: WeComCardProps) {
+  const state = props.useWeComCard(snapshot => snapshot)
+  const t = (key: LocaleKey): string => props.t(key)
+  const disabled = !state.writable
+  const emptyBots = state.multiBot && state.bots.length === 0
+  const valueField = (
+    field: 'allowedUsers' | 'adminUsers' | 'thinkingText' | 'turnTimeoutMs' | 'model' | 'name',
+    id: string,
+    label: LocaleKey,
+    hint: LocaleKey,
+    numeric = false,
+  ) => (
+    <ValueField
+      id={id}
+      label={t(label)}
+      hint={t(hint)}
+      state={state[field]}
+      disabled={disabled}
+      numeric={numeric}
+      invalidLabel={t('invalid')}
+      overriddenLabel={t('overridden')}
+      resetLabel={t('reset')}
+      onEdit={text => { props.edit(field, text) }}
+      onReset={() => { props.resetField(field) }}
+    />
+  )
+  return (
+    <div style={styles.form} aria-label={t('title')}>
+      <section style={styles.section} aria-label={t('bots')}>
+        <h3 style={styles.sectionHeading}>{t('bots')}</h3>
+        <div style={styles.footer}>
+          {state.multiBot ? <select aria-label={t('bots')} style={styles.select} value={state.selectedBotId} disabled={emptyBots || state.dirty || state.saving} onChange={event => props.selectBot(event.target.value)}>
+            {!state.bots.some(bot => bot.id === state.selectedBotId) && state.selectedBotId !== '' ? <option value={state.selectedBotId}>{t('botMissing')}</option> : null}
+            {state.bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name ?? bot.id}</option>)}
+          </select> : <span style={styles.hint}>{t('legacyBot')}</span>}
+          <button type="button" style={styles.button} disabled={state.dirty || state.saving || !state.rosterWritable} onClick={props.addBot}>{t('addBot')}</button>
+          {state.multiBot && state.bots.length > 0 ? <button type="button" style={styles.button} disabled={state.dirty || state.saving || !state.writable} onClick={props.removeBot}>{t('removeBot')}</button> : null}
+        </div>
+        <p style={styles.hint}>{t('botsHint')}</p>
+      </section>
+      {!state.rosterWritable ? <p style={styles.hint}>{t('readOnly')}</p> : null}
+      {emptyBots ? <p style={styles.hint}>{t('emptyBots')}</p> : <>
+      <section style={styles.section} aria-labelledby="wecom-section-connection">
+        <h3 id="wecom-section-connection" style={styles.sectionHeading}>{t('sectionConnection')}</h3>
+        {state.multiBot ? valueField('name', 'wecom-bot-name', 'botName', 'botNameHint') : null}
+        <SecretField id="wecom-bot-id" label={t('botId')} hint={t('botIdHint')} state={state.botId} configured={state.botIdConfigured} configuredLabel={t('configured')} unconfiguredLabel={t('unconfigured')} disabled={!state.botIdWritable} onEdit={text => { props.edit('botId', text) }} />
+        <SecretField id="wecom-secret" label={t('secret')} hint={t('secretHint')} state={state.secret} configured={state.secretConfigured} configuredLabel={t('configured')} unconfiguredLabel={t('unconfigured')} disabled={!state.secretWritable} onEdit={text => { props.edit('secret', text) }} />
+        {state.credentialFailure === undefined ? null : (
+          <p style={styles.error}>
+            {t(state.credentialFailure.message === undefined ? 'credentialUnconfirmed' : 'credentialRejected')}
+            {` (${state.credentialFailure.ref})`}
+            {state.credentialFailure.message === undefined ? '' : `: ${state.credentialFailure.message}`}
+          </p>
+        )}
+      </section>
+      <section style={styles.section} aria-labelledby="wecom-section-access">
+        <h3 id="wecom-section-access" style={styles.sectionHeading}>{t('sectionAccess')}</h3>
+        {valueField('allowedUsers', 'wecom-users', 'allowedUsers', 'allowedUsersHint')}
+        {valueField('adminUsers', 'wecom-admin-users', 'adminUsers', 'adminUsersHint')}
+        <p style={styles.hint}>{t('useridHint')}</p>
+      </section>
+      {!props.embedded && <section style={styles.section} aria-labelledby="wecom-section-conversation">
+        <h3 id="wecom-section-conversation" style={styles.sectionHeading}>{t('sectionConversation')}</h3>
+        <WorkspaceField
+          state={state.workspaceId}
+          options={state.workspaceOptions}
+          loading={state.workspacesLoading}
+          failed={state.workspacesFailed}
+          disabled={disabled}
+          label={t('workspace')}
+          hint={t('workspaceHint')}
+          defaultLabel={t('workspaceDefault')}
+          loadingLabel={t('workspaceLoading')}
+          failedLabel={t('workspaceLoadFailed')}
+          missingLabel={t('workspaceMissing')}
+          overriddenLabel={t('overridden')}
+          resetLabel={t('reset')}
+          onEdit={value => { props.edit('workspaceId', value) }}
+          onReset={() => { props.resetField('workspaceId') }}
+        />
+        {valueField('model', 'wecom-model', 'model', 'modelHint')}
+        <p style={styles.hint}>{t('commandsHint')}</p>
+      </section>}
+      <section style={styles.section} aria-labelledby="wecom-section-advanced">
+        <h3 id="wecom-section-advanced" style={styles.sectionHeading}>{t('advanced')}</h3>
+        {props.embedded ? valueField('model', 'wecom-model', 'model', 'modelHint') : null}
+        <div style={styles.field}>
+          <div style={styles.fieldHead}>
+            <label htmlFor="wecom-prevent-idle-sleep" style={styles.label}>{t('preventIdleSleep')}</label>
+            {state.preventIdleSleep.overridden ? <span style={styles.badge}>{t('overridden')}</span> : null}
+          </div>
+          <label htmlFor="wecom-prevent-idle-sleep" style={styles.toggle}>
+            <input
+              id="wecom-prevent-idle-sleep"
+              type="checkbox"
+              checked={state.preventIdleSleep.text === 'true'}
+              disabled={disabled}
+              onChange={event => { props.edit('preventIdleSleep', event.target.checked ? 'true' : 'false') }}
+            />
+            <span>{state.preventIdleSleep.text === 'true' ? t('on') : t('off')}</span>
+          </label>
+          <p style={styles.hint}>{t('preventIdleSleepHint')}</p>
+        </div>
+        <PresetField
+          state={state.agentPreset}
+          options={state.presetOptions}
+          loading={state.presetsLoading}
+          failed={state.presetsFailed}
+          disabled={disabled}
+          label={t('agentPreset')}
+          hint={t('agentPresetHint')}
+          inheritLabel={state.presetDefaultId === undefined
+            ? t('presetInherit')
+            : `${t('presetInherit')}（${state.presetDefaultId}）`}
+          loadingLabel={t('presetLoading')}
+          failedLabel={t('presetLoadFailed')}
+          missingLabel={t('presetMissing')}
+          unavailableLabel={t('presetUnavailable')}
+          overriddenLabel={t('overridden')}
+          resetLabel={t('reset')}
+          onEdit={value => { props.edit('agentPreset', value) }}
+          onReset={() => { props.resetField('agentPreset') }}
+        />
+        {valueField('thinkingText', 'wecom-thinking-text', 'thinkingText', 'thinkingTextHint')}
+        {valueField('turnTimeoutMs', 'wecom-timeout', 'timeout', 'timeoutHint', true)}
+      </section>
+      <div style={styles.footer}>
+        <button type="button" style={{ ...styles.save, ...(!state.dirty || state.invalid || state.saving ? styles.disabled : {}) }} disabled={!state.dirty || state.invalid || state.saving} onClick={props.save}>{t(state.saving ? 'saving' : 'save')}</button>
+        <button type="button" style={{ ...styles.button, ...(!state.dirty || state.saving ? styles.disabled : {}) }} disabled={!state.dirty || state.saving} onClick={props.discard}>{t('discard')}</button>
+        {state.dirty ? <span style={styles.badge}>{t('unsaved')}</span> : null}
+        {state.failed ? (
+          <p style={{ ...styles.error, flexBasis: '100%' }}>
+            {t('failed')}
+            {state.rejected.length === 0 ? '' : ` ${t('rejectedFields')} ${state.rejected.map(field => {
+              const label = FIELD_LABELS[field]
+              return label === undefined ? field : t(label)
+            }).join('、')}`}
+          </p>
+        ) : null}
+      </div>
+      </>}
+    </div>
+  )
+}

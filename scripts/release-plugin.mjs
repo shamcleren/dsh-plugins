@@ -8,9 +8,14 @@ import { run } from './process.mjs'
 import { pluginSourceDigest } from './release-inputs.mjs'
 import { releaseArtifact } from './plugins.mjs'
 
-export async function releasePlugin(id, repo = fileURLToPath(new URL('..', import.meta.url))) {
+export async function releasePlugin(id, repo = fileURLToPath(new URL('..', import.meta.url)), { initial } = {}) {
   const catalogPath = join(repo, 'marketplace.json'), catalog = JSON.parse(await readFile(catalogPath, 'utf8'))
-  const entry = catalog.plugins.find(p => p.id === id || p.package === id || (id === 'marketplace' && p.id === 'trusted-marketplace'))
+  const previous = catalog.plugins.find(p => p.id === id || p.package === id || (id === 'marketplace' && p.id === 'trusted-marketplace'))
+  if (initial && (previous || initial.id !== id || !/^[a-z][a-z0-9-]+$/.test(id) || catalog.plugins.some(p => p.package === initial.package)
+    || !['before-web-app', 'after-web-app'].includes(initial.placement)
+    || !['package', 'name', 'description', 'dshVersion'].every(key => typeof initial[key] === 'string' && initial[key].length > 0)
+    || Object.keys(initial).some(key => !['id', 'package', 'name', 'description', 'dshVersion', 'placement'].includes(key)))) throw new Error('Invalid initial catalog metadata')
+  const entry = previous ?? initial
   if (!entry) throw new Error('Unknown catalog plugin')
   let directory
   for (const name of await readdir(join(repo, 'plugins'))) {
@@ -19,7 +24,7 @@ export async function releasePlugin(id, repo = fileURLToPath(new URL('..', impor
   }
   if (!directory) throw new Error('Plugin source is missing')
   const manifest = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'))
-  if (manifest.version === entry.version) throw new Error('Increment the component version before preparing a new release')
+  if (manifest.version === previous?.version) throw new Error('Increment the component version before preparing a new release')
   const filename = manifest.name.replace(/^@/, '').replaceAll('/', '-') + '-' + manifest.version + '.tgz'
   const output = join(repo, 'artifacts', filename)
   try { await lstat(output); throw new Error('Release already exists; increment the component version before packing') }
@@ -42,10 +47,11 @@ export async function releasePlugin(id, repo = fileURLToPath(new URL('..', impor
     const next = { ...entry, version: manifest.version, sourceDigest, artifact: { ...entry.artifact, path: 'artifacts/' + filename, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } }
     await writeFile(output, bytes, { flag: 'wx' }); artifactWritten = true
     await releaseArtifact(repo, next)
-    catalog.plugins[catalog.plugins.indexOf(entry)] = next
+    if (previous) catalog.plugins[catalog.plugins.indexOf(previous)] = next
+    else catalog.plugins.push(next)
     await writeFile(catalogPath, JSON.stringify(catalog, null, 2) + '\n'); catalogWritten = true
     // The superseded path is explicitly owned by the old catalog entry.
-    if (entry.artifact.path !== next.artifact.path && /^artifacts\/[^/]+\.tgz$/.test(entry.artifact.path)) await rm(join(repo, entry.artifact.path))
+    if (previous?.artifact.path !== next.artifact.path && /^artifacts\/[^/]+\.tgz$/.test(previous?.artifact.path ?? '')) await rm(join(repo, previous.artifact.path))
     return next
   } finally {
     await rm(scratch, { recursive: true, force: true })

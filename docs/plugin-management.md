@@ -14,21 +14,21 @@ DSH `0.2.1-rc.5` 的侧栏提供官方「插件」页面，可管理插件安装
 | --- | --- |
 | 首次安装并加入远端市场 | `make init MARKETPLACE=1` |
 | 已有 DSH，补装远端市场 | `dhp plugin install marketplace` |
-| 安装或更新微信插件发布包 | `dhp plugin install wechat` |
+| 安装或更新IM 插件发布包 | `dhp plugin install im` |
 | 安装免费联网搜索 | `dhp plugin install web-search` |
 | 安装 GitHub 项目工作区 | `dhp plugin install github-workspace` |
-| 构建并安装微信插件源码 | `dhp plugin install wechat --source` |
+| 构建并安装IM 插件源码 | `dhp plugin install im --source` |
 | 更新所有已安装的本仓库插件 | `dhp plugin update --all` |
 | 查看本仓库插件、安装状态和版本 | `dhp plugin list` |
-| 卸载微信插件 | `dhp plugin remove wechat` |
+| 卸载IM 插件 | `dhp plugin remove im` |
 | 执行插件提供的 CLI | `dhp plugin exec security-scan -- --help` |
 
-插件名使用 catalog 的 `id` 或完整包名；`marketplace` 是 `trusted-marketplace` 的简写。当前其他短名有 `wecom-aibot`、`wecom-tools`、`security-scan`、`desktop-share`、`dsh-pet`、`web-search` 和 `github-workspace`。不支持的名称会列出可用选项，不会当作任意安装路径执行。
+插件名使用 catalog 的 `id` 或完整包名；`marketplace` 是 `trusted-marketplace` 的简写。当前其他短名有 `im`、`wecom-tools`、`security-scan`、`desktop-share`、`dsh-pet`、`web-search` 和 `github-workspace`。`wechat` 与 `wecom-aibot` 是安装 `im` 的兼容别名；已有旧包时走整体更新事务。卸载旧包名只卸载对应旧包。其他不支持的名称会列出可用选项，不会当作任意安装路径执行。
 
 如果初始化时指定过 `DIR`，后续命令也指定同一目录，例如：
 
 ```sh
-dhp --dir "$HOME/.local/share/my-dsh" plugin install wechat
+dhp --dir "$HOME/.local/share/my-dsh" plugin install im
 ```
 
 这些命令复用安装器提供的 Node.js 和 pnpm。`make init` 会把 `dhp` 安装为用户命令。它们使用目标安装记录中的 Web profile：新安装默认是 `~/.dsh/profiles/web`，旧安装可能仍在 `<安装目录>/home/profiles/web`。修改 profile 前先退出使用这份数据的 DSH，完成后重启。

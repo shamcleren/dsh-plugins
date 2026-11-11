@@ -1,6 +1,6 @@
 {
   "name": "@shamcleren/dsh-pet",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Desktop floating pet for DeepSeek Harness with bundled and Codex-compatible pet packs",
   "homepage": "https://gitlab.example.com/shamcleren/dsh-plugin/tree/main/plugins/dsh-pet",
   "repository": {

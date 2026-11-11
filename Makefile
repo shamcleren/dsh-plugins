@@ -16,7 +16,7 @@ help:
 		'  dhp help' \
 		'  dhp doctor' \
 		'  dhp plugin list' \
-		'  dhp plugin install wechat' \
+		'  dhp plugin install im' \
 		'  dhp plugin update --all' \
 		'  dhp restart' \
 		'  dhp update'

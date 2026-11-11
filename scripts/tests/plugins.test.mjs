@@ -14,7 +14,7 @@ const json = async path => JSON.parse(await readFile(path, 'utf8'))
 /** The version a release bumps, so publishing does not have to edit these assertions. */
 const localVersion = id => catalog.plugins.find(entry => entry.id === id).version.replaceAll('.', String.raw`\.`)
 
-async function fixture(t, id = 'wechat', legacy = false) {
+async function fixture(t, id = 'im', legacy = false) {
   const scratch = await mkdtemp(join(tmpdir(), 'dsh-plugins-test-'))
   t.after(() => rm(scratch, { recursive: true, force: true }))
   const directory = join(scratch, "installation 'with spaces'"), repo = join(scratch, 'repository')
@@ -77,6 +77,24 @@ test('marketplace is a short alias; after-Web packages stay behind the Web App',
   await managePlugin({ ...f.options, action: 'install', plugin: 'marketplace' })
   assert.ok((await json(join(f.profile, 'package.json'))).dependencies[f.entry.package])
   assert.deepEqual((await json(join(f.profile, 'package.json'))).dsh.profile.bundles, [...baseBundles, f.entry.package])
+})
+
+test('legacy IM install aliases delegate to the whole-profile transaction before any partial install', async t => {
+  const f = await fixture(t), manifestPath = join(f.profile, 'package.json'), manifest = await json(manifestPath)
+  manifest.dependencies['@shamcleren/dsh-wechat'] = '0.7.1'
+  manifest.dsh.profile.bundles.push('@shamcleren/dsh-wechat')
+  await writeFile(manifestPath, JSON.stringify(manifest))
+  const before = await readFile(manifestPath, 'utf8')
+  await managePlugin({ ...f.options, action: 'install', plugin: 'wechat' })
+  assert.equal(f.calls.length, 1)
+  assert.equal(f.calls[0].command, process.execPath)
+  assert.deepEqual(f.calls[0].args, [join(f.repo, 'scripts/dhp.mjs'), '--dir', f.options.directory, 'update'])
+  assert.equal(await readFile(manifestPath, 'utf8'), before)
+  await assert.rejects(managePlugin({ ...f.options, action: 'install', source: true }), /verified catalog release/)
+  f.calls.length = 0
+  await updateInstalledPlugins(f.options)
+  assert.equal(f.calls.length, 1)
+  assert.equal(f.calls[0].args.at(-1), 'update')
 })
 
 test('remove uses the supported pnpm config flag and leaves other plugins intact', async t => {
@@ -170,7 +188,7 @@ test('listing includes every catalog plugin and resolves installed release and l
   await managePlugin({ ...f.options, action: 'list' })
   assert.equal(f.calls.length, 0)
   const output = f.logs.join('\n')
-  assert.match(output, new RegExp(String.raw`^wechat\s+已安装\s+0\.1\.0 / ${localVersion('wechat')}$`, 'm'))
+  assert.match(output, new RegExp(String.raw`^im\s+已安装\s+0\.1\.0 / ${localVersion('im')}$`, 'm'))
   assert.match(output, new RegExp(String.raw`^wecom-tools\s+已安装\s+${localVersion('wecom-tools')} / ${localVersion('wecom-tools')}$`, 'm'))
   assert.match(output, new RegExp(String.raw`^web-search\s+安装不完整\s+- / ${localVersion('web-search')}$`, 'm'))
   assert.match(output, new RegExp(String.raw`^marketplace\s+未安装\s+- / ${localVersion('trusted-marketplace')}$`, 'm'))
@@ -185,7 +203,7 @@ test('listing includes every catalog plugin and resolves installed release and l
 })
 
 test('listing respects legacy profiles and does not create an absent profile', async t => {
-  const f = await fixture(t, 'wechat', true)
+  const f = await fixture(t, 'im', true)
   await managePlugin({ ...f.options, action: 'list' })
   assert.equal(f.logs[0], 'DSH profile: ' + join(f.directory, 'home/profiles/web'))
   assert.equal(f.calls.length, 0)
@@ -219,10 +237,10 @@ test('concurrent plugin commands cannot modify the same profile', async t => {
 
 test('update --all reinstalls declared catalog plugins and skips uninstalled ones', async t => {
   const f = await fixture(t)
-  const other = catalog.plugins.find(entry => entry.id === 'wecom-aibot')
-  await mkdir(join(f.repo, 'plugins/wecom-aibot'), { recursive: true })
+  const other = catalog.plugins.find(entry => entry.id === 'wecom-tools')
+  await mkdir(join(f.repo, 'plugins/wecom-tools'), { recursive: true })
   await cp(join(repository, other.artifact.path), join(f.repo, other.artifact.path))
-  await cp(join(repository, 'plugins/wecom-aibot/package.json'), join(f.repo, 'plugins/wecom-aibot/package.json'))
+  await cp(join(repository, 'plugins/wecom-tools/package.json'), join(f.repo, 'plugins/wecom-tools/package.json'))
   await managePlugin({ ...f.options, action: 'install' })
   const installed = join(f.profile, 'node_modules', f.entry.package)
   await mkdir(installed, { recursive: true })
@@ -233,7 +251,7 @@ test('update --all reinstalls declared catalog plugins and skips uninstalled one
   f.calls.length = 0
   f.logs.length = 0
   await updateInstalledPlugins({ ...f.options })
-  assert.match(f.logs.join('\n'), new RegExp(String.raw`Already current: wechat ${f.entry.version.replaceAll('.', String.raw`\.`)}`))
+  assert.match(f.logs.join('\n'), new RegExp(String.raw`Already current: im ${f.entry.version.replaceAll('.', String.raw`\.`)}`))
   const added = f.calls.filter(call => call.args.includes('add'))
   assert.equal(added.length, 1)
   assert.equal(added[0].args.at(-2).endsWith(other.artifact.sha256 + '.tgz'), true)
@@ -274,6 +292,6 @@ test('./dhp plugin list works with private Node and a quoted --dir, without Node
   await writeFile(join(f.directory, 'bin/dsh'), '#!/bin/sh\nexit 99\n')
   const result = spawnSync('/bin/sh', [join(f.repo, 'dhp'), '--dir', f.directory, 'plugin', 'list'], { env: { PATH: tools, HOME: f.scratch }, encoding: 'utf8', timeout: 10000 })
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, new RegExp(String.raw`^wechat\s+未安装\s+- / ${localVersion('wechat')}$`, 'm'))
+  assert.match(result.stdout, new RegExp(String.raw`^im\s+未安装\s+- / ${localVersion('im')}$`, 'm'))
   assert.match(result.stdout, new RegExp(String.raw`^marketplace\s+未安装\s+- / ${localVersion('trusted-marketplace')}$`, 'm'))
 })

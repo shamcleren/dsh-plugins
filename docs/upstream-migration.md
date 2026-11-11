@@ -7,8 +7,7 @@ The verified runtime is the official `@deepseek-ai/dsh@0.2.1-rc.5` npm distribut
 | macOS app | `apps/macos` | Independent native distribution around the official npm runtime |
 | Git repository marketplace | `plugins/marketplace` | Profile bundle, connection RPC, settings tab |
 | Desktop Pet | `plugins/dsh-pet` | Profile bundle, settings card, session events, native macOS helper |
-| WeChat | `plugins/wechat` | Channel bundle, queue/steer, approval waterfall, settings card |
-| WeCom Bot | `plugins/wecom-aibot` | Channel bundle, queue/steer, approval waterfall, settings card |
+| IM workbench | `plugins/im` | Unified channel management, WeChat/WeCom adapters, shared sessions and commands |
 | WeCom Tools | `plugins/wecom-tools` | Independent Skill bundle and user authorization |
 | Security Scan | `plugins/security-scan` | Native agent, tools, Skill, session projection and workspace overlay |
 | Web Search | `plugins/web-search` | Official MCP bridge with tool forwarding |

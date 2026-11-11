@@ -4,14 +4,14 @@ Status: implemented; live iLink credential smoke pending
 
 ## Purpose
 
-`@shamcleren/dsh-wechat` connects personal WeChat direct messages to durable DeepSeek Harness Sessions through Tencent's official iLink Bot APIs. The plugin owns transport authentication, account state, peer authorization, message normalization, callback deduplication, reply context, and channel presentation. Harness continues to own Workspaces, Sessions, agent composition, model execution, tools, approvals, and durable events.
+The WeChat adapter in `@shamcleren/dsh-im` connects personal WeChat direct messages to durable DeepSeek Harness Sessions through Tencent's official iLink Bot APIs. The plugin owns transport authentication, account state, peer authorization, message normalization, callback deduplication, reply context, and channel presentation. Harness continues to own Workspaces, Sessions, agent composition, model execution, tools, approvals, and durable events.
 
 The implementation adapts the protocol behavior of the MIT-licensed `Tencent/openclaw-weixin` project. It does not import OpenClaw runtime or its channel SDK.
 
 ## Runtime flow
 
 1. The Plugins settings card calls the authenticated `wechatLogin` Remote namespace to create a QR flow, render it in the browser, submit optional numeric verification, and display the connected account count. The Remote result never contains tokens.
-2. QR confirmation saves credentials and waits for the runtime to start before reporting success. The scanning owner is derived from iLink; missing identity fails closed. The card also selects the channel-wide agent preset described by [channel default policy](../decisions/channel-default-policy.md). Details are maintained in the [plugin README](../../plugins/wechat/README.md).
+2. QR confirmation saves credentials and waits for the runtime to start before reporting success. The scanning owner is derived from iLink; missing identity fails closed. The card also selects the channel-wide agent preset described by [channel default policy](../decisions/channel-default-policy.md). Details are maintained in the [plugin README](../../plugins/im/README.wechat.md).
 3. Each account resumes its opaque `get_updates_buf` and long-polls `ilink/bot/getupdates`.
 4. The channel persists the latest `(account, peer)` context token before dispatch.
 5. Text, supported image bytes and Session-owned file upload receipts become one Host `session.prompt` request with `mode: steer` for a channel-owned active turn, otherwise `mode: queue`.

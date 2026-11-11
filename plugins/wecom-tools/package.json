@@ -1,6 +1,6 @@
 {
   "name": "@shamcleren/dsh-wecom-tools",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Pinned WeCom Unified Skill bundle for DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",

@@ -8,7 +8,7 @@ Provide enterprise-office actions through the upstream `wecom-unified` Skill wit
 
 ## Boundary
 
-`@shamcleren/dsh-wecom-aibot` owns message transport and uses Bot ID/Secret credentials. `@shamcleren/dsh-wecom-tools` owns the Skill bundle and uses the separate user authorization maintained by `@wecom/cli`. Either plugin can be installed independently.
+The WeCom adapter in `@shamcleren/dsh-im` owns message transport and uses Bot ID/Secret credentials. `@shamcleren/dsh-wecom-tools` owns the Skill bundle and uses the separate user authorization maintained by `@wecom/cli`. Either plugin can be installed independently.
 
 The tools plugin mounts one read-only bundled Skill through the official DSH filesystem Skill provider. The Skill guides CLI installation and `wecom-cli auth init --noninteractive` on first use. DSH shell and approval policy remain authoritative for command execution.
 

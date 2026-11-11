@@ -43,16 +43,13 @@ The current implementation covers this text path through the public `ctx.session
 ## Initial package boundary
 
 ```text
-plugins/wecom-aibot/
+plugins/im/
 ├── package.json
 ├── cordis.patch.yml
-├── src/
-│   ├── index.ts              Cordis plugin entry and owned effects
-│   ├── account.ts            One configured Bot connection
-│   ├── inbound.ts            WeCom frame normalization and policy
-│   ├── host-api.ts            Narrow same-process Host API contract
-│   ├── router.ts              Session binding, deduplication, and turn observation
-│   └── reply.ts              DSH output to WeCom stream projection
+├── src/core/                 Shared Host API, sessions and management commands
+├── src/adapters/wecom/       WeCom transport, routing and presentation
+├── src/adapters/wechat/      WeChat transport, routing and presentation
+├── src/client/               Unified settings and form styling
 └── tests/
 ```
 
@@ -60,7 +57,7 @@ Split a protocol helper into `packages/` only after another plugin has a real ne
 
 ## Multi-Bot configuration and media
 
-The [plugin README](../../plugins/wecom-aibot/README.md#multiple-bots) is the configuration reference for independent Bot credentials, Workspaces and models, backward compatibility, and supported inbound/outbound media. `/model` and `/effort` use public Agent hooks without saving a deployment default.
+The [plugin README](../../plugins/im/README.wecom.md#multiple-bots) is the configuration reference for independent Bot credentials, Workspaces and models, backward compatibility, and supported inbound/outbound media. `/model` and `/effort` use public Agent hooks without saving a deployment default.
 
 ## Deferred
 

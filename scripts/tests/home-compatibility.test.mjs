@@ -82,6 +82,15 @@ async function fixture(t) {
   return { root, home }
 }
 
+test('a missing replacement catalog entry cannot retire installed IM packages', async t => {
+  const f = await fixture(t), profile = join(f.home, 'profiles/web'), candidate = join(f.root, 'candidate')
+  await mkdir(profile, { recursive: true }); await mkdir(candidate)
+  const path = join(profile, 'package.json'), original = JSON.stringify({ dependencies: { '@shamcleren/dsh-wechat': '0.7.1' } })
+  await writeFile(path, original); await writeFile(join(candidate, 'marketplace.json'), JSON.stringify({ plugins: [] }))
+  await assert.rejects(homeProfileNeedsUpdate({ home: f.home, repo: candidate, release: { dshVersion: '0.2.1-rc.5' } }), /Missing catalog replacement/)
+  assert.equal(await readFile(path, 'utf8'), original)
+})
+
 test('engine-only third-party plugins must support the selected runtime before staging', async t => {
   const { home } = await fixture(t), profile = join(home, 'profiles/web')
   await mkdir(join(profile, 'node_modules/third-party'), { recursive: true })
@@ -165,7 +174,7 @@ test('shared homes serialize installers and do not follow a credential symlink',
 
 async function upgrade(t, prepare = async () => {}) {
   const f = await fixture(t), profile = join(f.home, 'profiles/web'), catalog = JSON.parse(await readFile(join(repo, 'marketplace.json')))
-  const entry = catalog.plugins.find(item => item.id === 'wechat')
+  const entry = catalog.plugins.find(item => item.id === 'im')
   await mkdir(join(profile, 'node_modules', entry.package), { recursive: true })
   await writeFile(join(profile, 'node_modules', entry.package, 'package.json'), JSON.stringify({ name: entry.package, version: '0.4.0', peerDependencies: { '@deepseek-ai/dsh-session': '0.1.0-rc.8' } }))
   const original = JSON.stringify({ name: 'existing-profile', dependencies: { [entry.package]: '0.4.0' }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', entry.package, '@deepseek-ai/dsh-web-app'] } } })
@@ -239,8 +248,8 @@ test('external source links keep their meaning after staging and publication', a
 
 test('repository source links are replaced by the catalog release even at the same version', async t => {
   const f = await fixture(t), profile = join(f.home, 'profiles/web'), catalog = JSON.parse(await readFile(join(repo, 'marketplace.json')))
-  const entry = catalog.plugins.find(item => item.id === 'wecom-aibot')
-  const source = join(repo, 'plugins/wecom-aibot')
+  const entry = catalog.plugins.find(item => item.id === 'im')
+  const source = join(repo, 'plugins/im')
   const sourceManifest = await readFile(join(source, 'package.json'))
   await mkdir(join(profile, 'node_modules/@shamcleren'), { recursive: true })
   await symlink(source, join(profile, 'node_modules', entry.package))
@@ -304,4 +313,22 @@ test('retired plugins are removed through the staged official CLI while unknown 
   assert.equal(manifest.dependencies[retained], '1.0.0')
   assert.equal(await readFile(join(profile, 'cordis.patch.yml'), 'utf8'), patch)
   assert.equal(await homeProfileNeedsUpdate({ home: f.home, repo, release }), false)
+})
+
+test('legacy preset migration composes with IM replacement instead of restoring the original patch', async t => {
+  const f = await fixture(t), profile = join(f.home, 'profiles/web'), legacy = '@shamcleren/dsh-wechat'
+  await mkdir(profile, { recursive: true })
+  await writeFile(join(profile, 'package.json'), JSON.stringify({ dependencies: { [legacy]: '0.7.1' }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', legacy, '@deepseek-ai/dsh-web-app'] } } }))
+  await writeFile(join(f.home, 'settings.yaml'), 'agent-presets:\n  default: standard\n')
+  await writeFile(join(profile, 'cordis.patch.yml'), "- id: wechat\n  name: '@shamcleren/dsh-wechat'\n  config:\n    enabled: false\n    agentPreset: minimal\n")
+  const release = await releaseInfo(repo)
+  const transaction = await prepareHomeProfile({ ...f, repo, runtime, release, nodeExecutable: process.execPath, env: { PATH: process.env.PATH }, execute: fakeInstall, log() {} })
+  await publishHomeProfile(transaction)
+  await recoverHomeProfile({ ...f, runtimeDigest: release.runtimeDigest, ready: true })
+  const rows = createRequire(join(runtime, 'package.json'))('yaml').parse(await readFile(join(profile, 'cordis.patch.yml'), 'utf8'))
+  assert.equal(rows.find(row => row.id === 'agent-preset-registry').config.selectedDefault, 'standard')
+  assert.deepEqual(rows.find(row => row.id === 'wechat'), { id: 'wechat', config: { enabled: false, agentPreset: 'minimal', connectionEnabled: true } })
+  const manifest = JSON.parse(await readFile(join(profile, 'package.json')))
+  assert.equal(manifest.dependencies[legacy], undefined)
+  assert.ok(manifest.dependencies['@shamcleren/dsh-im'])
 })
