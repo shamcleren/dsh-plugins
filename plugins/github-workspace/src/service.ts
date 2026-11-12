@@ -323,7 +323,7 @@ export class WorkspaceService {
         if (paths.length) {
           report('committing')
           const preview = await this.preview(fullName, paths)
-          state = await this.withScratch(path => this.git.commit(project, preview, preview.message, account, path, true))
+          state = await this.withScratch(path => this.git.commit(project, preview, `dsh auto commit: ${preview.message}`, account, path, true))
           this.previews.delete(preview.id)
         }
         if (state.ahead > 0) { report('pushing'); state = await this.git.push(project, state.head) }

@@ -259,11 +259,39 @@ it('keeps existing projects manual and only dispatches an opted-in project for a
   const task = (await f.call<Activity>('activity')).tasks[0]!
   expect((await f.finished(task.id)).status).toBe('complete')
   expect(await f.git(f.base, '--git-dir=' + f.bare, 'show', 'main:a.txt')).toBe('automatically saved\n')
+  expect(await f.git(f.base, '--git-dir=' + f.bare, 'log', '-1', '--format=%s', 'main')).toBe('dsh auto commit: Update 1 file in demo/project\n')
   expect(await f.git(f.base, '--git-dir=' + f.bare, 'ls-tree', '--name-only', 'main')).not.toContain('.env')
   expect((await f.call<Activity>('activity')).projects[0]?.autoSync?.lastSyncAt).toEqual(expect.any(Number))
 }, 15_000)
 
-it.each(['staged', 'remote', 'account', 'branch', 'hook'])('pauses automatic sync on %s changes without overwriting work', async reason => {
+it.each(['signing', 'hooks', 'included'])('keeps managed saves and automatic sync isolated from global %s policy', async policy => {
+  const f = await fixture(), globalConfig = join(f.home, '.gitconfig'), hooks = join(f.home, 'global-hooks')
+  await mkdir(hooks)
+  for (const name of ['pre-commit', 'pre-push']) {
+    const path = join(hooks, name)
+    await writeFile(path, '#!/bin/sh\nexit 1\n'); await chmod(path, 0o700)
+  }
+  const policyConfig = policy === 'included' ? join(f.home, 'included.gitconfig') : globalConfig
+  if (policy !== 'hooks') await f.git(f.home, 'config', '--file', policyConfig, 'commit.gpgSign', 'true')
+  if (policy !== 'signing') await f.git(f.home, 'config', '--file', policyConfig, 'core.hooksPath', hooks)
+  if (policy === 'included') await f.git(f.home, 'config', '--file', globalConfig, 'include.path', policyConfig)
+  const originalConfig = await readFile(globalConfig), originalPolicy = await readFile(policyConfig)
+  await writeFile(join(f.project.path, 'a.txt'), 'manual save under host policy\n')
+  const review = await f.preview(['a.txt'])
+  const saved = await f.call<ProjectStatus>('commit', { id: review.id, message: 'My manual save' })
+  await f.call('push', { fullName: f.project.fullName, head: saved.head })
+  expect(await f.git(f.base, '--git-dir=' + f.bare, 'log', '-1', '--format=%s', 'main')).toBe('My manual save\n')
+  await f.call('configureSync', { fullName: f.project.fullName, enabled: true, intervalMinutes: 5 })
+  await writeFile(join(f.project.path, 'a.txt'), 'automatic save under host policy\n')
+  const task = await f.call<Task>('startSync', { fullName: f.project.fullName })
+  expect(await f.finished(task.id)).toMatchObject({ status: 'complete' })
+  expect(await f.git(f.base, '--git-dir=' + f.bare, 'show', 'main:a.txt')).toBe('automatic save under host policy\n')
+  expect(await f.git(f.base, '--git-dir=' + f.bare, 'log', '-1', '--format=%s', 'main')).toBe('dsh auto commit: Update 1 file in demo/project\n')
+  expect(await readFile(globalConfig)).toEqual(originalConfig)
+  expect(await readFile(policyConfig)).toEqual(originalPolicy)
+}, 15_000)
+
+it.each(['staged', 'remote', 'account', 'branch', 'hook', 'hooksPath', 'signing'])('pauses automatic sync on %s changes without overwriting work', async reason => {
   const f = await fixture(), head = (await f.status()).head
   await f.call('configureSync', { fullName: f.project.fullName, enabled: true, intervalMinutes: 5 })
   await writeFile(join(f.project.path, 'a.txt'), 'preserve this work\n')
@@ -272,8 +300,10 @@ it.each(['staged', 'remote', 'account', 'branch', 'hook'])('pauses automatic syn
   if (reason === 'account') f.control.account = 'other-user'
   if (reason === 'branch') await f.git(f.project.path, 'checkout', '-b', 'another')
   if (reason === 'hook') { const hook = join(f.project.path, '.git/hooks/pre-commit'); await writeFile(hook, '#!/bin/sh\nexit 1\n'); await chmod(hook, 0o700) }
+  if (reason === 'hooksPath') await f.git(f.project.path, 'config', 'core.hooksPath', '.project-hooks')
+  if (reason === 'signing') await f.git(f.project.path, 'config', 'commit.gpgSign', 'true')
   const task = await f.call<Task>('startSync', { fullName: f.project.fullName })
-  const expected = { staged: 'stagedChanges', remote: 'remoteChanged', account: 'accountChanged', branch: 'branchChanged', hook: 'projectCommitFlow' }[reason]
+  const expected = { staged: 'stagedChanges', remote: 'remoteChanged', account: 'accountChanged', branch: 'branchChanged', hook: 'projectCommitFlow', hooksPath: 'projectCommitFlow', signing: 'projectCommitFlow' }[reason]
   expect(await f.finished(task.id)).toMatchObject({ status: 'failed', error: expected })
   const activity = await f.call<Activity>('activity')
   expect(activity.projects[0]?.autoSync?.error).toBe(expected)
@@ -344,25 +374,32 @@ it('previews without touching the real index and commits only the reviewed tree,
   expect((await f.status()).ahead).toBe(0)
 })
 
-it.each(['hook', 'signing'])('preserves the configured %s commit workflow', async policy => {
+it.each(['hook', 'hooksPath', 'signing', 'included'])('preserves the configured %s commit workflow', async policy => {
   const f = await fixture(), before = (await f.status()).head
   await writeFile(join(f.project.path, 'a.txt'), 'policy protected change\n')
   const review = await f.preview(['a.txt'])
   if (policy === 'hook') {
     await writeFile(join(f.project.path, '.git/hooks/pre-commit'), '#!/bin/sh\nexit 1\n')
     await chmod(join(f.project.path, '.git/hooks/pre-commit'), 0o700)
+  } else if (policy === 'hooksPath') await f.git(f.project.path, 'config', 'core.hooksPath', '.project-hooks')
+  else if (policy === 'included') {
+    const included = join(f.home, 'project.gitconfig')
+    await writeFile(included, '[commit]\n\tgpgSign\n')
+    await f.git(f.project.path, 'config', 'include.path', included)
   } else await f.git(f.project.path, 'config', 'commit.gpgSign', 'true')
   await expect(f.call('commit', { id: review.id, message: 'Protected change' })).rejects.toMatchObject({ code: 'projectCommitFlow' })
   expect((await f.status()).head).toBe(before)
 })
 
-it('does not bypass an installed pre-push hook', async () => {
+it.each(['hook', 'hooksPath'])('does not bypass a project push workflow configured through %s', async policy => {
   const f = await fixture(), original = (await f.git(f.base, '--git-dir=' + f.bare, 'rev-parse', 'main')).trim()
   await writeFile(join(f.project.path, 'a.txt'), 'local change\n')
   const review = await f.preview(['a.txt'])
   const saved = await f.call<ProjectStatus>('commit', { id: review.id, message: 'Local change' })
-  const hook = join(f.project.path, '.git/hooks/pre-push')
-  await writeFile(hook, '#!/bin/sh\nexit 1\n'); await chmod(hook, 0o700)
+  if (policy === 'hook') {
+    const hook = join(f.project.path, '.git/hooks/pre-push')
+    await writeFile(hook, '#!/bin/sh\nexit 1\n'); await chmod(hook, 0o700)
+  } else await f.git(f.project.path, 'config', 'core.hooksPath', '.project-hooks')
   await expect(f.call('push', { fullName: f.project.fullName, head: saved.head })).rejects.toMatchObject({ code: 'projectPushFlow' })
   expect((await f.git(f.base, '--git-dir=' + f.bare, 'rev-parse', 'main')).trim()).toBe(original)
 })

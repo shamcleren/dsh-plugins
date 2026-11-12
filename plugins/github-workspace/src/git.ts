@@ -136,19 +136,18 @@ export class Git {
     if (!diff) throw new WorkspaceError('nothingToSave')
     return { tree, index, diff }
   }
-  /** Commit the reviewed immutable tree, preserving unrelated staged entries.
-   * The native index lock blocks concurrent staging; update-ref compares HEAD.
-   * No working-tree files or repository hooks are executed by this operation.
-   */
   private async assertWorkflow(project: Project, kind: 'commit' | 'push'): Promise<void> {
     await this.verify(project)
-    // A plumbing commit must never silently bypass a configured project policy.
+    // Inspect project policy with the same isolated configuration as managed
+    // commands; host-wide hooks and signing do not belong to this workflow.
     const code = kind === 'commit' ? 'projectCommitFlow' : 'projectPushFlow'
-    const config = await this.run('git', ['config', '--get-regexp', '^(core\\.hooksPath|commit\\.gpgSign)$'], {
-      ...this.options(), cwd: project.path, env: { ...this.options().env, GIT_CONFIG_GLOBAL: undefined, GIT_CONFIG_NOSYSTEM: undefined },
-    })
-    if (config.code !== 0 && config.code !== 1) throw new WorkspaceError('commandFailed')
-    if (config.stdout.split('\n').some(line => /^core\.hookspath\s+\S/i.test(line) || (kind === 'commit' && /^commit\.gpgsign\s+(?:true|yes|on|1)\s*$/i.test(line)))) throw new WorkspaceError(code)
+    const configured = async (args: string[]): Promise<string> => {
+      const result = await this.run('git', ['config', ...args], { ...this.options(), cwd: project.path })
+      if (result.code !== 0 && result.code !== 1) throw new WorkspaceError('commandFailed')
+      return result.code === 0 ? result.stdout.trim() : ''
+    }
+    if (await configured(['--get', 'core.hooksPath'])) throw new WorkspaceError(code)
+    if (kind === 'commit' && await configured(['--type=bool', '--get', 'commit.gpgSign']) === 'true') throw new WorkspaceError(code)
     for (const name of kind === 'commit' ? ['pre-commit', 'prepare-commit-msg', 'commit-msg', 'post-commit'] : ['pre-push']) {
       try {
         const hook = await lstat(join(project.path, '.git/hooks', name))
@@ -156,6 +155,10 @@ export class Git {
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
     }
   }
+  /** Commit the reviewed immutable tree, preserving unrelated staged entries.
+   * The native index lock blocks concurrent staging; update-ref compares HEAD.
+   * No working-tree files or repository hooks are executed by this operation.
+   */
   async commit(project: Project, preview: Preview, message: string, account: Account, scratch: string, automatic = false): Promise<ProjectStatus> {
     await this.assertWorkflow(project, 'commit')
     const state = await this.status(project)

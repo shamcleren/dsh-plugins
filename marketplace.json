@@ -96,15 +96,15 @@
       "package": "@shamcleren/dsh-github-workspace",
       "name": "GitHub Workspace",
       "description": "自动准备 GitHub CLI，按组织接入仓库，解锁 git-crypt 并按项目同步",
-      "version": "0.3.5",
+      "version": "0.3.6",
       "dshVersion": "0.2.1-rc.5",
       "placement": "after-web-app",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-github-workspace-0.3.5.tgz",
-        "sha256": "6addfb3f2df76d10530c3e4fe9110850273d48c1450147704507a460b3dd66d5",
-        "size": 76254
+        "path": "artifacts/shamcleren-dsh-github-workspace-0.3.6.tgz",
+        "sha256": "5e33bc717a827ca2be983e8c5c8e553f232d8b508ddf9f2f1a0b1a4a60c3bea9",
+        "size": 76496
       },
-      "sourceDigest": "fcd9e0120eb7b16e0182f3aadcfcbfbee9462bee44a8593a991cbe798f601af8"
+      "sourceDigest": "5a3cdd13e61d00e355943171079914bd9a849a45df034d3f76daffbc781348c3"
     },
     {
       "id": "im",
