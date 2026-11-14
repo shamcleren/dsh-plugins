@@ -4,6 +4,36 @@ import { requestQrCode, requestQrStatus, sendMessage } from '../../src/adapters/
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe('iLink API', () => {
+  it.each([
+    '{"message_id":9223372036854775807}',
+    '{"message_id":"9223372036854775807"}',
+    '{"message_id":123}',
+    '{"errcode":0}',
+  ])('accepts an acknowledged send when zero ret is omitted: %s', async body => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(new Response(body)))
+    await expect(sendMessage({ baseUrl: 'https://ilink.example.test', token: 'fixture-token',
+      userId: 'fixture-peer', item: { type: 1, text_item: { text: 'fixture reply' } } })).resolves.toBeUndefined()
+  })
+
+  it.each([
+    ['{"message_id":"9223372036854775807","ret":-5}', 'rejected'],
+    ['{"message_id":"9223372036854775807","errcode":-5}', 'rejected'],
+    ['{"ret":0,"errcode":-5}', 'rejected'],
+    ['{"message_id":"9223372036854775807","ret":-2}', 'context'],
+    ['{}', 'uncertain'],
+    ['{"message_id":0}', 'uncertain'],
+    ['{"message_id":"invalid"}', 'uncertain'],
+    ['{"message_id":"123","ret":"0"}', 'uncertain'],
+    ['null', 'uncertain'],
+    ['[]', 'uncertain'],
+    ['', 'uncertain'],
+  ])('does not hide an error or infer success from an invalid receipt: %s', async (body, kind) => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(new Response(body)))
+    await expect(sendMessage({ baseUrl: 'https://ilink.example.test', token: 'fixture-token',
+      userId: 'fixture-peer', item: { type: 1, text_item: { text: 'fixture reply' } } })).rejects.toMatchObject({ kind })
+  })
+
+
   it('requests an official bot QR code with local account tokens', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       qrcode: 'opaque-code', qrcode_img_content: 'https://qr.example.test',

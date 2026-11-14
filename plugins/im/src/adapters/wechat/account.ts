@@ -1,3 +1,4 @@
+import { mediaFailure } from './media-delivery.js'
 import type { Logger } from '@deepseek-ai/cordis'
 import { getUpdates, notifyLifecycle, sendMessage, sendTyping } from './api.js'
 import { DEFAULT_CDN_BASE_URL } from './config.js'
@@ -77,16 +78,18 @@ export class WeChatAccount {
 
   async sendImage(userId: string, bytes: Buffer, contextToken?: string): Promise<void> {
     const replyToken = contextToken ?? this.store.contextToken(this.credentials.accountId, userId)
+    if (bytes.length > this.mediaMaxBytes) throw mediaFailure('read', new Error('size limit'))
     const uploaded = await uploadImage({
       ...this.credentials,
       userId,
       bytes,
       cdnBaseUrl: DEFAULT_CDN_BASE_URL,
-    })
+      signal: this.abort.signal,
+    }).catch(error => { throw mediaFailure('upload', error) })
     await this.send(userId, {
         type: MessageItemType.IMAGE,
         image_item: { media: uploaded.media, mid_size: uploaded.midSize },
-    }, replyToken)
+    }, replyToken).catch(error => { throw mediaFailure('send', error) })
   }
 
   async sendFile(userId: string, bytes: Buffer, name: string, contextToken?: string): Promise<void> {
@@ -104,11 +107,11 @@ export class WeChatAccount {
     const uploaded = await uploadMedia({
       ...this.credentials, userId, bytes, cdnBaseUrl: DEFAULT_CDN_BASE_URL, signal,
       mediaType: name === undefined ? UploadMediaType.VIDEO : UploadMediaType.FILE,
-    })
+    }).catch(error => { throw mediaFailure('upload', error) })
     const replyToken = contextToken ?? this.store.contextToken(this.credentials.accountId, userId)
     await this.send(userId, name === undefined
         ? { type: MessageItemType.VIDEO, video_item: { media: uploaded.media, video_size: uploaded.ciphertextSize } }
-        : { type: MessageItemType.FILE, file_item: { media: uploaded.media, file_name: name, len: String(bytes.length) } }, replyToken)
+        : { type: MessageItemType.FILE, file_item: { media: uploaded.media, file_name: name, len: String(bytes.length) } }, replyToken).catch(error => { throw mediaFailure('send', error) })
   }
 
   private async send(userId: string, item: MessageItem, contextToken?: string): Promise<void> {

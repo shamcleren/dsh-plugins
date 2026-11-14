@@ -76,3 +76,53 @@ describe('WeChatAccount polling', () => {
     expect(onMessage).toHaveBeenCalledTimes(3)
   })
 })
+
+it.each(['upload', 'send'] as const)('reports sanitized %s stage without retrying media delivery', async stage => {
+  const fetch = vi.fn<typeof globalThis.fetch>(async input => {
+    const url = String(input)
+    if (stage === 'upload') throw new Error('https://cdn.test/?secret=TOKEN /private/file.jpg')
+    if (url.endsWith('/getuploadurl')) return Response.json({ ret: 0, upload_full_url: 'https://cdn.test/upload' })
+    if (url === 'https://cdn.test/upload') return new Response('', { status: 200, headers: { 'x-encrypted-param': 'fixture-param' } })
+    return Response.json({ ret: -1, errmsg: 'secret failure body' })
+  })
+  vi.stubGlobal('fetch', fetch)
+  const directory = await mkdtemp(join(tmpdir(), 'dsh-im-media-stage-'))
+  const store = await WeChatAccountStore.open(directory)
+  const account = new WeChatAccount({ accountId: 'fixture-account', token: 'fixture-token', baseUrl: 'https://ilink.example.test' }, store,
+    { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), success: vi.fn() } as never, 1024, async () => undefined)
+  try {
+    await expect(account.sendImage('fixture-peer', Buffer.from('ffd8ffe0', 'hex'), 'fixture-context'))
+      .rejects.toMatchObject({ stage, category: stage === 'upload' ? 'unknown' : 'rejected' })
+    expect(fetch).toHaveBeenCalledTimes(stage === 'upload' ? 1 : 3)
+  } finally { await account.stop(); await store.drain(); await rm(directory, { recursive: true, force: true }) }
+})
+
+it.each(['image', 'video', 'file'] as const)('matches Tencent outbound %s key and size contracts', async kind => {
+  const { createDecipheriv } = await import('node:crypto')
+  const source = Buffer.from('fixed-contract-fixture-17')
+  const fetch = vi.fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(Response.json({ upload_full_url: 'https://cdn.test/upload' }))
+    .mockResolvedValueOnce(new Response('', { headers: { 'x-encrypted-param': 'fixture-param' } }))
+    .mockResolvedValueOnce(Response.json({ ret: 0 }))
+  vi.stubGlobal('fetch', fetch)
+  const directory = await mkdtemp(join(tmpdir(), 'dsh-im-media-contract-'))
+  const store = await WeChatAccountStore.open(directory)
+  const account = new WeChatAccount({ accountId: 'fixture', token: 'fixture', baseUrl: 'https://ilink.example.test' },
+    store, { warn: vi.fn(), error: vi.fn() } as never, 1024, async () => undefined)
+  try {
+    if (kind === 'image') await account.sendImage('fixture', source, 'fixture')
+    else if (kind === 'video') await account.sendVideo('fixture', source, 'fixture')
+    else await account.sendFile('fixture', source, 'fixture.txt', 'fixture')
+    const reservation = JSON.parse(String(fetch.mock.calls[0]![1]!.body))
+    const ciphertext = Buffer.from(fetch.mock.calls[1]![1]!.body as Uint8Array)
+    const item = JSON.parse(String(fetch.mock.calls[2]![1]!.body)).msg.item_list[0][`${kind}_item`]
+    const hex = Buffer.from(item.media.aes_key, 'base64').toString('utf8')
+    expect(hex).toMatch(/^[0-9a-f]{32}$/u)
+    expect(hex).toBe(reservation.aeskey)
+    const decipher = createDecipheriv('aes-128-ecb', Buffer.from(hex, 'hex'), null)
+    expect(Buffer.concat([decipher.update(ciphertext), decipher.final()])).toEqual(source)
+    expect(kind === 'file' ? Number(item.len) : kind === 'video' ? item.video_size : item.mid_size)
+      .toBe(kind === 'file' ? source.length : ciphertext.length)
+    expect(fetch).toHaveBeenCalledTimes(3)
+  } finally { await account.stop(); await store.drain(); await rm(directory, { recursive: true, force: true }) }
+})

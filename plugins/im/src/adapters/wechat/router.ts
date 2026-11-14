@@ -1,3 +1,4 @@
+import { isImageBytes, mediaFailure, type MediaStage } from './media-delivery.js'
 import { ensureConversationSession } from '../../core/sessions.js'
 import { managementHelp, requiresHostSession, managementFailure } from '../../core/commands.js'
 import { createHash, randomUUID } from 'node:crypto'
@@ -615,13 +616,15 @@ export class WeChatConversationRouter {
     let failed = 0
     for (const ref of images) {
       if (this.stopping) return
+      let stage: MediaStage = 'read'
       try {
         if (readImage === undefined) throw new Error('this deployment has no attachment store')
         const data = await readImage(ref)
+        stage = 'send'
         await this.replies.sendImage(activeTurn.userId, Buffer.from(data), activeTurn.contextToken)
       } catch (error: unknown) {
         failed += 1
-        this.logger.error(error)
+        this.logger.warn(mediaFailure(stage, error).message)
       }
     }
     if (failed === 0 || this.stopping) return
@@ -635,6 +638,7 @@ export class WeChatConversationRouter {
     const signal = this.deliveryAbort.signal
     for (const file of files) {
       if (this.stopping) return
+      let stage: MediaStage = 'read'
       try {
         let loaded: OutboundFileBytes
         if (file.kind === 'presented') {
@@ -650,20 +654,22 @@ export class WeChatConversationRouter {
         signal.throwIfAborted()
         if (loaded.bytes.length > this.config.mediaMaxBytes) throw new Error('file exceeds mediaMaxBytes')
         const name = loaded.name.split(/[\\/]/u).at(-1) || 'attachment'
-        if (/\.(mp4|m4v|mov)$/iu.test(name)) {
+        stage = 'send'
+        if (isImageBytes(loaded.bytes)) {
+          await this.replies.sendImage(activeTurn.userId, loaded.bytes, activeTurn.contextToken)
+        } else if (/\.(mp4|m4v|mov)$/iu.test(name)) {
           await this.replies.sendVideo(activeTurn.userId, loaded.bytes, activeTurn.contextToken)
         } else {
           await this.replies.sendFile(activeTurn.userId, loaded.bytes, name, activeTurn.contextToken)
         }
-      } catch {
+      } catch (error: unknown) {
         failed += 1
-        // Signed CDN parameters and local paths must not enter channel logs.
-        this.logger.warn('wechat: file/video delivery failed')
+        this.logger.warn(mediaFailure(stage, error).message)
       }
     }
     if (failed === 0 || this.stopping) return
     await this.replies.sendText(activeTurn.userId,
-      `本轮 ${files.length} 个文件或视频中的 ${failed} 个未能发送到微信，请在 DSH 会话中查看；可能超过媒体大小限制或上传失败。`,
+      `本轮 ${files.length} 个附件中的 ${failed} 个未能发送到微信，请在 DSH 会话中查看；可能超过媒体大小限制或上传失败。`,
       activeTurn.contextToken)
   }
 

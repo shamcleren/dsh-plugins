@@ -61,7 +61,7 @@ function uploadUrl(reservation: { upload_full_url?: string; upload_param?: strin
   return `${cdnBaseUrl}/upload?encrypted_query_param=${encodeURIComponent(reservation.upload_param)}&filekey=${encodeURIComponent(fileKey)}`
 }
 
-/** Both key encodings accepted by iLink decode to the same AES-128 key. */
+/** Upload metadata for the Tencent iLink outbound media contract. */
 export interface MediaUploadRequest {
   baseUrl: string
   token: string
@@ -104,8 +104,9 @@ export async function uploadMedia(request: MediaUploadRequest & {
   if (encryptedParam === null || encryptedParam === '') {
     throw new Error('wechat: media upload returned no x-encrypted-param')
   }
+  // Tencent send.ts base64-encodes the hex TEXT, unlike tolerant inbound decoding.
   return {
-    media: { encrypt_query_param: encryptedParam, aes_key: key.toString('base64'), encrypt_type: 1 },
+    media: { encrypt_query_param: encryptedParam, aes_key: Buffer.from(key.toString('hex'), 'utf8').toString('base64'), encrypt_type: 1 },
     ciphertextSize: ciphertext.length,
   }
 }

@@ -37,14 +37,14 @@ describe('outbound media', () => {
       rawfilemd5: createHash('md5').update(png).digest('hex'),
       no_need_thumb: true,
     })
-    // getuploadurl wants the key as hex while the send-ready reference carries the
-    // same bytes in base64; a mismatch here renders as a broken image, not an error.
+    // Tencent outbound messages encode the 32-character hex text in base64,
+    // not the raw 16-byte key. Inbound tolerance is not an outbound contract.
     expect(reservation.aeskey).toMatch(/^[0-9a-f]{32}$/u)
     expect(reservation.filesize).toBe(uploaded.midSize)
     expect(uploaded.midSize).toBe(Math.floor(png.length / 16 + 1) * 16)
     expect(uploaded.media).toEqual({
       encrypt_query_param: 'encrypted-param-a',
-      aes_key: Buffer.from(String(reservation.aeskey), 'hex').toString('base64'),
+      aes_key: Buffer.from(String(reservation.aeskey), 'utf8').toString('base64'),
       encrypt_type: 1,
     })
   })
@@ -71,8 +71,10 @@ describe('outbound media', () => {
     expect(new Headers(uploadInit?.headers).get('Content-Type')).toBe('application/octet-stream')
     const ciphertext = Buffer.from(uploadInit?.body as Uint8Array)
     expect(ciphertext).toHaveLength(uploaded.midSize)
+    const keyHex = Buffer.from(uploaded.media.aes_key!, 'base64').toString('utf8')
+    expect(keyHex).toMatch(/^[0-9a-f]{32}$/u)
     const decipher = createDecipheriv(
-      'aes-128-ecb', Buffer.from(uploaded.media.aes_key!, 'base64'), null)
+      'aes-128-ecb', Buffer.from(keyHex, 'hex'), null)
     expect(Buffer.concat([decipher.update(ciphertext), decipher.final()])).toEqual(png)
   })
 

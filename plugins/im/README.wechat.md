@@ -84,7 +84,7 @@ New sessions use the managed “微信机器人” workspace and inherit the DSH
 
 ## Protocol limits
 
-Tencent iLink currently exposes direct-chat semantics to this plugin. Group behavior is not advertised. Harness prompt transport accepts text and image bytes, so voice uses Tencent's transcript when available; files and videos retain descriptive metadata instead of injecting unsupported binary prompt blocks. Outbound images are sent: each attachment is encrypted with AES-128-ECB, published to the iLink CDN through `getuploadurl`, and delivered as its own image message after the turn's text. A turn that produces only images still sends a short lead-in so the reply is never an empty bubble. Images that cannot be uploaded or sent are reported by count rather than dropped silently. Explicit file attachments and `present` tool deliveries are uploaded and sent as file or video messages after the text. Prose links do not trigger file reads; the public workspace filesystem enforces its normal read policy. Failed deliveries are reported by count. Voice output is not synthesized.
+Tencent iLink currently exposes direct-chat semantics to this plugin. Group behavior is not advertised. Harness prompt transport accepts text and image bytes, so voice uses Tencent's transcript when available; files and videos retain descriptive metadata instead of injecting unsupported binary prompt blocks. Outbound images are sent: each attachment is encrypted with AES-128-ECB, published to the iLink CDN through `getuploadurl`, and delivered as its own image message after the turn's text. A turn that produces only images still sends a short lead-in so the reply is never an empty bubble. Images that cannot be uploaded or sent are reported by count rather than dropped silently. Explicit file attachments and `present` tool deliveries are uploaded after the text; raster image signatures select native image messages, while other files retain file or video messages. Prose links do not trigger file reads; the public workspace filesystem enforces its normal read policy. Failed deliveries are reported by count. Voice output is not synthesized.
 
 ## Development
 
@@ -95,3 +95,9 @@ pnpm --filter @shamcleren/dsh-wechat build
 ```
 
 The configuration card is available under **Plugins → this installed bundle** in the catalog-pinned DSH runtime.
+
+### Presented images and delivery diagnostics
+
+`present` raster images (JPEG, PNG, GIF, WebP signatures) are delivered as native image messages, not generic file cards. Non-image files and videos retain their existing routes. A file extension alone does not select the image route.
+
+Media failures log an allowlisted stage (`read`, `upload`, `send`) and category, without paths, credentials, signed CDN URLs or response bodies. Successful API acceptance is not proof that the recipient rendered the image; real-client display still requires confirmation.

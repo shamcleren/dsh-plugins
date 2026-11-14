@@ -77,7 +77,7 @@ function hostFixture(disposition: 'next-turn' | 'next-step', historyEvents: Arra
     events: { mux: (_request: unknown, signal: AbortSignal) => bus.stream(signal) },
     respond: async () => ({ accepted: true as const }),
   } as unknown as HostApiProxy
-  return { api, prompt }
+  return { api, prompt, bus }
 }
 
 function routerFixture(
@@ -91,10 +91,11 @@ function routerFixture(
   const sendFile = vi.fn(async (_userId: string, _bytes: Buffer, _name: string, _token?: string) => undefined)
   const sendVideo = vi.fn(async (_userId: string, _bytes: Buffer, _token?: string) => undefined)
   const typing = vi.fn(async () => undefined)
+  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), success: vi.fn() }
   const router = new WeChatConversationRouter(
     api,
     { sendText, sendImage, sendFile, sendVideo, typing },
-    { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), success: vi.fn() } as never,
+    logger as never,
     { adminUsers: ['peer-a'], thinkingText: '正在思考…', turnTimeoutMs: 5_000,
       mediaMaxBytes: 1024, sendTyping: true, ...config },
     runtime ?? { bindings: { current: (_key, fallback) => fallback, set: async () => undefined },
@@ -104,7 +105,7 @@ function routerFixture(
     writeSettings,
   )
   router.start()
-  return { router, sendText, sendImage, sendFile, sendVideo, typing }
+  return { router, sendText, sendImage, sendFile, sendVideo, typing, logger }
 }
 
 describe('WeChatConversationRouter', () => {
@@ -441,7 +442,7 @@ it('sends file and video deliveries and reports partial failures', async () => {
   sendVideo.mockRejectedValue(new Error('upload failed'))
   router.accept(inbound('生成附件'))
   try {
-    await vi.waitFor(() => { expect(sendText.mock.calls.some(call => String(call[1]).includes('2 个文件或视频中的 1 个'))).toBe(true) })
+    await vi.waitFor(() => { expect(sendText.mock.calls.some(call => String(call[1]).includes('2 个附件中的 1 个'))).toBe(true) })
     expect(sendFile).toHaveBeenCalledWith('peer-a', Buffer.from('data'), 'report.txt', 'context-a')
     expect(sendVideo).toHaveBeenCalledWith('peer-a', Buffer.from('data'), 'context-a')
   } finally { await router.stop() }
@@ -494,5 +495,35 @@ it('lists and cancels only this peer\'s active tasks without creating a model tu
     await router.accept(inbound('/cancel', 'cancel-current'))
     expect(api.sessions.cancel).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ payload: { sessionId } }))
     expect(prompt).toHaveBeenCalledTimes(2)
+  } finally { await router.stop() }
+})
+
+it.each([false, true])('routes a presented JPEG to native image delivery (read failure=%s)', async failRead => {
+  const { api, bus } = hostFixture('next-step')
+  const jpeg = Buffer.from('ffd8ffe000104a464946', 'hex')
+  const readPresentedFile = vi.fn(async () => {
+    if (failRead) throw new Error('/private/file token=secret')
+    return { name: '中文行程.jpg', bytes: jpeg }
+  })
+  const { router, sendImage, sendFile, sendText, logger } = routerFixture(api, {
+    bindings: { current: (_key, fallback) => fallback, set: async () => undefined },
+    defaultWorkspace: { workspaceId: 'workspace-a', path: '/tmp', title: 'WeChat', sessionIds: [] },
+    readPresentedFile,
+  })
+  try {
+    await router.accept(inbound('发图片'))
+    const request = vi.mocked(api.sessions.prompt).mock.calls[0]![0]
+    for (const event of [
+      { type: 'agent/inbox/spliced', seq: 0, data: { inserted: [{ source: { rpcId: request.rpcId } }] } },
+      { type: 'turn/start', seq: 1, data: { turn: 1 } },
+      { type: 'deliverables/presented', seq: 2, data: { turn: 1, callId: 'present-a', files: [{ path: '/tmp/中文行程.jpg' }] } },
+      { type: 'turn/end', seq: 3, data: { turn: 1, reason: { kind: 'completed' } } },
+    ]) bus.push({ rpcId: `event-${event.seq}`, payload: { type: 'session/event', sessionId: request.payload.sessionId, event } })
+    if (failRead) {
+      await vi.waitFor(() => expect(sendText.mock.calls.some(call => call[1].includes('未能发送'))).toBe(true))
+      expect(logger.warn).toHaveBeenCalledWith('wechat: media delivery failed stage=read category=unknown')
+      expect(sendImage).not.toHaveBeenCalled()
+    } else await vi.waitFor(() => expect(sendImage).toHaveBeenCalledExactlyOnceWith('peer-a', jpeg, 'context-a'))
+    expect(sendFile).not.toHaveBeenCalled()
   } finally { await router.stop() }
 })

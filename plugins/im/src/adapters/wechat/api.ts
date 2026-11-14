@@ -170,7 +170,7 @@ export async function sendMessage(request: {
   signal?: AbortSignal
   clientId?: string
 }): Promise<void> {
-  let response: { ret?: number; errcode?: number; errmsg?: string }
+  let response: { ret?: number; errcode?: number; errmsg?: string; message_id?: number | string }
   try {
     const timeout = AbortSignal.timeout(API_TIMEOUT_MS)
     const result = await fetch(apiUrl(request.baseUrl, 'ilink/bot/sendmessage'), {
@@ -194,11 +194,23 @@ export async function sendMessage(request: {
     if (!result.ok) throw new WeChatSendError(result.status >= 500 ? 'uncertain' : 'rejected')
     response = parseProtocolJson(await result.text()) as typeof response
     if (response === null || typeof response !== 'object' || Array.isArray(response)
-      || response.ret !== 0 || (response.errcode !== undefined && response.errcode !== 0)) {
+      || (response.ret !== undefined && typeof response.ret !== 'number')
+      || (response.errcode !== undefined && typeof response.errcode !== 'number')) {
+      throw new WeChatSendError('uncertain')
+    }
+    if ((response.ret !== undefined && response.ret !== 0) || (response.errcode !== undefined && response.errcode !== 0)) {
       const reason = typeof response?.errmsg === 'string' ? response.errmsg : ''
       if (response?.ret === -2 || /prepare failed|rate.?limit/iu.test(reason)) throw new WeChatSendError('context')
       if (/context|expired/iu.test(reason)) throw new WeChatSendError('context')
-      throw new WeChatSendError(response?.ret === undefined ? 'uncertain' : 'rejected')
+      throw new WeChatSendError('rejected')
+    }
+    // iLink can omit zero-valued status fields and acknowledge a delivered
+    // message with only its uint64 identity. Keep an empty receipt uncertain.
+    const messageId = response.message_id
+    const hasMessageId = typeof messageId === 'string' ? /^[1-9][0-9]*$/u.test(messageId)
+      : typeof messageId === 'number' && Number.isSafeInteger(messageId) && messageId > 0
+    if (response.ret !== 0 && response.errcode !== 0 && !hasMessageId) {
+      throw new WeChatSendError('uncertain')
     }
   } catch (error) {
     if (error instanceof WeChatSendError) throw error
