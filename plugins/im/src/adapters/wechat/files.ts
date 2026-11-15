@@ -5,6 +5,20 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 
 export interface OutboundFileBytes { name: string; bytes: Buffer }
 
+/** Resolve optional file services in an injected scope, not the adapter's parent. */
+export function createPresentedFileReader(ctx: Context) {
+  let fileContext: Pick<Context, 'workspaceFiles' | 'sessionController'> | undefined
+  ctx.inject(['workspaceFiles', 'sessionController'], scope => {
+    fileContext = scope
+    scope.effect(() => () => { if (fileContext === scope) fileContext = undefined },
+      'wechat: workspace file reader')
+  })
+  return (sessionId: string, path: string, maxBytes: number, signal: AbortSignal): Promise<OutboundFileBytes> => {
+    if (fileContext === undefined) return Promise.reject(new Error('this deployment has no workspace file reader'))
+    return readPresentedFile(fileContext, sessionId, path, '', maxBytes, signal)
+  }
+}
+
 /** Bound memory even when a stored reference understates its length. */
 export async function collectFileBytes(source: AsyncIterable<Uint8Array>, maxBytes: number, signal: AbortSignal): Promise<Buffer> {
   const chunks: Buffer[] = []

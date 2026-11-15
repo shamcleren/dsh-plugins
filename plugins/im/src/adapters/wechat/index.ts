@@ -7,7 +7,7 @@ import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-api-workspace-files'
-import { readPresentedFile } from './files.js'
+import { createPresentedFileReader } from './files.js'
 import { installChannelApproval } from './approval.js'
 import { installChannelTitle } from './channel-title.js'
 import { ConversationBindings } from './bindings.js'
@@ -35,6 +35,7 @@ export const WECHAT_SETTINGS_NAMESPACE = 'wechat'
 export function apply(ctx: Context, config: PlainConfig | Volatile<PlainConfig>): void {
   const api = createHostApi(ctx, sessionId => runtime?.routesSession(sessionId) === true)
   const logger = ctx.logger(name)
+  const readPresentedFile = createPresentedFileReader(ctx)
   installChannelTitle(ctx, logger)
   const channelHome = join(resolveDshHome(), 'channels', 'wechat')
   const bindings = ConversationBindings.open(join(channelHome, 'bindings.json'))
@@ -72,10 +73,7 @@ export function apply(ctx: Context, config: PlainConfig | Volatile<PlainConfig>)
           if (attachments === undefined) throw new Error('this deployment has no attachment store')
           return attachments.readFileStream(ref, signal)
         },
-        readPresentedFile: async (sessionId, path, maxBytes, signal) => {
-          if (ctx.get('workspaceFiles') === undefined) throw new Error('this deployment has no workspace file reader')
-          return readPresentedFile(ctx, sessionId, path, '', maxBytes, signal)
-        },
+        readPresentedFile,
         readImage: async ref => {
           if (attachments === undefined) throw new Error('this deployment has no attachment store')
           return (await attachments.readImage(ref)).data

@@ -31,3 +31,23 @@ it('delivers explicit files once and ignores other turns and prose paths', () =>
   const done = projection.push({ type: 'turn/end', seq: 6, data: { turn: 1, reason: { kind: 'completed' } } })
   expect(done.outcome?.files).toEqual([{ kind: 'presented', path: 'report.txt' }])
 })
+
+it('uses an injected file scope and releases it when the optional service unloads', async () => {
+  const { createPresentedFileReader } = await import('../../src/adapters/wechat/files.js')
+  const stat = vi.fn(async () => ({ absolutePath: '/workspace/image.jpg', bytes: 4, version: 'one' }))
+  const readBytes = vi.fn(async () => ({ absolutePath: '/workspace/image.jpg', offset: 0, version: 'one', data: Buffer.from('jpeg'), eof: true }))
+  let activate!: (scope: unknown) => void
+  let dispose!: () => void
+  const parent = { inject: vi.fn((_deps, callback) => { activate = callback }),
+    get workspaceFiles(): never { throw new Error('cannot get property "workspaceFiles" without inject') },
+  }
+  const read = createPresentedFileReader(parent as never)
+  await expect(read('session', 'image.jpg', 10, new AbortController().signal)).rejects.toThrow('no workspace file reader')
+  activate({ sessionController: { inspect: async () => ({ meta: { cwd: '/workspace' } }) },
+    workspaceFiles: { stat, readBytes }, effect: (setup: () => () => void) => { dispose = setup() },
+  })
+  expect(parent.inject).toHaveBeenCalledWith(['workspaceFiles', 'sessionController'], expect.any(Function))
+  await expect(read('session', 'image.jpg', 10, new AbortController().signal)).resolves.toMatchObject({ bytes: Buffer.from('jpeg') })
+  dispose()
+  await expect(read('session', 'image.jpg', 10, new AbortController().signal)).rejects.toThrow('no workspace file reader')
+})
