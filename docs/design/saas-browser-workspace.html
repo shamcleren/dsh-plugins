@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>DSH SaaS 浏览器工作台 · 插件设计与最小 Demo</title>
+<style>
+:root{--bg:#f5f7fa;--paper:#fff;--ink:#192b40;--muted:#607086;--line:#dce3ec;--brand:#245fc6;--soft:#edf4ff;--green:#176451;--amber:#8d5b16;--mono:ui-monospace,SFMono-Regular,Consolas,monospace}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.8 system-ui,-apple-system,"PingFang SC",sans-serif}a{color:var(--brand);text-decoration:none}a:hover{text-decoration:underline}header,main,footer{max-width:1200px;margin:auto;padding:30px 38px}header{padding-top:55px}h1{font-size:36px;line-height:1.3;letter-spacing:-1px;margin:12px 0}h2{font-size:24px;margin:0 0 20px}h3{font-size:18px;margin:24px 0 10px}p{margin:12px 0}small,.muted{color:var(--muted)}.eyebrow{font-size:12px;letter-spacing:2px;color:var(--brand);font-weight:750}.lead{font-size:19px;max-width:940px}.tag{display:inline-block;border:1px solid var(--line);border-radius:6px;padding:2px 9px;margin:2px 4px 2px 0;font-size:12px;background:var(--paper)}nav{display:flex;flex-wrap:wrap;gap:8px 18px;padding-top:16px}section{scroll-margin-top:20px;background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:30px;margin-bottom:24px}.callout{border-left:4px solid var(--brand);background:var(--soft);padding:14px 18px;border-radius:0 8px 8px 0}.good{color:var(--green);font-weight:650}.pending{color:var(--amber);font-weight:650}code{font:12px/1.6 var(--mono);overflow-wrap:anywhere}pre{overflow:auto;background:var(--bg);padding:18px;border-radius:8px;white-space:pre-wrap;font:12px/1.65 var(--mono)}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;vertical-align:top;padding:12px;border-bottom:1px solid var(--line)}th{background:var(--bg);font-weight:650}td:first-child{min-width:130px}ul,ol{padding-left:23px}li{margin:7px 0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.box{border:1px solid var(--line);padding:17px;border-radius:9px}.box h3{margin-top:0}.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.flow span{border:1px solid var(--line);border-radius:8px;padding:7px 12px;background:var(--bg)}.flow b{color:var(--muted)}details{margin:12px 0;border:1px solid var(--line);border-radius:8px;padding:12px 16px}summary{cursor:pointer;font-weight:650}.mock{border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:20px}.mock-head{padding:12px 18px;background:var(--bg);display:flex;justify-content:space-between;gap:12px}.mock-body{display:grid;grid-template-columns:minmax(230px,.8fr) minmax(320px,1.5fr)}.chat{padding:22px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:15px}.bubble{padding:12px;background:var(--bg);border-radius:9px}.bubble.user{background:var(--soft)}.task-card{padding:13px;border:1px solid var(--line);border-radius:9px}.composer{margin-top:auto;padding:10px;border:1px solid var(--line);border-radius:8px;color:var(--muted)}.surface{padding:20px;min-width:0}.surface input[type=radio]{position:absolute;opacity:0;width:1px;height:1px}.switch{display:flex;flex-wrap:wrap;gap:7px;margin:16px 0}.switch label{cursor:pointer;padding:5px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px}.screen{display:none;min-height:260px}.surface #form:checked~.switch label[for=form],.surface #table:checked~.switch label[for=table],.surface #dashboard:checked~.switch label[for=dashboard],.surface #list:checked~.switch label[for=list],.surface #source:checked~.switch label[for=source]{color:var(--brand);background:var(--soft);border-color:var(--brand)}#form:checked~.screen-form,#table:checked~.screen-table,#dashboard:checked~.screen-dashboard,#list:checked~.screen-list,#source:checked~.screen-source{display:block}.surface input[type=radio]:focus-visible~.switch{outline:2px solid var(--brand);outline-offset:3px}.field{display:block;margin:12px 0}.field input,.field select{display:block;width:100%;font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink)}button{font:inherit;border:1px solid var(--line);border-radius:7px;padding:7px 13px;background:var(--soft);color:var(--brand)}button:disabled{opacity:.75}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metric{background:var(--bg);border-radius:8px;padding:13px}.metric strong{display:block;font-size:27px}.bar{display:grid;grid-template-columns:65px 1fr 25px;align-items:center;gap:8px;margin:12px 0}.bar i{height:13px;background:var(--brand);border-radius:4px}.sample-source{border:1px dashed var(--line);padding:14px;background:var(--bg);border-radius:8px}.source-note{font-size:12px;color:var(--muted);margin-top:15px}.evidence-list{font-size:13px}.evidence-list li{margin:12px 0}.small{font-size:13px}.check{font-weight:650;color:var(--green)}footer{padding-top:0;color:var(--muted);font-size:13px}@media(prefers-color-scheme:dark){:root{--bg:#131c29;--paper:#1b2839;--ink:#e5edf8;--muted:#a4b3c8;--line:#35465e;--brand:#8bb8ff;--soft:#243c5b;--green:#8addc0;--amber:#efc47d}}@media(max-width:800px){header,main,footer{padding:20px}h1{font-size:29px}section{padding:20px}.grid,.mock-body{grid-template-columns:1fr}.chat{border-right:0;border-bottom:1px solid var(--line)}.metrics{grid-template-columns:repeat(3,1fr)}.mock-head{flex-direction:column}}@media print{body{background:white;color:black}section{break-inside:avoid}nav,.switch{display:none}.screen{display:block;min-height:0;margin:18px 0}.mock-body{display:block}header,main,footer{max-width:none;padding:15px}a{color:inherit}details{display:block}}
+</style>
+</head>
+<body>
+<header>
+<div class="eyebrow">DESIGN PROPOSAL · 2026-11-12</div>
+<h1>让 SaaS 成为 DSH 的可操作工作台</h1>
+<p class="lead">在原会话里提出任务，在旁边查看原页面与业务视图，补充输入后继续执行。优先组合现成浏览器插件与生成式 UI 组件，只补齐任务、数据来源和动作控制之间的连接。</p>
+<div><span class="tag">基线 DSH 0.2.1-rc.5</span><span class="tag">设计背景 · 最小 demo 已实现</span><span class="tag">单网站 / 单账号 / 单任务</span><span class="tag">不修改官方源码</span></div>
+<nav aria-label="文档导航"><a href="#decision">设计结论</a><a href="#reuse">现有插件调研</a><a href="#ui">交互示意</a><a href="#seams">公开扩展点</a><a href="#flow">完整流程</a><a href="#protocol">数据与动作协议</a><a href="#scope">第一版范围</a><a href="#acceptance">验收与风险</a><a href="#evidence">证据索引</a></nav>
+</header>
+<main>
+<section class="callout"><strong>设计演进（2026-11-13）：</strong>下文保留首轮方案与调研背景。当前 demo 已切换为真实模型，通过三个工作台工具逐步观察、查询和查看配置；复用社区浏览器服务，并在 DSH 弹框内提供实时页面与接管。旧固定配方的验证结论不能替代新流程验收。<a href="../../plugins/saas-browser-workspace/README.md">插件 README</a> 是当前实现范围、复用结果、启动方法与限制的权威说明。</section>
+<section id="decision">
+<h2>01 · 推荐方案</h2>
+<div class="callout"><strong>可以实现截图 + 表单 + 仪表盘 + 表格 + 信息列表，而且不需要重做 DSH 会话系统。</strong>右侧采用官方 session 标签页；浏览器底层优先验证官方 Playwright MCP provider；业务 UI 优先验证 <code>@changfenhuang/dsh-genui/embed</code> 的受限组件子集。</div>
+<p>建议插件暂名 <strong>SaaS Browser Workspace</strong>。它在 AI OS 中承担“执行通道 + 任务交互面”的角色。DSH 主 Agent 继续负责理解、规划和调用工具；领域知识、业务规则和完成标准仍由任务约定或领域 Skill 提供。</p>
+<div class="grid">
+<div class="box"><h3>第一版要证明什么</h3><p>用户在会话中要求查询网站资料；插件采集可验证数据，在同一个 session 旁显示筛选表单、表格、列表和简单汇总，并能回看对应截图。</p><p>这些视图由任务和数据动态选择、组合，不要求模型生成可执行前端代码。</p></div>
+<div class="box"><h3>选型结论的证据级别</h3><p><span class="good">已核对：</span>本地锁定包的 exports、类型和实现；官方浏览器 provider 的同版本发布包；社区候选的文档及部分接口；目标站点登录后的列表结构与一次关键词查询。</p><p><span class="pending">验收边界：</span>打包后的官方 Web profile 已通过本地站点查询、补参续跑和截图检查。已补充一个真实站点的登录续跑与查询验证；macOS 应用壳仍需单独验收，本地假数据不能代替真实账号验证。</p></div>
+</div>
+<p class="small">用户已明确授权只读查看开发站点。已通过现有 Chrome 登录会话进入“服务市场 → 智能体”，核对卡片字段并完成一次关键词查询，第一条任务据此确定。勘察未创建、修改或执行业务资源；独立浏览器的登录续跑与关键词查询已完成一次验证，其他 SSO 分支未验证。真实地址、账号、记录内容与站点截图不写入公共仓库。</p>
+</section>
+
+<section id="reuse">
+<h2>02 · 已有插件：值得复用的不只是浏览器驱动</h2>
+<p>调研覆盖官方源码及发布包、公开社区仓库、本仓库插件。目录网站只用于发现，下面的能力判断以项目自身文档或代码为依据。没有安装、启动或执行这些候选插件。</p>
+<div class="table-wrap"><table>
+<thead><tr><th>候选</th><th>已找到的能力</th><th>本方案的使用方式</th><th>限制 / 验证程度</th></tr></thead>
+<tbody>
+<tr><td><a href="https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/experimental/browser-use-playwright-mcp/README.md">官方 browser-use-playwright-mcp</a></td><td>按 live session 准备 MCP 连接、串行调用、资源回收；启动隔离 Chromium 或 attach 到现有浏览器。</td><td><strong>浏览器底层首选。</strong>核对到 npm 发布的 <code>0.2.1-rc.5</code>，固定依赖 <code>@playwright/mcp@0.0.80</code>。</td><td>experimental；当前 checkout 未装载。公开配置没有完整站点策略、数据提取和业务 UI；需通过 DSH 工具通道调用。</td></tr>
+<tr><td><a href="https://github.com/anweat/dsh-browser">anweat/dsh-browser</a><br><code>0.2.3</code></td><td>结构化 controls / tables、截图、语义定位、session 隔离、登录 profile、recipe；目录工具和执行工具分离。</td><td><strong>浏览器替代候选和产品参考。</strong>适合参考按需 schema、严格定位、观察版本和错误处理。</td><td>发布包与导出已检查；作者称验证过 rc.5，本轮未复验。域名配置不等同网络防火墙；不直接调用内部文件或绕过工具审批的 service 方法。</td></tr>
+<tr><td><a href="https://github.com/omdsh-dev/dsh-browser">omdsh-dev/dsh-browser</a></td><td>DSH bridge + Chrome / Firefox 扩展，操作当前已登录标签页，页面结构化快照、截图与会话入口。</td><td><strong>后续“使用我的浏览器”方案参考。</strong>适合研究显式选择标签页、权限交接和登录态复用。</td><td>项目声明锁定 rc.5；需要两端安装。第一版不引入扩展部署，也不接管用户日常浏览器 profile。</td></tr>
+<tr><td><a href="https://github.com/cheng-nan01/dsh-tool-playwright">cheng-nan01/dsh-tool-playwright</a></td><td>Playwright 工具直接在 Harness 进程中运行，打开、操作、读取页面。</td><td>参考最小原生插件结构，作为备选实现研究。</td><td>所查 manifest 为 <code>0.1.0</code>，部分 peer 为 <code>*</code>；不能据此认定 rc.5 兼容。</td></tr>
+<tr><td><a href="https://github.com/omdsh-dev/dsh-genui">omdsh-dev/dsh-genui</a><br><code>@changfenhuang/dsh-genui@0.16.0</code></td><td>表格、列表、指标、表单控件、图表和动作回传；公开 <code>/embed</code> 导出 <code>GenuiBlock</code>、<code>GenuiActionContext</code>、spec 校验入口。</td><td><strong>业务 UI 首选候选。</strong>嵌入自己的右侧标签页，将受限 PanelSpec 转为组件 spec；动作交给本插件验证。</td><td>npm 版本和 embed 导出已核对，源码入口也已读取；打包 CSS、React 实例、资源路径、宿主主题及动作行为仍须验收。</td></tr>
+<tr><td><a href="https://github.com/dreamfarer-space/deepseek-harness-intelligent-ui">deepseek-harness-intelligent-ui</a><br><code>0.2.15</code></td><td>声明式组件、表单回传、状态保存和版本更新；公开 <code>/controlled</code>、<code>/catalog</code>、<code>/portable</code>。</td><td><strong>UI 替代候选。</strong>重点参考受控 renderer、状态更新和表单往返。</td><td>发布 manifest 与文档已查；controlled 具体契约未完整审查，不在本设计中虚构其调用方法。</td></tr>
+<tr><td><a href="https://github.com/MindLab-Research/dsh-generative-ui">MindLab-Research/dsh-generative-ui</a><br><a href="https://github.com/yunyv/dsh-intelligent-ui">yunyv/dsh-intelligent-ui</a></td><td>前者提供 TSX 流式界面与侧边画布；后者提供 DSL、Worker 执行和版本化界面。</td><td>参考原地更新、持久化与画布交互；第一版采用固定组件协议。</td><td>自由代码或表达式运行增加执行边界和依赖管理成本。仅做文档、manifest 层比较，未安全审计或运行。</td></tr>
+<tr><td>本仓库 security-scan / desktop-share / web-search</td><td>Host + client 分包、面板、原生会话排队、RPC、审批、附件和 MCP 接入范例。</td><td>复用工程约定与公开 API 使用方式；按组件独立实现业务逻辑。</td><td>不跨包引用其私有源码。现有工作区改动中的代码只作为当前实现证据，不等于已发布兼容验证。</td></tr>
+</tbody></table></div>
+<h3>选型顺序</h3>
+<ol><li><strong>先用官方 provider + GenUI embed 做接缝验收。</strong>验证 snapshot、截图、输入回传和右侧挂载，成功后固定版本。</li><li>若官方 provider 的结构化采集适配成本明显过高，再评估 <code>@anweat/dsh-browser</code>；两套底层只选一套，不同时让两个执行器拥有同一浏览器。</li><li>若 GenUI 的公开 embed 无法满足隔离与打包要求，则评估 controlled renderer；仍不合适时，第一版只实现四类必要组件，不创建通用 UI 平台。</li></ol>
+<p><strong>已有模块解决了“能操作”和“能显示”的大部分基础问题。</strong>我们的主要增量是：站点登记、任务与账号绑定、来源可信的数据转换、人工输入往返、截图证据，以及 UI 动作到浏览器动作的受控映射。</p>
+</section>
+
+<section id="ui">
+<h2>03 · 用户看到的形态</h2>
+<p>会话区保留任务摘要和状态卡。右侧以一个 <code>saas-workspace</code> 标签页承载“业务视图 / 原页面”。关闭面板只关闭展示，不取消任务；窄屏使用宿主已有的展开/全屏规则。</p>
+<div class="mock">
+<div class="mock-head"><strong>DSH · 当前会话</strong><small>文档线框 · 以下全是示例数据，非目标站点截图</small></div>
+<div class="mock-body">
+<div class="chat">
+<div class="bubble user">帮我查询服务市场中的智能体，整理名称、类型和版本，并按类型汇总。</div>
+<div class="bubble">可以先填写查询条件。我会读取页面，并在旁边展示结果。</div>
+<div class="task-card"><strong>网站任务 · 待填写条件</strong><br><small>数据仅在选择的站点和任务内使用</small><p>打开工作台 →</p></div>
+<div class="bubble">完成后：已读取 3 条示例记录。汇总和原页面证据保留在右侧，可继续追问。</div>
+<div class="composer">继续追问，或在右侧填写条件…</div>
+</div>
+<div class="surface">
+<strong>网站工作台</strong><br><small>当前任务 · 原会话绑定 · 示例观察 #03</small>
+<input type="radio" name="view" id="form" checked><input type="radio" name="view" id="table"><input type="radio" name="view" id="dashboard"><input type="radio" name="view" id="list"><input type="radio" name="view" id="source">
+<div class="switch"><label for="form">表单输入</label><label for="table">表格</label><label for="dashboard">仪表盘</label><label for="list">信息列表</label><label for="source">原页面</label></div>
+<div class="screen screen-form"><h3>查询条件</h3><label class="field">关键词<input placeholder="例如：演示" aria-label="示例关键词"></label><label class="field">结果展示<select aria-label="示例展示方式"><option>表格</option><option>信息列表</option></select></label><button disabled>提交条件并继续（示意）</button><p class="small muted">关键词用于网站搜索，展示方式只影响本地视图。登录密码与验证码在原浏览器输入。</p></div>
+<div class="screen screen-table"><h3>当前读取结果</h3><div class="table-wrap"><table><thead><tr><th>智能体</th><th>类型</th><th>版本</th></tr></thead><tbody><tr><td>演示智能体 A</td><td>单智能体</td><td>1.0.0</td></tr><tr><td>演示智能体 B</td><td>单智能体</td><td>1.1.0</td></tr><tr><td>演示智能体 C</td><td>流程智能体</td><td>2.0.0</td></tr></tbody></table></div><p class="source-note">显示 3 条虚构示例。真实实现另含标签、描述，并注明已读取范围；不将网站顶部总数当成筛选结果数。</p></div>
+<div class="screen screen-dashboard"><h3>读取范围内的汇总</h3><div class="metrics"><div class="metric">已读取<strong>3</strong></div><div class="metric">单智能体<strong>2</strong></div><div class="metric">流程智能体<strong>1</strong></div></div><div class="bar"><span>单智能体</span><i style="width:100%"></i><span>2</span></div><div class="bar"><span>流程智能体</span><i style="width:50%"></i><span>1</span></div><p class="source-note">由同一份表格确定性聚合；未读取的运行状态、使用量和时间趋势不展示。</p></div>
+<div class="screen screen-list"><h3>记录摘要</h3><div class="box"><strong>演示智能体 A</strong><br><small>单智能体 · 1.0.0 · 示例说明 A</small></div><div class="box"><strong>演示智能体 B</strong><br><small>单智能体 · 1.1.0 · 示例说明 B</small></div><div class="box"><strong>演示智能体 C</strong><br><small>流程智能体 · 2.0.0 · 可展开已采集字段</small></div></div>
+<div class="screen screen-source"><h3>原页面截图区域</h3><div class="sample-source"><strong>这里显示实际浏览器截取的图像</strong><p>本设计稿不包含目标站点截图。</p><p>实际界面显示：页面标题、脱敏 URL、采集时间、观察编号、覆盖范围，以及“刷新截图 / 放大 / 在浏览器接管”。</p></div><p class="source-note">截图是某个时点的证据。点击截图不直接点击网站；实时远程桌面不在第一版范围。</p></div>
+</div>
+</div>
+</div>
+<p class="small">线框中的标签可切换，仅用于讨论展示方式；没有接入 DSH、网站、模型或数据接口。表格排序、局部筛选和视图切换在客户端完成；需要重新查询网站时才创建任务动作。</p>
+</section>
+
+<section id="seams">
+<h2>04 · 公开扩展点：哪些可以复用</h2>
+<p>下表的宿主能力来自 <code>0.2.1-rc.5</code> 的包导出、类型声明及已发布实现，未以最新 master 替代锁定版本。证据路径见文末。</p>
+<div class="table-wrap"><table><thead><tr><th>能力</th><th>公开接口</th><th>可复用 / 需补齐</th></tr></thead><tbody>
+<tr><td>模型循环、对话历史</td><td>原生 Agent / Session / 工具执行链</td><td>直接复用。不另起一个自行调用模型的任务循环。</td></tr>
+<tr><td>工具注册与拦截</td><td><code>defineTool</code>、<code>ctx.tools.register</code>、<code>tools/pre-execute</code>、<code>tools/result</code>、<code>ctx.tools.guard</code></td><td>复用。本站点规则、动作分类、证据采集由插件实现；guard 只能追加拒绝，不能强制放行其他策略拒绝的调用。</td></tr>
+<tr><td>操作审批</td><td><code>PreToolDecision.kind = 'ask'</code>、<code>ctx.approval.request</code>，原生 approval UI</td><td>复用审批界面和结果。具体业务后果及一次性审批绑定仍由插件负责；缺少审批通道时拒绝。</td></tr>
+<tr><td>简单问题</td><td><code>ctx.userQuestions.ask / askTimed / answer</code></td><td>复用选择题/文字输入。其问题类型并不是任意表单 schema；日期、数值、多字段校验由业务面板补齐。</td></tr>
+<tr><td>右侧 session 面板</td><td><code>ctx.sidebarRightTabs.register</code> → <code>sidebar.right.pane.tab</code>；<code>ctx.sidebarRight.openTab</code></td><td>直接复用两阶段注册。通过 slot 注入的 sessionId 绑定状态；不覆盖 <code>root</code>、<code>rightbar.session</code> 等单占位。</td></tr>
+<tr><td>会话工具卡片</td><td><code>tool.call.toolview</code>，按工具名 keyed 注册；<code>presentCall / presentResult</code></td><td>复用外壳，新增任务摘要/打开面板入口。自动审批拒绝仍显示宿主原生拒绝信息。</td></tr>
+<tr><td>前后端通信</td><td><code>connection.rpc.handle / call</code>；<code>connection.fetch.register</code></td><td>复用已鉴权连接与资源路由。新增状态读取、提交表单、取消、截图读取等端点；校验 peer、run 归属和 revision。</td></tr>
+<tr><td>回到原会话</td><td><code>sessionController.prompt({sessionId, requestId, mode:'queue', content})</code>；工具 <code>exec.concludeTurn()</code></td><td>可让等待输入的回合结束，再排队进入同一 session。持久化任务状态、表单 CAS 和恢复收据需新增；不是恢复原 JS 调用栈。</td></tr>
+<tr><td>凭据引用</td><td><code>dsh-credentials</code> 的 resolve / record 接口</td><td>可用于未来凭据方案。第一版只在受控浏览器手动登录，不自动导出 cookie、保存密码或收集 OTP。</td></tr>
+<tr><td>浏览器生命周期</td><td>官方 <code>SessionResources</code> / <code>mountSessionMcp</code> 与 provider</td><td>复用 provider 的隔离、串行调用和卸载清理。<code>ctx.browserUse</code> 仅是 provider 注册服务，没有公开的 Page 对象或通用 execute 方法。</td></tr>
+<tr><td>浏览器标签页</td><td><code>dsh-client-ui-sidebar-browser</code>：Web iframe；特定桌面环境可用 browser bridge</td><td>可参考展示方式，不能当作 Playwright 会话。当前 macOS WKWebView 壳也没有实现该 Electron bridge；不假定它能读取跨域 DOM。</td></tr>
+<tr><td>截图与结构化数据</td><td>现成 browser provider 的工具结果，或替代插件的 observe / screenshot 动作</td><td>浏览器采集可复用；结果解析、遮罩/敏感页面策略、证据存储和来源关联需补齐。首个验收点核对实际截图结果格式。</td></tr>
+<tr><td>发布和安装</td><td>已有 bundle patch、client manifest、catalog 工件和版本检查</td><td>沿用仓库交付流程。新增插件独立构建、测试、发布；本设计不修改运行时锁和用户安装。</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="architecture">
+<h2>05 · 最小架构与所有权</h2>
+<div class="flow" aria-label="总体调用流程"><span>DSH 原会话</span><b>→</b><span>任务与站点策略</span><b>→</b><span>浏览器 Provider</span><b>→</b><span>页面观察 / 截图</span><b>→</b><span>标准数据 + PanelSpec</span><b>→</b><span>右侧业务面板</span></div>
+<div class="table-wrap"><table><thead><tr><th>层</th><th>责任</th><th>第一版选择</th></tr></thead><tbody>
+<tr><td>DSH Host</td><td>模型调用、session、工具生命周期、权限决策、客户端连接</td><td>全部复用。</td></tr>
+<tr><td>Browser Adapter</td><td>把选定 provider 的工具结果标准化，保留页面状态和证据来源</td><td>一个 provider、一种适配器。官方 MCP 工具通过 <code>ctx.tools.execute</code> 调用或原生 Agent 调用；不直接调用 ToolDefinition.execute。</td></tr>
+<tr><td>Site Profile</td><td>起始地址、业务/登录来源、页面与控件规则、字段映射、允许的查询动作、完成断言</td><td>一个人工核对的本地配置；不是扫描整站自动生成适配器。</td></tr>
+<tr><td>Run Store / Input Broker</td><td>session、站点、账号、运行状态、输入请求、revision、恢复收据</td><td>插件私有目录中的小型持久化状态；原子写入并串行更新；单活任务。</td></tr>
+<tr><td>Observation / Dataset / Evidence</td><td>有限页面快照、标准行数据、字段来源、截图时间与覆盖范围</td><td>插件拥有存储；截图不塞入每轮文本上下文。模型读取必要摘要和目标区域。</td></tr>
+<tr><td>Surface Client</td><td>会话卡片、session 标签页、组件渲染、表单校验、来源查看</td><td>优先 GenUI embed 的白名单组件；原页面预览用普通图片组件。</td></tr>
+</tbody></table></div>
+<p><strong>避免重复拥有资源：</strong>官方 provider 拥有 MCP 子进程和浏览器生命周期；本插件拥有 task lease、截图副本、面板与输入请求。关闭标签页不释放用户 session；取消任务只取消本插件工作；卸载停止接收新任务，撤销监听并等待自己的工作结束。</p>
+<p><strong>上下文预算：</strong>不为每个 SaaS 常驻一套工具。站点目录只返回名称和用途，打开后按需读取当前配置；页面观察限制区域、行数和字节。官方 provider 会公开一组 MCP 工具，应仅保留 demo 必需子集并按已注册工具应用限制；不把它描述成天然只有两个工具。社区 indexed 工具模式可作为后续参考。</p>
+</section>
+
+<section id="flow">
+<h2>06 · 完整交互流程</h2>
+<ol>
+<li><strong>准备与启用：</strong>在隔离验收 profile 中装载插件和固定版本 provider。检查浏览器可用性与 UI 服务。provider 需要在 Agent 创建/恢复前挂载；不假设给正在运行的 Agent 热插入后就立即可用。</li>
+<li><strong>用户发起：</strong>在普通 DSH 会话输入查询目标。任务记录绑定实际 <code>exec.agent.session.id</code>，分配 runId，显示任务卡和右侧面板。第一版同一时刻只接纳一个浏览器任务。</li>
+<li><strong>登录：</strong>以 launch 模式打开独立可见浏览器。需要登录时标记 <code>awaiting_login</code>，停止采集敏感页面，用户在浏览器完成 SSO。点击工作台“我已登录，继续”后重新观察业务页面及账号标识。不能只凭按钮点击认定登录成功。</li>
+<li><strong>确定查询条件：</strong>能从对话确定的参数直接使用。缺失参数生成表单，保存 inputRequestId 与 revision，返回 <code>awaiting_input</code> 并结束本回合。用户无需回到原网站填写业务筛选条件。</li>
+<li><strong>提交输入：</strong>Client 提交已校验字段 → Host 复验 session/run/账号/请求状态/revision → 原子登记一次输入 → 使用固定 requestId 向原 session 排队一条后续消息。重复点击返回同一收据；已失效的表单不可操作。</li>
+<li><strong>观察与执行：</strong>Agent 读取新的任务状态，定位服务市场智能体列表，填写关键词并确认查询。第一版只采集当前已渲染结果，不自动翻页或进入独立详情。每次动作使用最近一次观察的引用；输入后重新核对控件，等待查询条件生效和结果更新，不能采集过渡期旧数据。登录失效或页面结构变化时暂停。</li>
+<li><strong>采集与展示：</strong>从实际页面提取结构化行数据和截图；对同一 observation 保存来源。模型选择四类组件的布局与字段；后端生成计数和分组，客户端显示并允许查看原页面。</li>
+<li><strong>继续交互：</strong>表格排序、折叠、切换列表在本地完成；新筛选或重新查询产生受控任务事件，再进入原会话。用户接管浏览器前，先停止接受 Agent 动作、等待当前操作稳定；交回后重新观察。</li>
+<li><strong>完成：</strong>验证所请求条件、读取范围与结果一致，生成 <code>succeeded</code> 或 <code>partial</code>，会话给摘要，面板保留数据和证据。已确认加载完成的空列表是有效结果；无法确认完整性或发生截断时，不报告“全部匹配结果”。</li>
+<li><strong>取消或重启：</strong>取消撤销输入请求并中止本任务，不能误停其他用户回合；重启后任务标记 <code>interrupted</code>。展示保存的结果，用户显式继续后重新登录/观察，不自动重放浏览器动作。</li>
+</ol>
+<pre aria-label="任务状态转换">created → awaiting_login → observing → awaiting_input → queued → running → verifying
+                                                        ↑          ↓              ↓
+                                                        └─ needs_human     succeeded / partial
+任意活动态 → cancelling → cancelled
+进程中断 → interrupted → 用户继续 → 重新观察
+后续写入版本：提交结果不明 → outcome_unknown → 查询核实，不自动重试</pre>
+<p><strong>原生问答与自定义表单的边界：</strong>一般选择问题使用 DSH userQuestions。复杂表单使用上述 Input Broker；表单提交后是“原 session 的下一回合”，不宣称 DSH 原生提供了完整、跨进程的业务工作流恢复。</p>
+</section>
+
+<section id="protocol">
+<h2>07 · 动态 UI 的数据与动作协议</h2>
+<p>增加一个小型 <code>PanelSpec v1</code> 作为稳定业务边界，再转换成选定 renderer 的 spec。它可以按任务动态组合组件，但字段值必须来自观察结果或明确标注的用户输入，不能把模型自由生成的数字当作网站事实。</p>
+<div class="table-wrap"><table><thead><tr><th>对象</th><th>必要字段 / 约束</th></tr></thead><tbody>
+<tr><td>Run</td><td><code>runId, sessionId, siteId, accountRef, status, revision</code>；身份由 Host 绑定，模型传入的 sessionId 不可信。</td></tr>
+<tr><td>Observation</td><td><code>observationId, runId, documentRevision, sanitizedUrl, title, capturedAt, coverage</code>；DOM、数据集、截图引用归于同一轮采集。页面持续变化时注明非原子快照。</td></tr>
+<tr><td>Dataset</td><td><code>datasetId, observationId, fields, rows, sourceRefs, truncated, coverage</code>；保留原始类型、单位与空值，不把空值变成 0。</td></tr>
+<tr><td>PanelSpec</td><td><code>schemaVersion, viewId, runId, revision, blocks[]</code>；不允许 script、HTML、远端 import、自定义 CSS 或任意 URL 请求。</td></tr>
+<tr><td>InputRequest</td><td><code>inputRequestId, runId, revision, fields, constraints, status</code>；第一版仅业务字段，不接受密码/令牌/支付资料。</td></tr>
+<tr><td>Action</td><td>Host 预先登记 <code>actionId</code> 及参数 schema、效果类别、目标观察版本。模型不能凭 UI JSON 声明一个可执行接口。</td></tr>
+<tr><td>Evidence</td><td><code>evidenceId, runId, observationId, mimeType, bytes, capturedAt, redacted</code>；通过已鉴权资源路由读取，不接受任意文件路径。</td></tr>
+</tbody></table></div>
+<h3>五种 block 的最小合同</h3>
+<div class="table-wrap"><table><thead><tr><th>类型</th><th>第一版能力</th><th>数据约束</th></tr></thead><tbody>
+<tr><td>form</td><td>关键词文本和展示方式单选；长度与枚举校验；提交一次后锁定</td><td>最多 2 个字段，额外字段拒绝。空关键词表示不加关键词条件。展示方式不触发网站动作；数值、日期和动态表单嵌套后置。</td></tr>
+<tr><td>table</td><td>固定业务列、客户端排序、展开已采集字段</td><td>引用 datasetId + field IDs；仅当前已渲染结果，最多 50 条。截断和覆盖未知明确显示，不实现网站翻页。</td></tr>
+<tr><td>dashboard</td><td>最多 4 个计数指标和 1 个分类条形图</td><td>仅在采集范围内做 count/groupCount；Host 计算，显示口径。趋势、跨系统指标与复杂 BI 后置。</td></tr>
+<tr><td>list</td><td>名称、类型、版本、标签、描述；展开已采集字段</td><td>绑定观察内的行引用与 sourceRef；没有稳定业务 ID 时不声称跨查询是同一记录。模型总结另标为“AI 摘要”，不增加独立详情动作。</td></tr>
+<tr><td>screenshot</td><td>缩略图、放大、刷新与人工接管入口</td><td>引用 evidenceId；显示时间和来源。登录阶段不采集，截图不作为实时控制面。</td></tr>
+</tbody></table></div>
+<pre aria-label="PanelSpec 概念示例">{
+  "schemaVersion": 1,
+  "viewId": "result-view",
+  "runId": "run-example",
+  "revision": 3,
+  "blocks": [
+    { "type": "dashboard", "datasetId": "dataset-03",
+      "metrics": [{ "id": "loaded", "op": "count", "label": "已读取" }] },
+    { "type": "table", "datasetId": "dataset-03",
+      "columns": ["name", "type", "version", "tags", "description"] },
+    { "type": "screenshot", "evidenceId": "evidence-03" }
+  ]
+}</pre>
+<p class="small">这是拟定义的业务合同，不是 DSH 或 GenUI 的已有 API。所有引用先在 Host 解析和校验，再转换为 renderer 的组件结构；UI 渲染失败退回普通文字/表格摘要，不生成可执行修复脚本。</p>
+<h3>模型工具与 UI RPC</h3>
+<p>较完整方案原拟拆分为三个工具（最小 demo 已收敛为一个业务工具，见上方实现说明）：<code>saas_task_open</code>（选站点并绑定任务）、<code>saas_request_input</code>（登记表单并结束等待回合）、<code>saas_present</code>（提交数据引用和视图结构）。浏览器动作经过同一套策略，原始 provider 工具也受限制，不能从另一个入口绕过。</p>
+<p>UI RPC 拟定为 <code>state / submitInput / resume / cancel / requestRefresh</code>。其中 <code>submitInput</code> 携带 <code>inputRequestId + expectedRevision + submissionId</code>，Host 串行 CAS 并保存稳定的 session prompt requestId。宿主有重复请求识别，插件仍负责并发去重和不确定收据核对。</p>
+<p>GenUI 的 <code>GenuiActionContext</code> 只提供交互事件入口。我们将 action 限定为已有 actionId，拒绝未知参数和过期 revision；不能把自由 action 字符串直接转换成浏览器脚本或 HTTP 请求。</p>
+</section>
+
+<section id="boundary">
+<h2>08 · 需要补齐的可靠性边界</h2>
+<div class="grid">
+<div class="box"><h3>页面内容是输入数据</h3><p>网页文字、隐藏字段、网络响应和 UI schema 都不能增加权限。模型不能通过“网页提示”放宽站点策略。数据提取使用有限 DOM/可访问性观察；不把整站 HTML/JS 填入上下文。</p></div>
+<div class="box"><h3>浏览器权限独立约束</h3><p>DSH 文件沙箱不自动限制网页网络或登录账号权限。工具 URL 检查、provider 的域名选项都不等于完整出站隔离；重定向、iframe、子资源和 WebSocket 仍需单独核验。</p></div>
+<div class="box"><h3>登录与截图</h3><p>第一版使用独立可见浏览器，凭据不进聊天、任务日志和截图。登录状态留在 provider 的临时会话中；进程结束后重新登录，不宣称持久登录或自动续期。</p></div>
+<div class="box"><h3>“只读查询”由业务语义定义</h3><p>输入框可能自动保存，GET 也可能触发业务变化。第一版仅开放已核对的列表导航、关键词输入与查询确认；其他网站控件不在动作集合内。不能用 HTTP 方法或按钮名称自动证明无副作用。</p></div>
+</div>
+<p><strong>对真实站点的前置条件：</strong>确认页面跳转及资源加载符合环境访问策略、使用账号允许读取的数据范围、传给模型的数据可见范围。若所选 provider 的公开配置无法提供必要的网络边界，保留这一限制，使用允许的隔离网络环境或替换适配器；不修改官方包或用提示词冒充强制隔离。</p>
+<p><strong>后续写入：</strong>填写参数和批准提交是两件事。写入前显示目标账号、对象、字段差异及后果；审批绑定本次参数摘要和页面版本。超时后的未知结果先读取确认，不能自动重试或改走 API 重复提交。第一版不提供网站写入动作。</p>
+</section>
+
+<section id="scope">
+<h2>09 · 第一版范围与明确后置项</h2>
+<p><strong>确定的演示任务：</strong>“进入用户指定开发站点的服务市场，按关键词查询智能体，把当前已渲染结果整理成表格和信息列表，按类型汇总，并展示对应的原页面截图；用户在 DSH 表单中补充或更换关键词后继续查询。”</p>
+<h3>授权勘察得到的页面依据</h3>
+<div class="table-wrap"><table><thead><tr><th>实际观察</th><th>对第一版的影响</th></tr></thead><tbody>
+<tr><td>现有 Chrome 登录会话能进入服务市场的智能体卡片列表，并完成关键词查询。</td><td>业务任务已确定；尚未验证独立 launch 浏览器的登录，也未通过拟选 DSH provider 执行。</td></tr>
+<tr><td>卡片提供名称、类型、版本、标签与描述。一次查询同时命中名称或描述包含关键词的记录。</td><td>采用这五个业务字段；关键词沿用网站搜索语义，不限定为名称精确匹配。状态、创建时间、更新人等未采集字段不填造。</td></tr>
+<tr><td>主搜索是自定义可编辑元素；输入后用于表示空输入状态的 CSS 类会变化。</td><td>不硬编码状态类或复用旧观察引用。动作前检查唯一定位，输入后重新观察，再确认查询；失配时重新定位，不盲目重试。</td></tr>
+<tr><td>导航后曾先显示空列表，稍后加载卡片；确认查询后也曾短暂保留旧结果。</td><td>加载完成判断属于 Site Profile 的必需合同。条件已提交不等于结果已更新；尚不能证明空结果完成时，保持等待或返回不确定。</td></tr>
+<tr><td>关键词查询改变卡片结果，但顶部“全部”及侧栏标签计数仍保留原口径。</td><td>仪表盘仅由本次采集行生成 count/groupCount；页面全局计数不能充当筛选结果总量。</td></tr>
+<tr><td>本轮查询结果可直接从渲染卡片读取；点击所查卡片标题未观察到详情导航，未验证分页。</td><td>第一版仅当前渲染结果、最多 50 条；“详情”只展开已采集字段。网站翻页、独立详情、标签筛选和排序操作后置。</td></tr>
+</tbody></table></div>
+<p class="small">这里仅记录可公开的交互结构。真实搜索词、数量与运行地址留在本地勘察记录，不能作为固定测试期望。站点会变化，实施时仍需按锁定 provider 重新观察并确认完成信号。</p>
+<div class="table-wrap"><table><thead><tr><th>纳入最小 Demo</th><th>边界</th></tr></thead><tbody>
+<tr><td>一个站点配置、一个账号、一个活动任务</td><td>站点地址/登录来源在本机配置，不建多租户账号中心。</td></tr>
+<tr><td>现成浏览器 provider + 普通 DSH Agent</td><td>同机运行的 Web profile，优先开发者当前 macOS 环境验收；不同时开发云浏览器或本地浏览器扩展。</td></tr>
+<tr><td>表单、表格、信息列表、简单仪表盘</td><td>关键词 + 展示方式表单；五个已观察字段；已读取数量 + 类型分组。一个受限 spec 复用同一份 dataset。</td></tr>
+<tr><td>页面截图、来源标签、人工接管</td><td>按动作或手动刷新；截图放大；在独立浏览器内接管，不做视频流或截图坐标遥控。</td></tr>
+<tr><td>等待输入 → 原会话继续</td><td>新增轻量任务状态与输入收据；重启显示中断状态，人工恢复。</td></tr>
+<tr><td>可核对的查询结果</td><td>验证筛选条件、列表范围、行数和截图来源；页面不支持时返回 partial/unsupported。</td></tr>
+</tbody></table></div>
+<p><strong>后置：</strong>创建/修改/删除业务数据、支付发布等高后果操作；跨 SaaS 编排；自动解析全站 JS；把私有前端 API 自动变成代理；录制并自动推广工作流；无人值守长期登录；复杂图表/图形控件；任意 TSX/HTML 执行；多账号并发与云端远程桌面。</p>
+<h3>泛化能力怎么验证</h3>
+<p>浏览器动作、任务协议和四类 UI 可泛化；站点业务语义、登录机制、复杂控件和完成断言仍需适配。第一版交付时，至少验证不同查询词、真实空结果、延迟加载、超过读取上限和过期表单；数量期望按当次观察核对。第二个站点只增加 Site Profile 即可完成同类任务，才构成“跨站泛化”的证据；一个站点成功不足以证明任意网站可用。</p>
+</section>
+
+<section id="acceptance">
+<h2>10 · 落地步骤和验收门槛</h2>
+<p>顺序按依赖安排，不在设计阶段安装插件或改动官方模块。</p>
+<div class="table-wrap"><table><thead><tr><th>步骤</th><th>最小交付物</th><th>通过条件</th></tr></thead><tbody>
+<tr><td>A. 复用接缝验证</td><td>隔离 profile 下固定官方 provider 和 GenUI embed；静态本地夹具</td><td>工具注册正常；快照和截图可读；右侧面板随 session 切换；组件可提交数据并回到同一会话。记录原始工具名、schema 与截图实际格式。</td></tr>
+<tr><td>B. 站点适配复验</td><td>一个 Site Profile 和只读任务合同</td><td>页面字段与关键词查询已初步勘察；用所选 provider 复验独立 SSO、允许的来源、可靠定位、查询完成信号与截图格式。仅当前渲染结果，不将翻页或详情标为已支持。</td></tr>
+<tr><td>C. 贯通最小任务</td><td>Task/Input Store、Observation/Dataset、四类 UI + 截图</td><td>一条自然语言请求完成查询；补充一次表单后继续；统计与已读取行完全一致，来源可回看。</td></tr>
+<tr><td>D. 失败与交付验证</td><td>针对性测试、打包工件、最短使用说明</td><td>覆盖重复提交、旧页面引用、错 session、登录失效、取消、Host 重启、截图资源越权；验证真实构建包在 rc.5 profile 的启动和卸载。</td></tr>
+</tbody></table></div>
+<p><strong>Demo 完成标准：</strong>目标账号通过锁定 provider 真实跑通服务市场关键词查询；四类业务视图与截图来自同一次可核对的采集，类型分组之和等于已读取行数，覆盖范围和截断可见；用户能在 DSH 补参继续；原始浏览器工具无法绕过本插件的任务策略；断线/取消/过期输入没有重复执行。上述真实账号验收与无密钥夹具测试分开记录。</p>
+<details><summary>原设计目录建议（实际实现以插件目录为准）</summary><pre>plugins/saas-browser-workspace/
+  src/index.ts                  # Host 装配、工具与生命周期
+  src/browser-adapter.ts        # 唯一 provider 适配，不复制驱动
+  src/site-profile.ts           # 站点与动作合同
+  src/run-store.ts              # 任务、输入与恢复收据
+  src/observation.ts            # 标准数据与来源
+  src/policy.ts                 # 硬性拒绝、范围与状态检查
+  src/rpc.ts                    # 已鉴权 UI 通信
+  src/client/index.ts           # session 右侧标签 + 工具卡
+  src/client/panel.tsx          # GenUI 受限适配 + 截图
+  src/client/locales.ts         # UI 本地化
+  tests/fixtures/               # 无凭据站点夹具
+  cordis.patch.yml              # 公开扩展点装配
+  package.json                 # 锁定兼容范围和真实导出</pre></details>
+<p class="small">插件本身最终通过新 catalog 工件交付，沿用 <code>dhp update</code> 约定。本轮只提供设计文档；没有新增源码、修改依赖、安装候选、更新现有运行环境或发布内容。</p>
+</section>
+
+<section id="evidence">
+<h2>11 · 证据索引与待验证项</h2>
+<p>本地结构索引未初始化，因此没有执行 CodeGraph init；改为读取实际包导出、类型与实现。以下路径相对于本文件，<code>node_modules</code> 链接只在当前检出可用。发布包研究使用临时目录、核对 npm integrity，未执行包代码。</p>
+<ol class="evidence-list">
+<li><a href="../../runtime/package.json">runtime/package.json</a>：官方版本固定为 0.2.1-rc.5。</li>
+<li><a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-client-ui-sidebar-right/lib/types/client/index.d.ts">sidebar-right /client 导出</a>、<a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-client-ui-sidebar-right/lib/types/client/contract/slots.d.ts">slots 合同</a>、<a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-client-ui-sidebar-right/lib/types/client/service.d.ts">导航服务</a>：两阶段注册、session 作用域和 openTab。</li>
+<li><a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-client-ui-tool/lib/types/client/contract/slots.d.ts">tool.call.toolview 合同</a>、<a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-client-ui-tool/lib/client.js">工具卡实现</a>：按工具名选择渲染器，拒绝结果保留原生表现。</li>
+<li><a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-tools/lib/types/index.d.ts">tools API</a>、<a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-tools/lib/index.js">执行实现</a>：工具执行链、guard、审批和 concludeTurn。</li>
+<li><a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-user-questions/lib/types/types.d.ts">userQuestions 类型</a>、<a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-user-questions/lib/types/index.d.ts">service</a>：问答范围与异步答案。</li>
+<li><a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/types.d.ts">SessionPromptRequest</a>、<a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js">prompt / hasPromptRequest 实现</a>：queue 与请求识别。</li>
+<li><a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-client-connection/lib/types/rpc.d.ts">Connection RPC / Fetch 合同</a>、<a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js">连接鉴权和路由实现</a>：现成通信通道，不另开无鉴权截图服务器。</li>
+<li><a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-client-ui-sidebar-browser/lib/client.js">内置浏览器标签实现</a>、<a href="../../node_modules/.pnpm/node_modules/@deepseek-ai/dsh-client-ui-sidebar-browser/lib/types/types.d.ts">DesktopBrowserBridge</a>、<a href="../../apps/macos/Sources/MainWindowController.swift">当前 macOS 壳</a>：iframe/Electron 展示与本仓壳的差别。</li>
+<li><a href="../../plugins/security-scan/src/client/index.ts">security-scan client</a>、<a href="../../plugins/security-scan/src/follow-up.ts">会话后续任务</a>、<a href="../../plugins/desktop-share/src/client/index.ts">desktop-share client</a>、<a href="../../plugins/web-search/src/index.ts">web-search MCP</a>：本仓具体模式参考。</li>
+<li><a href="https://registry.npmjs.org/@deepseek-ai%2Fdsh-experimental-browser-use-playwright-mcp/0.2.1-rc.5">官方 provider 精确发布元数据</a>、<a href="https://registry.npmjs.org/@deepseek-ai%2Fdsh-experimental-browser-use-runtime/0.2.1-rc.5">runtime 发布元数据</a>、<a href="https://registry.npmjs.org/@deepseek-ai%2Fdsh-browser-use/0.2.1-rc.5">registry seam 发布元数据</a>：已读取对应 tgz 的类型与关键实现。在线 master 当时是更高版本，未将其直接作为 rc.5 兼容依据。</li>
+<li><a href="https://registry.npmjs.org/@anweat%2Fdsh-browser/0.2.3">anweat 发布元数据</a>、<a href="https://github.com/anweat/dsh-browser/blob/master/README.md">项目能力和边界</a>：发布包导出、BrowserService 类型和工具审批装配已读。</li>
+<li><a href="https://registry.npmjs.org/@changfenhuang%2Fdsh-genui/0.16.0">GenUI 发布元数据</a>、<a href="https://github.com/omdsh-dev/dsh-genui/blob/main/src/client/embed.ts">公开 embed</a>、<a href="https://github.com/omdsh-dev/dsh-genui/blob/main/src/client/action-context.ts">动作上下文</a>、<a href="https://github.com/omdsh-dev/dsh-genui/blob/main/src/client/spec.ts">组件 schema</a>：引用的是公开入口；未导入私有实现。</li>
+<li><a href="https://playwright.dev/docs/screenshots">Playwright 截图</a>、<a href="https://playwright.dev/docs/aria-snapshots">可访问性快照</a>、<a href="https://playwright.dev/docs/api/class-browsercontext#browser-context-route">BrowserContext 网络路由</a>：基础能力与限制参考。最终能力按 provider 锁定版本复验。</li>
+</ol>
+<div class="callout"><strong>第一条业务任务已按真实页面收敛。</strong>下一步验收现成 provider 的独立登录、查询完成信号与截图输出，以及 GenUI embed 在当前宿主下的受控动作和资源加载。本轮只读勘察证明了页面路径与查询行为，尚未证明插件组合已经可运行。</div>
+</section>
+</main>
+<footer>方案状态：可评审设计。能力核对 ≠ 运行验收；截图预览 ≠ 实时遥控；展示组件 ≠ 操作授权。本文为本地自包含文档，不加载远端脚本、字体或图片。</footer>
+</body>
+</html>

@@ -14,7 +14,8 @@
         "sha256": "f6876e993c8c2d5aef990f17c9a5b4ed5325ef7ce1b0be037412ef9fc8799f07",
         "size": 576220
       },
-      "sourceDigest": "8ccc3ddad1654afc05bc284ec342752613167643680a877e9ddd50f6decd9123"
+      "sourceDigest": "8ccc3ddad1654afc05bc284ec342752613167643680a877e9ddd50f6decd9123",
+      "sourceLock": "artifacts/locks/d83897f590589aa64d65d1af36be8af4847ac529a2579b678e9451b28521da72.yaml"
     },
     {
       "id": "trusted-marketplace",
@@ -29,7 +30,8 @@
         "size": 80104
       },
       "dshVersion": "0.2.1-rc.5",
-      "sourceDigest": "a510c5ed577c3a75e08ee40418c16e987098f7112225d05ae20457c8f5830c8e"
+      "sourceDigest": "a510c5ed577c3a75e08ee40418c16e987098f7112225d05ae20457c8f5830c8e",
+      "sourceLock": "artifacts/locks/d83897f590589aa64d65d1af36be8af4847ac529a2579b678e9451b28521da72.yaml"
     },
     {
       "id": "security-scan",
@@ -44,7 +46,8 @@
         "sha256": "d33b5c1c4f46c7adb106a678be41bdebd6478ba186227ee566c219f11297acb8",
         "size": 324325
       },
-      "sourceDigest": "a21e117447a79b8e5da70ce44bdf4b45049039fd48a3e794bda3879ab1fcff3e"
+      "sourceDigest": "a21e117447a79b8e5da70ce44bdf4b45049039fd48a3e794bda3879ab1fcff3e",
+      "sourceLock": "artifacts/locks/d83897f590589aa64d65d1af36be8af4847ac529a2579b678e9451b28521da72.yaml"
     },
     {
       "id": "desktop-share",
@@ -59,7 +62,8 @@
         "sha256": "909038f40c9995ea4db8c27809154457099108b2093459812bef00b88d340d1d",
         "size": 22815
       },
-      "sourceDigest": "c8c07dc05443c12104055447149b352249e2ad1bce1ca37c9bd2498a09e5f0ad"
+      "sourceDigest": "c8c07dc05443c12104055447149b352249e2ad1bce1ca37c9bd2498a09e5f0ad",
+      "sourceLock": "artifacts/locks/d83897f590589aa64d65d1af36be8af4847ac529a2579b678e9451b28521da72.yaml"
     },
     {
       "id": "dsh-pet",
@@ -74,7 +78,8 @@
         "sha256": "2238da5489dbb61f64ff13358d262a60a44ed5d7a3d0fa4560f4f34f25277649",
         "size": 8041178
       },
-      "sourceDigest": "58380ea64dd78235ad4e9f09745e43391bb82f3ec0ed49483f523264d4682da2"
+      "sourceDigest": "58380ea64dd78235ad4e9f09745e43391bb82f3ec0ed49483f523264d4682da2",
+      "sourceLock": "artifacts/locks/d83897f590589aa64d65d1af36be8af4847ac529a2579b678e9451b28521da72.yaml"
     },
     {
       "id": "web-search",
@@ -89,7 +94,8 @@
         "sha256": "8749c616063144886fdb38e7f322356a1e3840a834b31eeab110129819eec2d2",
         "size": 4223
       },
-      "sourceDigest": "8c3dd52639a2423eb1e672cfd7b21b551bfe4a70c7758dd4439e0b19fa86fa14"
+      "sourceDigest": "8c3dd52639a2423eb1e672cfd7b21b551bfe4a70c7758dd4439e0b19fa86fa14",
+      "sourceLock": "artifacts/locks/d83897f590589aa64d65d1af36be8af4847ac529a2579b678e9451b28521da72.yaml"
     },
     {
       "id": "github-workspace",
@@ -104,7 +110,8 @@
         "sha256": "5e33bc717a827ca2be983e8c5c8e553f232d8b508ddf9f2f1a0b1a4a60c3bea9",
         "size": 76496
       },
-      "sourceDigest": "5a3cdd13e61d00e355943171079914bd9a849a45df034d3f76daffbc781348c3"
+      "sourceDigest": "5a3cdd13e61d00e355943171079914bd9a849a45df034d3f76daffbc781348c3",
+      "sourceLock": "artifacts/locks/d83897f590589aa64d65d1af36be8af4847ac529a2579b678e9451b28521da72.yaml"
     },
     {
       "id": "im",
@@ -119,6 +126,22 @@
         "path": "artifacts/shamcleren-dsh-im-0.1.1.tgz",
         "size": 331273,
         "sha256": "c8a2ba7be4883b7164a6ce2eb48d9c150d42748037c7345cc5e58a7dfbd9b419"
+      }
+    },
+    {
+      "id": "saas-browser-workspace",
+      "package": "@shamcleren/dsh-saas-browser-workspace",
+      "name": "SaaS Browser Workspace",
+      "description": "通过真实 Agent 查询注册网站、补参、查看配置与执行对话，提供业务视图和原页面接管。",
+      "dshVersion": "0.2.1-rc.5",
+      "placement": "after-web-app",
+      "version": "0.3.0",
+      "sourceDigest": "5a19f363574ea8f7624c808e098c26b9f422cc6f51400a569955a6571e665585",
+      "sourceLock": "artifacts/locks/7109c74f15cf723ba546eb8c43176f74885bcca64e85365fb4249f99d92498be.yaml",
+      "artifact": {
+        "path": "artifacts/shamcleren-dsh-saas-browser-workspace-0.3.0.tgz",
+        "size": 1012940,
+        "sha256": "a7ad51d6d7f874b3384996f827ab8d6167449ba137216f1d90b216c9088585b1"
       }
     }
   ]

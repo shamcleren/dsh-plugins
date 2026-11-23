@@ -1,0 +1,5 @@
+- insert:
+    - id: saas-browser-runtime
+      name: '@anweat/dsh-browser'
+    - id: saas-browser-workspace
+      name: '@shamcleren/dsh-saas-browser-workspace'

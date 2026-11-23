@@ -78,7 +78,7 @@ export async function collectFiles(source = sourceRoot, { allowMissingLock = fal
   }
   const catalog = JSON.parse(await readFile(join(source, 'marketplace.json'), 'utf8'))
   const entry = catalog.plugins.find(entry => entry.id === 'security-scan')
-  if (!entry || entry.sourceDigest !== await pluginSourceDigest(plugin, source)) throw new Error('Prepare a fresh catalog release before exporting')
+  if (!entry || entry.sourceDigest !== await pluginSourceDigest(plugin, source, entry.sourceLock)) throw new Error('Prepare a fresh catalog release before exporting')
   await releaseArtifact(source, entry)
   const archive = join(source, entry.artifact.path)
   const tar = args => {

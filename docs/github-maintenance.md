@@ -25,7 +25,7 @@ node scripts/release-plugin.mjs wechat
 node --test scripts/tests/catalog-compatibility.test.mjs
 ```
 
-发布前先递增组件版本。`release-plugin.mjs` 清理该组件的生成目录、构建并暂存打包，将运行源码、Skill、构建配置和依赖锁的摘要同时写入发布包和 catalog；已有发布身份不可覆盖。校验同时检查源码摘要和完整打包清单，防止删除的代码仍留在发布包中。
+发布前先递增组件版本。`release-plugin.mjs` 清理该组件的生成目录、构建并暂存打包，将运行源码、Skill、构建配置和依赖锁的摘要同时写入发布包和 catalog；已有发布身份不可覆盖。新发布同时保存内容寻址的依赖锁快照（`artifacts/locks/`），catalog 的 `sourceLock` 指向本次构建使用的锁；其他插件加入 workspace 后，旧包仍按原构建输入验证，不需要为无关依赖变化重发。旧条目没有该字段时仍使用根锁文件；迁移旧条目前必须用保留的锁与源码实际核对摘要，不得猜测构建输入。校验同时检查源码摘要和完整打包清单，防止删除的代码仍留在发布包中。
 
 运行时或发布包变更还需在临时 `HOME/DSH_HOME` 中运行 `scripts/smoke-runtime.mjs` 验证真实官方 Host。此脚本需要单独准备的 `runtime/node_modules`；CI 的 workspace 构建与单元测试不替代真实账号或运行时验收。普通用户退出 DSH 后执行 `git pull --ff-only`、`./dhp update`，再重新启动；代码发布不自动更新任何已有安装。
 

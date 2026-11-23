@@ -1,6 +1,10 @@
 packages:
   - plugins/*
   - packages/*
+packageExtensions:
+  '@changfenhuang/dsh-genui@0.16.0':
+    dependencies:
+      '@floating-ui/react': '^0.27.16'
 minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-acp-app@0.2.1-rc.5'
   - '@deepseek-ai/dsh-acp@0.2.1-rc.5'

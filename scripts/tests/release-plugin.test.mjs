@@ -6,6 +6,7 @@ import test from 'node:test'
 import { execFileSync } from 'node:child_process'
 import { releasePlugin } from '../release-plugin.mjs'
 import { releaseArtifact } from '../plugins.mjs'
+import { pluginSourceDigest, readReleaseLock } from '../release-inputs.mjs'
 
 test('an initial release is built, verified and appended without a fake published version', async t => {
   const repo = await mkdtemp(join(tmpdir(), 'dhp-initial-release-')), plugin = join(repo, 'plugins/fixture')
@@ -21,6 +22,10 @@ test('an initial release is built, verified and appended without a fake publishe
   const initial = { id: 'fixture-im', package: '@fixture/im', name: 'Fixture IM', description: 'Isolated release fixture', dshVersion: '0.2.1-rc.5', placement: 'before-web-app' }
   const entry = await releasePlugin('fixture-im', repo, { initial })
   assert.equal(entry.version, '0.1.0'); await releaseArtifact(repo, entry)
+  assert.equal((await readReleaseLock(repo, entry.sourceLock)).toString(), 'fixture')
+  await writeFile(join(repo, 'pnpm-lock.yaml'), 'new unrelated dependency graph')
+  assert.equal(await pluginSourceDigest(plugin, repo, entry.sourceLock), entry.sourceDigest)
+  assert.notEqual(await pluginSourceDigest(plugin, repo), entry.sourceDigest)
   const published = await readFile(join(repo, 'marketplace.json'), 'utf8')
   assert.deepEqual(JSON.parse(published).plugins, [entry])
   await assert.rejects(releasePlugin('fixture-im', repo, { initial }), /Invalid initial/)

@@ -50,6 +50,7 @@ Linux 安装后使用 `./dist/bin/dsh` 启动 Web 版。首次打开 DSH，按�
 | `im` | [统一管理微信与企业微信、工作区、对话、审批和消息通知](plugins/im/README.md) |
 | `wecom-tools` | [企业微信办公工具](plugins/wecom-tools/README.md) |
 | `marketplace` | [Git 仓库市场](plugins/marketplace/README.md) |
+| `saas-browser-workspace` | [实验性 SaaS 浏览器工作台：查询、补参、原页面接管与结果展示](plugins/saas-browser-workspace/README.md) |
 
 ### 可选：通过 Git 仓库市场安装
 

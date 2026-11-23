@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { run } from './process.mjs'
-import { pluginSourceDigest } from './release-inputs.mjs'
+import { pluginSourceDigest, snapshotReleaseLock } from './release-inputs.mjs'
 import { releaseArtifact } from './plugins.mjs'
 
 export async function releasePlugin(id, repo = fileURLToPath(new URL('..', import.meta.url)), { initial } = {}) {
@@ -29,7 +29,8 @@ export async function releasePlugin(id, repo = fileURLToPath(new URL('..', impor
   const output = join(repo, 'artifacts', filename)
   try { await lstat(output); throw new Error('Release already exists; increment the component version before packing') }
   catch (error) { if (error.code !== 'ENOENT') throw error }
-  const sourceDigest = await pluginSourceDigest(directory, repo)
+  const sourceLock = await snapshotReleaseLock(repo)
+  const sourceDigest = await pluginSourceDigest(directory, repo, sourceLock)
   // Only generated build output belonging to this component is cleaned.
   await rm(join(directory, 'lib'), { recursive: true, force: true })
   await run('pnpm', ['--dir', directory, 'build'], { cwd: repo })
@@ -44,7 +45,7 @@ export async function releasePlugin(id, repo = fileURLToPath(new URL('..', impor
       cwd: stage, env: { ...process.env, npm_config_cache: join(scratch, 'npm-cache') },
     })
     const bytes = await readFile(join(scratch, filename))
-    const next = { ...entry, version: manifest.version, sourceDigest, artifact: { ...entry.artifact, path: 'artifacts/' + filename, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } }
+    const next = { ...entry, version: manifest.version, sourceDigest, sourceLock, artifact: { ...entry.artifact, path: 'artifacts/' + filename, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } }
     await writeFile(output, bytes, { flag: 'wx' }); artifactWritten = true
     await releaseArtifact(repo, next)
     if (previous) catalog.plugins[catalog.plugins.indexOf(previous)] = next

@@ -10,20 +10,20 @@ import { pluginSourceDigest } from '../release-inputs.mjs'
 const repo = fileURLToPath(new URL('../../', import.meta.url))
 const json = async path => JSON.parse(await readFile(path, 'utf8'))
 
-test('every plugin has an intact release with the pinned DSH contracts and public assets', async () => {
-  const runtime = (await json(join(repo, 'runtime/package.json'))).dependencies['@deepseek-ai/dsh']
-  const catalog = (await json(join(repo, 'marketplace.json'))).plugins
-  const names = []
-  for (const folder of await readdir(join(repo, 'plugins'), { withFileTypes: true })) {
-    if (!folder.isDirectory()) continue
-    const source = await json(join(repo, 'plugins', folder.name, 'package.json'))
-    names.push(source.name)
+const runtime = (await json(join(repo, 'runtime/package.json'))).dependencies['@deepseek-ai/dsh']
+const catalog = (await json(join(repo, 'marketplace.json'))).plugins
+const names = []
+for (const folder of await readdir(join(repo, 'plugins'), { withFileTypes: true })) {
+  if (!folder.isDirectory()) continue
+  const source = await json(join(repo, 'plugins', folder.name, 'package.json'))
+  names.push(source.name)
+  test(source.name + ': intact release with pinned DSH contracts and public assets', async () => {
     const entries = catalog.filter(entry => entry.package === source.name)
     assert.equal(entries.length, 1, source.name + ': one catalog entry')
     const entry = entries[0]
     assert.equal(entry.dshVersion, runtime, source.name + ': catalog runtime')
     assert.equal(entry.version, source.version, source.name + ': unpublished source version')
-    assert.equal(entry.sourceDigest, await pluginSourceDigest(join(repo, 'plugins', folder.name), repo), source.name + ': sources changed after packing')
+    assert.equal(entry.sourceDigest, await pluginSourceDigest(join(repo, 'plugins', folder.name), repo, entry.sourceLock), source.name + ': sources changed after packing')
     assert.equal(source.engines?.dsh, runtime, source.name + ': official compatibility declaration')
     await releaseArtifact(repo, entry)
     const tarball = join(repo, entry.artifact.path)
@@ -45,6 +45,8 @@ test('every plugin has an intact release with the pinned DSH contracts and publi
     for (const name of packed.dsh.client?.inject ?? []) {
       assert.ok(source.peerDependencies?.[name] || source.dependencies?.[name], source.name + ': undeclared browser dependency ' + name)
     }
-  }
-  assert.deepEqual(catalog.map(entry => entry.package).sort(), names.sort(), 'catalog covers all repository plugins')
+  })
+}
+test('catalog covers all repository plugins', () => {
+  assert.deepEqual(catalog.map(entry => entry.package).sort(), names.sort())
 })
