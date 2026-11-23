@@ -37,7 +37,11 @@ beforeEach(async () => {
   adapter = new AgentBrowser({ read: async () => {}, sessionState: () => ({ page }), closePage: async () => {} }, 'execution-test', site(), journal)
 })
 afterEach(async () => { if (pending) release({ error: 'test-cleanup' }); await adapter.close(); await context.close(); await rm(directory, { recursive: true, force: true }) })
-afterAll(async () => { await browser.close(); await Promise.all([new Promise(r => server.close(r)), new Promise(r => application.close(r))]) })
+afterAll(async () => {
+  await browser.close()
+  // Own and close keep-alive connections as well as the listening sockets.
+  await Promise.all([server, application].map(async server => { const closed = once(server, 'close'); server.close(); server.closeAllConnections(); await closed }))
+})
 
 it('protects configuration, observes a delayed real response, and deduplicates submission receipts', async () => {
   let observation = await act({ action: 'open' })

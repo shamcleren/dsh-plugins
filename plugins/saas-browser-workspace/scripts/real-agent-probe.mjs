@@ -1,5 +1,5 @@
 // Uses the host's configured LLM adapter. No generated replies or tool calls live here.
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile, rename } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { parseCredentialsDocument } from '@deepseek-ai/dsh-credentials-local'
@@ -24,7 +24,12 @@ export async function apply(ctx) {
   })
   let audit = Promise.resolve()
   ctx.on('session/flush', session => {
-    audit = audit.then(() => writeFile(process.env.DSH_DEMO_READY + '.events.json', JSON.stringify(session.snapshotEvents()), { mode: 0o600 }))
+    const events = JSON.stringify(session.snapshotEvents())
+    audit = audit.then(async () => {
+      const destination = process.env.DSH_DEMO_READY + '.events.json', temporary = destination + '.' + randomUUID()
+      await writeFile(temporary, events, { mode: 0o600, flag: 'wx' })
+      await rename(temporary, destination)
+    })
   })
   ctx.effect(() => () => audit)
   const session = await ctx.sessionController.create({ cwd: process.env.DSH_DEMO_WORKDIR })

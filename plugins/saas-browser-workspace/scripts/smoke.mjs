@@ -63,6 +63,7 @@ try {
   assert.equal((await rpc('select', { sessionId: info.sessionId, observationId: results.observation.id, recordId: row.id })).ok, true)
   const details = await wait(async () => { const value = await state(); const done = await idle(); return done && value.view === 'details' && value.observation?.url.includes('/agents/config') && value }, 'real agent opens selected configuration')
   assert.ok(details.observation.controls.some(control => control.value === 'fixture-model'))
+  assert.ok(details.observation.document.blocks.flatMap(block => block.kind === 'fields' ? block.fields : []).some(field => field.state === 'value' && field.value === 'fixture-model'))
   assert.ok(!JSON.stringify(details).includes('fixture-secret'))
   const frame = origin + '/api/saas-agent/frame?' + new URLSearchParams({ sessionId: info.sessionId })
   const image = await fetch(frame, { headers: { cookie } }); assert.equal(image.status, 200)

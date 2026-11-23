@@ -1,3 +1,4 @@
+import { observePage } from './page-observation.js'
 import { randomUUID } from 'node:crypto'
 import type { Page, BrowserContext, CDPSession, Request } from 'playwright'
 import type { BrowserService } from '@anweat/dsh-browser'
@@ -185,67 +186,7 @@ export class AgentBrowser {
     if (this.login) throw new Error('login-required')
     await page.waitForLoadState('domcontentloaded', { timeout: 10_000 })
     const rule = executionRule(this.site, page.url())
-    const result = await page.evaluate(({ selectors, readLabels, rule, emptyText, masks }) => {
-      const visible = (el: Element) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden'
-      const text = (el: Element | null, limit = 1000) => ((el instanceof HTMLElement ? el.innerText : el?.textContent) ?? '').trim().slice(0, limit)
-      const sensitive = /password|secret|token|api.?key|验证码|密码|密钥/i
-      const address = (el: Element): string => {
-        const parts: string[] = []; let current: Element | null = el
-        while (current && current !== document.documentElement) {
-          const element: Element = current, parent: Element | null = element.parentElement
-          const siblings = parent ? Array.from(parent.children).filter(e => e.tagName === element.tagName) : [element]
-          parts.unshift(element.tagName.toLowerCase() + ':nth-of-type(' + (siblings.indexOf(element) + 1) + ')'); current = parent
-        }
-        return 'html>' + parts.join('>')
-      }
-      const scope = rule ? document.querySelector(rule.scope) : null
-      const allElements = Array.from(document.querySelectorAll('input:not([type=hidden]),textarea,select,[contenteditable=true],button,[role=button],a,[role=tab]')).filter(visible)
-      const masked = Array.from(document.querySelectorAll(masks.join(',') || ':not(*)'))
-      const inMask = (el: Element) => masked.some(root => root === el || root.contains(el))
-      const labelOf = (el: Element) => el.getAttribute('aria-label') || el.getAttribute('aria-placeholder') || (el as HTMLInputElement).labels?.[0]?.textContent?.trim() || text(el, 200) || el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name') || el.tagName.toLowerCase()
-      const hiddenField = (el: Element) => inMask(el) || (el as HTMLInputElement).type === 'password' || sensitive.test(labelOf(el) + ' ' + (el as HTMLInputElement).autocomplete)
-      const redacted = new Set([...allElements.filter(hiddenField), ...masked])
-      const safeText = (root: Node, limit: number) => {
-        let remaining = limit, visited = 0
-        const collect = (node: Node): string => {
-          if (remaining <= 0 || ++visited > 20000) return ''
-          if (node instanceof Element && (redacted.has(node) || node.matches('script,style,noscript,template') || !visible(node))) return ''
-          if (node.nodeType === Node.TEXT_NODE) { const value = (node.textContent ?? '').slice(0, remaining); remaining -= value.length; return value }
-          return Array.from(node.childNodes).map(collect).join(node instanceof Element && /^(DIV|P|SECTION|ARTICLE|LI|BR|H[1-6])$/.test(node.tagName) ? '\n' : '')
-        }
-        return collect(root).trim().slice(0, limit)
-      }
-      const fieldText = (el: Element | null, limit: number) => el && !inMask(el) ? safeText(el, limit) : ''
-      const elements = allElements.slice(0, 160)
-      if (rule && scope) for (const el of scope.querySelectorAll(rule.submit)) if (visible(el) && !elements.includes(el)) elements.push(el)
-      const controls = elements.map((el, index) => {
-        const input = el as HTMLInputElement
-        const hidden = hiddenField(el)
-        const label = hidden ? '[hidden field]' : labelOf(el)
-        const choice = input.type === 'radio' || input.type === 'checkbox'
-        const value = hidden ? '[hidden]' : choice ? (input.checked ? label : '')
-          : el instanceof HTMLSelectElement ? Array.from(el.selectedOptions).map(option => option.text).join(', ')
-          : ('value' in el ? String(input.value).slice(0, 3000) : el.matches('[contenteditable=true]') ? text(el, 3000) : '')
-        const denied = /保存|发布|删除|分享|权限|上传|下载|save|publish|delete|share|permission|upload|download/i.test(label)
-        const message = !!rule && !!scope?.contains(el) && el.matches(rule.input) && !hidden && !denied && !input.disabled && !input.readOnly
-        const submit = !!rule && !!scope?.contains(el) && el.matches(rule.submit) && !hidden && !denied
-        const search = el.matches(selectors.search) && !hidden && !denied && !input.disabled && !input.readOnly
-        const navigation = readLabels.includes(label.replace(/[\s\uE000-\uF8FF]/g, '')) && !input.disabled && !denied
-        return { ref: 'e' + index, selector: address(el), label, role: el.getAttribute('role') || el.tagName.toLowerCase(), value,
-          canFill: message || search, canClick: navigation, sensitive: hidden,
-          purpose: message ? 'message' as const : submit ? 'submit' as const : search ? 'search' as const : navigation ? 'navigation' as const : 'readonly' as const }
-      })
-      const cards = Array.from(document.querySelectorAll(selectors.card)).filter(visible)
-      const records = cards.slice(0, 50).map((card, index) => ({ id: 'r' + index,
-        name: fieldText(card.querySelector(selectors.name), 500), type: fieldText(card.querySelector(selectors.type), 200), version: fieldText(card.querySelector(selectors.version), 200),
-        description: fieldText(card.querySelector(selectors.description), 2000), tags: Array.from(card.querySelectorAll(selectors.tags)).filter(visible).map(el => fieldText(el, 200)).slice(0, 20),
-        actions: controls.filter((control, i) => card.contains(elements[i]!) && control.canClick).map(({ ref, label }) => ({ ref, label })),
-      })).filter(row => row.name)
-      const raw = safeText(document.querySelector('main,[role=main]') ?? document.body, 16000)
-      const resultRoot = document.querySelector(selectors.results)
-      const recordsState = records.length ? 'ready' as const : resultRoot && visible(resultRoot) ? (text(resultRoot, 16000).includes(emptyText) ? 'empty' as const : 'loading' as const) : 'unavailable' as const
-      return { title: document.title.slice(0, 300), text: raw, controls, records, recordsState, truncated: cards.length > 50 || raw.length >= 16000 }
-    }, { selectors: this.site.selectors, readLabels: [...READ_LABELS, ...(this.site.execution.length ? ['配置', '去使用'] : [])], rule, emptyText: this.site.emptyText, masks: this.site.screenshotMasks })
+    const result = await page.evaluate(observePage, { selectors: this.site.selectors, readLabels: [...READ_LABELS, ...(this.site.execution.length ? ['配置', '去使用'] : [])], rule, emptyText: this.site.emptyText, masks: this.site.screenshotMasks })
     this.controls = new Map(result.controls.map(control => [control.ref, control]))
     const observation: PageObservation = { ...result, id: randomUUID(), url: page.url(), capturedAt: new Date().toISOString(), controls: result.controls.map(({ selector: _selector, ...control }) => control) }
     this.observation = observation

@@ -9,7 +9,26 @@ export const Control = z.object({ ref: z.string(), label: z.string(), role: z.st
 export type Control = z.infer<typeof Control>
 export const AgentRecord = z.object({ id: z.string(), name: z.string(), type: z.string(), version: z.string(), description: z.string(), tags: z.array(z.string()), actions: z.array(z.object({ ref: z.string(), label: z.string() })) })
 export type AgentRecord = z.infer<typeof AgentRecord>
-export const PageObservation = z.object({ id: z.string().uuid(), url: z.string(), title: z.string(), text: z.string(), controls: z.array(Control), records: z.array(AgentRecord), capturedAt: z.string(), truncated: z.boolean(), recordsState: z.enum(['unavailable', 'loading', 'ready', 'empty']).default('unavailable') })
+export const PageField = z.object({
+  label: z.string(), kind: z.enum(['text', 'multiline', 'choice', 'toggle', 'number']),
+  state: z.enum(['value', 'empty', 'unread', 'redacted']), value: z.string(),
+  checked: z.enum(['on', 'off', 'mixed']).optional(),
+})
+export type PageField = z.infer<typeof PageField>
+export const PageBlock = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('fields'), title: z.string(), fields: z.array(PageField) }),
+  z.object({ kind: z.literal('table'), title: z.string(), columns: z.array(z.string()), rows: z.array(z.array(z.string())) }),
+  z.object({ kind: z.literal('list'), title: z.string(), items: z.array(z.string()) }),
+  z.object({ kind: z.literal('text'), title: z.string(), text: z.string() }),
+])
+export type PageBlock = z.infer<typeof PageBlock>
+export const PageDocument = z.object({
+  blocks: z.array(PageBlock),
+  gaps: z.array(z.object({ kind: z.enum(['collapsed', 'graphic', 'embedded', 'editor', 'unread', 'unstructured', 'limit']), label: z.string() })),
+  truncated: z.boolean(),
+})
+export type PageDocument = z.infer<typeof PageDocument>
+export const PageObservation = z.object({ id: z.string().uuid(), url: z.string(), title: z.string(), text: z.string(), controls: z.array(Control), records: z.array(AgentRecord), document: PageDocument.optional(), capturedAt: z.string(), truncated: z.boolean(), recordsState: z.enum(['unavailable', 'loading', 'ready', 'empty']).default('unavailable') })
 export type PageObservation = z.infer<typeof PageObservation>
 export const Question = z.object({ id: z.string().uuid(), title: z.string().min(1).max(300), fields: z.array(z.object({ name: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/), label: z.string().min(1).max(100), required: z.boolean().default(true), type: z.enum(['text', 'textarea']).default('text') })).min(1).max(6) }).refine(question => new Set(question.fields.map(field => field.name)).size === question.fields.length, 'Field names must be unique')
 export type Question = z.infer<typeof Question>

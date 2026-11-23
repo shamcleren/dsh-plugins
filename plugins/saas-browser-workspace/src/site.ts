@@ -18,8 +18,8 @@ export const Site = z.object({
   selectors: z.object({
     search: Selector, results: Selector, card: Selector, name: Selector, type: Selector,
     version: Selector, tags: Selector, description: Selector,
-  }).strict(),
-  emptyText: z.string().min(1).max(100),
+  }).strict().default({ search: ':not(*)', results: ':not(*)', card: ':not(*)', name: ':not(*)', type: ':not(*)', version: ':not(*)', tags: ':not(*)', description: ':not(*)' }),
+  emptyText: z.string().min(1).max(100).default('No results'),
   screenshotMasks: z.array(Selector).max(20).default([]),
 }).strict().superRefine((site, ctx) => {
   const url = new URL(site.url)

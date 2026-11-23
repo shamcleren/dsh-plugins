@@ -1,3 +1,4 @@
+import { PageContent } from './PageContent.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { ErrorBoundary, GenuiActionContext, GenuiBlock, type GenuiSpec } from '@changfenhuang/dsh-genui/embed'
 import type { AgentRemote, HumanInput, Question, PageObservation } from '../agent-contract.js'
@@ -15,7 +16,7 @@ export function questionSpec(question: Question, t: AgentTranslate): GenuiSpec {
   return { items: [...question.fields.map(field => ({ type: field.type === 'textarea' ? 'textarea' as const : 'input' as const, id: field.name, label: plain(field.label + (field.required ? ' · ' + t('required') : '')), ...(field.type === 'textarea' ? { rows: 4 } : {}) })), { type: 'submit', action: 'answer', label: t('submit'), groups: question.fields.filter(field => field.required).map(field => field.name) }] }
 }
 function Source({ observation, t }: { observation: PageObservation | undefined; t: AgentTranslate }) {
-  return observation ? <footer className="saas-agent-source"><span>{t('scope')}</span>{observation.truncated && <strong>{t('truncated')}</strong>}<span>{t('captured')}: {new Date(observation.capturedAt).toLocaleString()}</span><span>{t('source')}: {observation.url}</span></footer> : null
+  return observation ? <footer className="saas-agent-source">{observation.recordsState !== 'unavailable' && <span>{t('scope')}</span>}{observation.truncated && <strong>{t('truncated')}</strong>}<span>{t('captured')}: {new Date(observation.capturedAt).toLocaleString()}</span><span>{t('source')}: {observation.url}</span></footer> : null
 }
 export function AgentPanel(props: Props & { openBrowser: () => void }) {
   const { remote, sessionId, t, openBrowser } = props, { state, connection, retry } = useWorkspace(props)
@@ -28,11 +29,15 @@ export function AgentPanel(props: Props & { openBrowser: () => void }) {
     finally { inFlight.current = false; setBusy(false) }
   }
   const listing = state?.listing ?? (state?.observation?.recordsState !== 'unavailable' ? state?.observation : undefined)
-  const details = state?.details, records = listing?.records ?? [], view = state?.view ?? 'table'
+  const details = state?.details ?? (state?.observation?.recordsState === 'unavailable' ? state.observation : undefined)
+  const records = listing?.records ?? [], view = !listing && details && state?.view !== 'results' ? 'details' : state?.view ?? 'table'
+  const layout = useRef('table')
+  const queryView = ['table', 'list', 'summary'].includes(view)
+  if (queryView) layout.current = view
   const canAct = connection === 'connected' && !busy && state?.phase === 'ready' && !state.agentRunning
   const action = (id: string) => { if (canAct && listing) void perform('select', { observationId: listing.id, recordId: id }) }
   const counts: Record<string, number> = {}; for (const row of records) counts[row.type] = (counts[row.type] ?? 0) + 1
-  const tabs = [...(listing ? ['table', 'list', 'summary'] as const : []), ...(details ? ['details'] as const : []), ...(state?.executions.length ? ['results'] as const : [])]
+  const tabs = [...(listing ? ['queryResults'] as const : []), ...(details ? ['details'] as const : []), ...(state?.executions.length ? ['results'] as const : [])]
   const status = state?.phase === 'ready' && state.agentRunning ? 'thinking' : state?.phase
   return <section className="saas-agent" aria-label={t('title')} aria-busy={busy}>
     <header className="saas-agent-heading"><div><span className="saas-agent-eyebrow">{t('title')}</span><h2>{state?.siteName || t('title')}</h2></div><span className="saas-agent-badge">{t(state?.executionEnabled ? 'protected' : 'readonly')}</span></header>
@@ -52,12 +57,13 @@ export function AgentPanel(props: Props & { openBrowser: () => void }) {
     }}><ErrorBoundary><GenuiBlock key={state.question.id} spec={questionSpec(state.question, t)} stateKey={sessionId + ':' + state.question.id} animateEntrance={false} /></ErrorBoundary></GenuiActionContext.Provider>{state.question.fields.every(field => !field.required) && <button disabled={busy || state.phase !== 'awaiting_input'} onClick={() => { void perform('answer', { questionId: state.question!.id, answers: {} }) }}>{t('skipOptional')}</button>}</fieldset></div>}
     {!tabs.length && state?.configured && state.phase !== 'human' && !state.question && <div className="saas-agent-empty"><div>↗</div><p>{t(state.phase === 'queued' || state.phase === 'working' || state.agentRunning ? 'loadingRecords' : 'empty')}</p></div>}
     {!!tabs.length && <>
-      <nav className="saas-agent-tabs" aria-label={t('title')}>{tabs.map(kind => <button key={kind} disabled={busy || connection !== 'connected'} aria-pressed={view === kind} onClick={() => { void perform('view', { view: kind }) }}>{t(kind)}</button>)}</nav>
+      <nav className="saas-agent-tabs" aria-label={t('title')}>{tabs.map(kind => <button key={kind} disabled={busy || connection !== 'connected'} aria-pressed={kind === 'queryResults' ? queryView : view === kind} onClick={() => { void perform('view', { view: kind === 'queryResults' ? layout.current : kind }) }}>{t(kind)}</button>)}</nav>
+      {listing && queryView && <div className="saas-page-modes" role="group" aria-label={t('resultLayout')}>{(['table', 'list', 'summary'] as const).map(kind => <button key={kind} disabled={busy || connection !== 'connected'} aria-pressed={view === kind} onClick={() => { void perform('view', { view: kind }) }}>{t(kind)}</button>)}</div>}
       {listing && ['table', 'list', 'summary'].includes(view) && <p className="saas-agent-caption">{t('retained')} · {records.length} </p>}
       {view === 'table' && <div className="saas-agent-table"><table><thead><tr><th>{t('name')}</th><th>{t('type')}</th><th>{t('version')}</th><th>{t('viewAction')}</th></tr></thead><tbody>{records.map(row => <tr key={row.id} data-selected={state?.selectedId === row.id}><td><strong>{row.name}</strong><small>{row.description}</small></td><td>{row.type}</td><td>{row.version}</td><td><button aria-label={t('select') + ': ' + row.name} disabled={!canAct} onClick={() => action(row.id)}>{t('select')} →</button></td></tr>)}</tbody></table>{!records.length && <p>{t(listing?.recordsState === 'loading' ? 'loadingRecords' : 'noRows')}</p>}</div>}
       {view === 'list' && <div className="saas-agent-list">{records.map(row => <article key={row.id} data-selected={state?.selectedId === row.id}><div><span className="saas-agent-eyebrow">{row.type} · {row.version}</span><h3>{row.name}</h3><p>{row.description}</p><div>{row.tags.map((tag, index) => <span className="saas-agent-tag" key={index}>{tag}</span>)}</div></div><button aria-label={t('select') + ': ' + row.name} disabled={!canAct} onClick={() => action(row.id)}>{t('select')} →</button></article>)}{!records.length && <p>{t('noRows')}</p>}</div>}
       {view === 'summary' && <ErrorBoundary><GenuiBlock animateEntrance={false} spec={{ items: [{ type: 'stat', label: t('count'), value: String(records.length), size: 'hero' }, ...Object.entries(counts).map(([type, count]) => ({ type: 'progress' as const, label: plain(type), value: records.length ? count * 100 / records.length : 0, valueLabel: String(count) }))] }} /></ErrorBoundary>}
-      {view === 'details' && (details ? <div className="saas-agent-details"><h3>{t('fields')}</h3><dl>{details.controls.filter(c => c.value).map(c => <div key={c.ref}><dt>{c.label}</dt><dd>{c.sensitive ? '••••••' : c.value}</dd></div>)}</dl><details open><summary>{t('content')}</summary><pre>{details.text}</pre></details></div> : <p>{t('missingDetails')}</p>)}
+      {view === 'details' && (details ? <PageContent key={details.id} observation={details} t={t} current={!!state?.browserReady && state.phase === 'ready' && !state.agentRunning && connection === 'connected' && details.url === state.observation?.url} preview={<LiveBrowser {...props} human={false} interval={1800} />} openBrowser={openBrowser} /> : <p>{t('missingDetails')}</p>)}
       {view === 'results' && <div className="saas-agent-executions"><p className="saas-agent-caption">{t('replyNotice')}</p>{state?.executions.map(run => <article key={run.id}><header><h3>{t(run.mode)}</h3><span className={'saas-run-status ' + run.status}>{t(run.status)}</span></header><h4>{t('message')}</h4><p>{run.input}</p><h4>{t('response')}</h4><pre>{run.output || t(run.status === 'running' ? 'waitingResponse' : 'noResponse')}</pre>{run.error && <p role="alert">{t('executionError')}: {errorHint(run.error, t)}<small>{run.error}</small></p>}<footer>{new Date(run.startedAt).toLocaleString()} · {run.url}</footer></article>)}{!state?.executions.length && <p>{t('noExecutions')}</p>}</div>}
       {view !== 'results' && <Source observation={view === 'details' ? details : listing} t={t} />}
     </>}
@@ -90,7 +96,7 @@ export function BrowserOverlay(props: Props & { requests: EventTarget }) {
     <footer>{t(human && login ? 'loginInputNotice' : 'readOnlyNotice')}</footer>
   </dialog>
 }
-function LiveBrowser({ sessionId, remote, t, human }: Props & { human: boolean }) {
+function LiveBrowser({ sessionId, remote, t, human, interval = 400 }: Props & { human: boolean; interval?: number }) {
   const [src, setSrc] = useState(''), [error, setError] = useState(''), [connected, setConnected] = useState(false)
   const queue = useRef(Promise.resolve()), permission = useRef({ allowed: false, epoch: 0 })
   const allowed = human && connected
@@ -102,10 +108,10 @@ function LiveBrowser({ sessionId, remote, t, human }: Props & { human: boolean }
         const blob = await remote.frame(sessionId, abort.signal)
         if (!abort.signal.aborted) { const old = current; current = URL.createObjectURL(blob); setSrc(current); setConnected(true); if (old) URL.revokeObjectURL(old) }
       } catch { if (!abort.signal.aborted) setConnected(false) }
-      if (!abort.signal.aborted) timer = setTimeout(() => { void frame() }, 400)
+      if (!abort.signal.aborted) timer = setTimeout(() => { void frame() }, interval)
     }
     void frame(); return () => { permission.current = { allowed: false, epoch: permission.current.epoch + 1 }; abort.abort(); clearTimeout(timer); if (current) URL.revokeObjectURL(current) }
-  }, [sessionId, remote])
+  }, [sessionId, remote, interval])
   const send = (input: HumanInput) => {
     if (!permission.current.allowed) return
     const epoch = permission.current.epoch

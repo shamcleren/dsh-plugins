@@ -70,3 +70,79 @@ it('detects a registered same-origin login path and does not expose the login pa
   expect(await act({ action: 'observe' })).toBeUndefined()
   adapter.site.loginPaths.pop()
 })
+
+it('projects HTML and ARIA fields without turning placeholders or mode options into content', async () => {
+  await page.setContent(`<main><h1>Project settings</h1><section><h2>Assistant settings</h2>
+    <label for="prompt">Instructions</label><textarea id="prompt" placeholder="Write instructions here"></textarea>
+    <label><input type="radio" name="mode" checked>Custom instructions</label>
+    <label><input type="radio" name="mode">Use role</label>
+    <span id="memory-name">Remember context</span><div role="switch" aria-labelledby="memory-name" aria-checked="true"></div>
+    <div role="switch" aria-label="History" aria-checked="false"></div>
+    <div role="checkbox" aria-label="Permissions" aria-checked="mixed"></div>
+    <select aria-label="Default model"><option>Model A</option><option selected>Model B</option></select>
+    <div role="combobox" aria-label="Backup model" aria-expanded="false">Model C</div>
+    <div role="textbox" aria-label="Custom editor"></div>
+    <div contenteditable="true" aria-label="Description" data-placeholder="Type here"></div>
+    <input aria-label="Count" type="number" value="0">
+    </section></main>`)
+  const observed = await act({ action: 'observe' })
+  const fields = observed.document.blocks.flatMap(block => block.kind === 'fields' ? block.fields : [])
+  expect(fields.find(f => f.label === 'Instructions')).toMatchObject({ state: 'empty', value: '' })
+  expect(fields.find(f => f.label === 'Custom instructions')).toMatchObject({ kind: 'choice', state: 'value', checked: 'on', value: '' })
+  expect(fields.find(f => f.label === 'Use role')).toMatchObject({ checked: 'off' })
+  expect(fields.find(f => f.label === 'Remember context')).toMatchObject({ checked: 'on' })
+  expect(fields.find(f => f.label === 'History')).toMatchObject({ checked: 'off' })
+  expect(fields.find(f => f.label === 'Permissions')).toMatchObject({ checked: 'mixed' })
+  expect(fields.find(f => f.label === 'Default model').value).toBe('Model B')
+  expect(fields.find(f => f.label === 'Backup model').value).toBe('Model C')
+  expect(fields.find(f => f.label === 'Custom editor').state).toBe('unread')
+  expect(fields.find(f => f.label === 'Description').state).toBe('empty')
+  expect(fields.find(f => f.label === 'Count')).toMatchObject({ value: '0', state: 'value' })
+  expect(JSON.stringify(observed.document)).not.toContain('Write instructions here')
+  expect(observed.document.blocks.find(block => block.kind === 'fields').title).toBe('Assistant settings')
+})
+
+it('reads generic content without site query selectors and reports complex regions honestly', async () => {
+  await page.setContent(`<main><h1>Operations</h1><section><h2>Overview</h2><p>Two items need review.</p>
+    <dl><dt>Active</dt><dd>12</dd></dl>
+    <table><caption>Requests</caption><thead><tr><th>Name</th><th>Status</th></tr></thead><tbody><tr><td>Alpha</td><td>Open</td></tr><tr><td>Beta</td><td>Closed</td></tr></tbody></table>
+    <ul aria-label="Next steps"><li>Review Alpha</li><li>Archive Beta</li></ul>
+    <details><summary>Advanced rules</summary><p>unread-content</p></details>
+    <canvas aria-label="Traffic" width="500" height="160"></canvas>
+    <iframe title="Embedded report" srcdoc="<p>frame-secret</p>"></iframe>
+    <div class="monaco-editor" style="height:100px"><textarea aria-label="Rendered lines">partial-code</textarea></div>
+    </section></main>`)
+  const observed = await act({ action: 'observe' }), doc = observed.document
+  expect(doc.blocks.find(block => block.kind === 'table')).toMatchObject({ title: 'Requests', columns: ['Name', 'Status'], rows: [['Alpha', 'Open'], ['Beta', 'Closed']] })
+  expect(doc.blocks.find(block => block.kind === 'list')).toMatchObject({ items: ['Review Alpha', 'Archive Beta'] })
+  expect(doc.blocks.some(block => block.kind === 'text' && block.text === 'Two items need review.')).toBe(true)
+  expect(doc.gaps.map(gap => gap.kind)).toEqual(expect.arrayContaining(['collapsed', 'graphic', 'embedded', 'editor']))
+  expect(JSON.stringify(doc)).not.toMatch(/unread-content|frame-secret|partial-code/)
+  const generic = Site.parse({ name: 'Generic portal', url: fixture.origin, allowedOrigins: [fixture.origin] })
+  expect(generic.selectors.search).toBe(':not(*)')
+  expect(generic.execution).toEqual([])
+})
+
+it('keeps secrets, masks and hidden content out of every projection and reports unread custom pages', async () => {
+  await page.setContent(`<main><h2>Account</h2><label for="s">API key</label><input id="s" value="secret-alpha">
+    <div role="textbox" aria-label="Password">secret-beta</div><dl><dt>Access token</dt><dd>secret-gamma</dd></dl>
+    <section aria-hidden="true"><label>Hidden<input value="secret-hidden"></label><p>hidden-copy</p></section>
+    <div style="opacity:0"><p>invisible-copy</p></div><p>Public information</p></main>`)
+  const observed = await act({ action: 'observe' })
+  expect(JSON.stringify(observed)).not.toMatch(/secret-alpha|secret-beta|secret-gamma|secret-hidden|hidden-copy|invisible-copy/)
+  expect(observed.document.blocks.flatMap(b => b.kind === 'fields' ? b.fields : []).filter(f => f.state === 'redacted')).toHaveLength(3)
+  await page.setContent('<main><div>Unstructured widget</div><custom-widget></custom-widget></main>')
+  await page.locator('custom-widget').evaluate(el => { el.attachShadow({ mode: 'open' }).innerHTML = '<p>Inside shadow</p>'; el.style.display = 'block'; el.style.height = '40px' })
+  const fallback = (await act({ action: 'observe' })).document
+  expect(fallback.blocks).toEqual([])
+  expect(fallback.gaps.map(g => g.kind)).toEqual(expect.arrayContaining(['unstructured', 'embedded']))
+})
+
+it('bounds large structures and marks clipped tables instead of implying complete coverage', async () => {
+  await page.setContent('<main><table aria-rowcount="300"><tr><th>Name</th></tr>' + Array.from({ length: 50 }, (_, i) => '<tr><td>record-' + i + '</td></tr>').join('') + '</table><textarea aria-label="Instructions">' + 'x'.repeat(10000) + '</textarea></main>')
+  const doc = (await act({ action: 'observe' })).document
+  expect(doc.blocks.find(b => b.kind === 'table').rows).toHaveLength(20)
+  expect(doc.blocks.flatMap(b => b.kind === 'fields' ? b.fields : [])[0].value).toHaveLength(3000)
+  expect(doc.truncated).toBe(true)
+  expect(doc.gaps.some(g => g.kind === 'limit')).toBe(true)
+})
