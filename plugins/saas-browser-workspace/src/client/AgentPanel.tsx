@@ -18,6 +18,42 @@ export function questionSpec(question: Question, t: AgentTranslate): GenuiSpec {
 function Source({ observation, t }: { observation: PageObservation | undefined; t: AgentTranslate }) {
   return observation ? <footer className="saas-agent-source">{observation.recordsState !== 'unavailable' && <span>{t('scope')}</span>}{observation.truncated && <strong>{t('truncated')}</strong>}<span>{t('captured')}: {new Date(observation.capturedAt).toLocaleString()}</span><span>{t('source')}: {observation.url}</span></footer> : null
 }
+function QueryResults({ observation, selectedId, canAct, select, t }: {
+  observation: PageObservation
+  selectedId: string | undefined
+  canAct: boolean
+  select: (id: string) => void
+  t: AgentTranslate
+}) {
+  const { records, recordsState } = observation
+  if (!records.length) return <p>{t(recordsState === 'loading' ? 'loadingRecords' : 'noRows')}</p>
+
+  const counts = new Map<string, number>()
+  for (const row of records) {
+    if (row.type) counts.set(row.type, (counts.get(row.type) ?? 0) + 1)
+  }
+  return <>
+    <div className="saas-query-meta saas-agent-caption">
+      <span>{t('count')}: {records.length}</span>
+      {!!counts.size && <details>
+        <summary>{t('summary')}</summary>
+        <ul>{Array.from(counts, ([type, count]) => <li key={type}>{type} · {count}</li>)}</ul>
+      </details>}
+    </div>
+    <div className="saas-agent-list">
+      {records.map(row => <article key={row.id} data-selected={selectedId === row.id}>
+        <div>
+          <span className="saas-agent-eyebrow">{[row.type, row.version].filter(Boolean).join(' · ')}</span>
+          <h3>{row.name}</h3>
+          {row.description && <p>{row.description}</p>}
+          {!!row.tags.length && <div>{row.tags.map((tag, index) => <span className="saas-agent-tag" key={index}>{tag}</span>)}</div>}
+        </div>
+        <button aria-label={t('select') + ': ' + row.name} disabled={!canAct} onClick={() => select(row.id)}>{t('select')} →</button>
+      </article>)}
+    </div>
+  </>
+}
+
 export function AgentPanel(props: Props & { openBrowser: () => void }) {
   const { remote, sessionId, t, openBrowser } = props, { state, connection, retry } = useWorkspace(props)
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), inFlight = useRef(false)
@@ -30,13 +66,11 @@ export function AgentPanel(props: Props & { openBrowser: () => void }) {
   }
   const listing = state?.listing ?? (state?.observation?.recordsState !== 'unavailable' ? state?.observation : undefined)
   const details = state?.details ?? (state?.observation?.recordsState === 'unavailable' ? state.observation : undefined)
-  const records = listing?.records ?? [], view = !listing && details && state?.view !== 'results' ? 'details' : state?.view ?? 'table'
-  const layout = useRef('table')
-  const queryView = ['table', 'list', 'summary'].includes(view)
-  if (queryView) layout.current = view
+  const showDetails = state?.view === 'details' || (!listing && !!details)
+  // Older query view values all open the same result cards.
+  const view = state?.view === 'results' ? 'results' : showDetails ? 'details' : 'queryResults'
   const canAct = connection === 'connected' && !busy && state?.phase === 'ready' && !state.agentRunning
   const action = (id: string) => { if (canAct && listing) void perform('select', { observationId: listing.id, recordId: id }) }
-  const counts: Record<string, number> = {}; for (const row of records) counts[row.type] = (counts[row.type] ?? 0) + 1
   const tabs = [...(listing ? ['queryResults'] as const : []), ...(details ? ['details'] as const : []), ...(state?.executions.length ? ['results'] as const : [])]
   const status = state?.phase === 'ready' && state.agentRunning ? 'thinking' : state?.phase
   return <section className="saas-agent" aria-label={t('title')} aria-busy={busy}>
@@ -57,12 +91,10 @@ export function AgentPanel(props: Props & { openBrowser: () => void }) {
     }}><ErrorBoundary><GenuiBlock key={state.question.id} spec={questionSpec(state.question, t)} stateKey={sessionId + ':' + state.question.id} animateEntrance={false} /></ErrorBoundary></GenuiActionContext.Provider>{state.question.fields.every(field => !field.required) && <button disabled={busy || state.phase !== 'awaiting_input'} onClick={() => { void perform('answer', { questionId: state.question!.id, answers: {} }) }}>{t('skipOptional')}</button>}</fieldset></div>}
     {!tabs.length && state?.configured && state.phase !== 'human' && !state.question && <div className="saas-agent-empty"><div>↗</div><p>{t(state.phase === 'queued' || state.phase === 'working' || state.agentRunning ? 'loadingRecords' : 'empty')}</p></div>}
     {!!tabs.length && <>
-      <nav className="saas-agent-tabs" aria-label={t('title')}>{tabs.map(kind => <button key={kind} disabled={busy || connection !== 'connected'} aria-pressed={kind === 'queryResults' ? queryView : view === kind} onClick={() => { void perform('view', { view: kind === 'queryResults' ? layout.current : kind }) }}>{t(kind)}</button>)}</nav>
-      {listing && queryView && <div className="saas-page-modes" role="group" aria-label={t('resultLayout')}>{(['table', 'list', 'summary'] as const).map(kind => <button key={kind} disabled={busy || connection !== 'connected'} aria-pressed={view === kind} onClick={() => { void perform('view', { view: kind }) }}>{t(kind)}</button>)}</div>}
-      {listing && ['table', 'list', 'summary'].includes(view) && <p className="saas-agent-caption">{t('retained')} · {records.length} </p>}
-      {view === 'table' && <div className="saas-agent-table"><table><thead><tr><th>{t('name')}</th><th>{t('type')}</th><th>{t('version')}</th><th>{t('viewAction')}</th></tr></thead><tbody>{records.map(row => <tr key={row.id} data-selected={state?.selectedId === row.id}><td><strong>{row.name}</strong><small>{row.description}</small></td><td>{row.type}</td><td>{row.version}</td><td><button aria-label={t('select') + ': ' + row.name} disabled={!canAct} onClick={() => action(row.id)}>{t('select')} →</button></td></tr>)}</tbody></table>{!records.length && <p>{t(listing?.recordsState === 'loading' ? 'loadingRecords' : 'noRows')}</p>}</div>}
-      {view === 'list' && <div className="saas-agent-list">{records.map(row => <article key={row.id} data-selected={state?.selectedId === row.id}><div><span className="saas-agent-eyebrow">{row.type} · {row.version}</span><h3>{row.name}</h3><p>{row.description}</p><div>{row.tags.map((tag, index) => <span className="saas-agent-tag" key={index}>{tag}</span>)}</div></div><button aria-label={t('select') + ': ' + row.name} disabled={!canAct} onClick={() => action(row.id)}>{t('select')} →</button></article>)}{!records.length && <p>{t('noRows')}</p>}</div>}
-      {view === 'summary' && <ErrorBoundary><GenuiBlock animateEntrance={false} spec={{ items: [{ type: 'stat', label: t('count'), value: String(records.length), size: 'hero' }, ...Object.entries(counts).map(([type, count]) => ({ type: 'progress' as const, label: plain(type), value: records.length ? count * 100 / records.length : 0, valueLabel: String(count) }))] }} /></ErrorBoundary>}
+      <nav className="saas-agent-tabs" aria-label={t('title')}>
+        {tabs.map(kind => <button key={kind} disabled={busy || connection !== 'connected'} aria-pressed={view === kind} onClick={() => { void perform('view', { view: kind === 'queryResults' ? 'table' : kind }) }}>{t(kind)}</button>)}
+      </nav>
+      {listing && view === 'queryResults' && <QueryResults observation={listing} selectedId={state?.selectedId} canAct={canAct} select={action} t={t} />}
       {view === 'details' && (details ? <PageContent key={details.id} observation={details} t={t} current={!!state?.browserReady && state.phase === 'ready' && !state.agentRunning && connection === 'connected' && details.url === state.observation?.url} preview={<LiveBrowser {...props} human={false} interval={1800} />} openBrowser={openBrowser} /> : <p>{t('missingDetails')}</p>)}
       {view === 'results' && <div className="saas-agent-executions"><p className="saas-agent-caption">{t('replyNotice')}</p>{state?.executions.map(run => <article key={run.id}><header><h3>{t(run.mode)}</h3><span className={'saas-run-status ' + run.status}>{t(run.status)}</span></header><h4>{t('message')}</h4><p>{run.input}</p><h4>{t('response')}</h4><pre>{run.output || t(run.status === 'running' ? 'waitingResponse' : 'noResponse')}</pre>{run.error && <p role="alert">{t('executionError')}: {errorHint(run.error, t)}<small>{run.error}</small></p>}<footer>{new Date(run.startedAt).toLocaleString()} · {run.url}</footer></article>)}{!state?.executions.length && <p>{t('noExecutions')}</p>}</div>}
       {view !== 'results' && <Source observation={view === 'details' ? details : listing} t={t} />}

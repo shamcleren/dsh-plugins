@@ -135,13 +135,13 @@
       "description": "通过真实 Agent 查询注册网站、补参、查看配置与执行对话，提供业务视图和原页面接管。",
       "dshVersion": "0.2.1-rc.5",
       "placement": "after-web-app",
-      "version": "0.4.2",
-      "sourceDigest": "837291e8e35d61d9da0d42f45c4f7f8da602d4d05ceaacd23c3e9e891382ccd3",
+      "version": "0.4.3",
+      "sourceDigest": "5cd28f66126c8752aded080ed321224658387105d87d609411fabe6715408831",
       "sourceLock": "artifacts/locks/7109c74f15cf723ba546eb8c43176f74885bcca64e85365fb4249f99d92498be.yaml",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-saas-browser-workspace-0.4.2.tgz",
-        "size": 1027824,
-        "sha256": "6dc9ad6e5787a33038dd562d9abe2f032a571cbdce13636e569a248be2fd8038"
+        "path": "artifacts/shamcleren-dsh-saas-browser-workspace-0.4.3.tgz",
+        "size": 1027371,
+        "sha256": "939a5f95a6694b3fd00ba859385ff3970ff725c31da15a0f7209ab3e06278028"
       }
     }
   ]

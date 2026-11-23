@@ -144,7 +144,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }))
   ctx.tools.register(defineTool({
     name: VIEW_TOOL,
-    description: 'Present the latest observed website data beside this conversation. Choose table/list/summary as layouts of ONE query result, details for any observed HTML page, or results for execution output and status. Page document contains DOM/ARIA fields, content blocks and explicit reading gaps; unread is not empty. Do not claim collapsed regions, complex editors, charts or frames have been fully read. Offer the original page image when semantics are incomplete. Values always come from the browser observation. Result selection returns to this real agent. Use after querying and after opening configuration.',
+    description: 'Present the latest observed website data beside this conversation. Choose table to show query results with selectable records and a count summary, details for the observed HTML page, or results for execution output and status. Page document contains DOM/ARIA fields, content blocks and explicit reading gaps; unread is not empty. Do not claim collapsed regions, complex editors, charts or frames have been fully read. Offer the original page image when semantics are incomplete. Values always come from the browser observation. Result selection returns to this real agent. Use after querying and after opening configuration.',
     parameters: { view: { type: 'string', required: true }, title: { type: 'string' } }, output: envelope,
     async execute(args, exec) {
       const item = requireAgent(exec)

@@ -29,8 +29,7 @@ afterAll(async () => { await browser?.close(); if (server) { const closed = once
 const patch = value => page.evaluate(next => window.reviewUI.patch(next), value)
 const screenshot = async name => { if (process.env.DSH_SAAS_UI_ARTIFACT_DIR) { await mkdir(process.env.DSH_SAAS_UI_ARTIFACT_DIR, { recursive: true }); await page.screenshot({ path: join(process.env.DSH_SAAS_UI_ARTIFACT_DIR, name + '.png'), fullPage: true }) } }
 
-it('keeps all views reachable in a narrow panel and renders actual GenUI form validation and multiline input', async () => {
-  await page.getByRole('button', { name: '列表', exact: true }).click()
+it('shows selectable results directly in a narrow panel and renders actual GenUI form validation and multiline input', async () => {
   await page.getByRole('heading', { name: '初始化助手', exact: true }).waitFor()
   expect(await page.getByRole('button', { name: '调试 →', exact: true }).isDisabled()).toBe(true)
   await patch({ phase: 'awaiting_input', question: { id: '00000000-0000-4000-8000-000000000003', title: '补充本次任务', fields: [{ name: 'message', label: '需要发送的内容', type: 'textarea', required: true }] } })
@@ -52,9 +51,13 @@ it('keeps all views reachable in a narrow panel and renders actual GenUI form va
 it('switches back to retained configuration and results, and signals stale state after disconnect', async () => {
   await patch({ view: 'details', selected: { id: 'r0', name: '初始化助手', version: 'v1.2', type: '单智能体', description: '', tags: [], actions: [] }, details: { id: 'details', url: 'https://portal.example.test/config', title: '配置', text: '只读配置正文', controls: [], records: [], recordsState: 'unavailable', capturedAt: '2026-11-23T08:01:00Z', truncated: false }, executions: [{ id: 'fixture', mode: 'debug', status: 'completed', input: '17+25（合成结果，用于UI验收）', output: '42', url: 'https://portal.example.test/config', startedAt: '2026-11-23T08:02:00Z', updatedAt: '2026-11-23T08:02:01Z' }] })
   await page.getByText('查看已读取的页面文本', { exact: true }).click(); await page.getByText('只读配置正文', { exact: true }).waitFor()
-  await page.getByRole('button', { name: '查询结果', exact: true }).click(); await page.getByRole('cell', { name: '工作流', exact: true }).waitFor()
+  await page.getByRole('button', { name: '查询结果', exact: true }).click(); await page.getByRole('heading', { name: '长名称与复杂输入验证助手', exact: true }).waitFor()
   await page.getByRole('button', { name: '页面内容', exact: true }).click(); await page.getByText('查看已读取的页面文本', { exact: true }).click(); await page.getByText('只读配置正文', { exact: true }).waitFor()
-  await page.getByRole('button', { name: '查询结果', exact: true }).click(); await page.getByRole('button', { name: '汇总', exact: true }).click(); await page.getByText('当前已读取', { exact: true }).waitFor()
+  await page.getByRole('button', { name: '查询结果', exact: true }).click()
+  await page.getByText('当前已读取: 2', { exact: true }).waitFor()
+  await page.getByText('汇总', { exact: true }).click()
+  await page.getByText('工作流 · 1', { exact: true }).waitFor()
+  expect(await page.getByRole('heading', { name: '初始化助手', exact: true }).isVisible()).toBe(true)
   await page.getByRole('button', { name: '执行结果', exact: true }).click(); await page.getByText('42', { exact: true }).waitFor()
   await screenshot('saas-review-results')
   await page.evaluate(() => window.reviewUI.disconnect(true))
@@ -78,9 +81,23 @@ it('opens the original-page dialog, suspends stale frames, and offers keyboard e
   await page.keyboard.press('Escape'); expect(await dialog.isVisible()).toBe(false)
 }, 15_000)
 
-it('shows one query entry with layouts and renders a generic page with honest field states', async () => {
-  expect(await page.locator('nav').getByRole('button', { name: '查询结果', exact: true }).count()).toBe(1)
-  expect(await page.locator('nav').getByRole('button', { name: '表格', exact: true }).count()).toBe(0)
+it('shows one query view for existing presentation values while preserving record selection', async () => {
+  for (const view of ['table', 'list', 'summary']) {
+    const siteName = '查询测试 · ' + view
+    await patch({ view, siteName })
+    await page.getByRole('heading', { name: siteName, exact: true }).waitFor()
+    expect(await page.getByRole('button', { name: '查询结果', exact: true }).getAttribute('aria-pressed')).toBe('true')
+    expect(await page.getByRole('button', { name: /^(表格|列表)$/ }).count()).toBe(0)
+    expect(await page.getByRole('heading', { name: '初始化助手', exact: true }).count()).toBe(1)
+  }
+  await page.getByRole('button', { name: '查看配置: 初始化助手', exact: true }).click()
+  await page.getByRole('status').filter({ hasText: '已提交' }).waitFor()
+  expect(await page.evaluate(() => window.reviewUI.calls.filter(call => call.method === 'select'))).toMatchObject([{
+    payload: { observationId: '00000000-0000-4000-8000-000000000002', recordId: 'r0' },
+  }])
+}, 15_000)
+
+it('renders a generic page with honest field states', async () => {
   const observation = { id: 'generic', url: 'https://portal.example.test/settings', title: 'Project settings', text: 'Captured text', controls: [], records: [], recordsState: 'unavailable', capturedAt: '2026-11-23T08:01:00Z', truncated: false, document: { blocks: [
     { kind: 'fields', title: 'Settings', fields: [
       { label: 'Instructions', kind: 'multiline', state: 'empty', value: '' },
