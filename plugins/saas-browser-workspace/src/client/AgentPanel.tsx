@@ -1,3 +1,4 @@
+import { ApprovalCard } from './ApprovalCard.js'
 import { PageContent } from './PageContent.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { ErrorBoundary, GenuiActionContext, GenuiBlock, type GenuiSpec } from '@changfenhuang/dsh-genui/embed'
@@ -74,7 +75,7 @@ export function AgentPanel(props: Props & { openBrowser: () => void }) {
   const tabs = [...(listing ? ['queryResults'] as const : []), ...(details ? ['details'] as const : []), ...(state?.executions.length ? ['results'] as const : [])]
   const status = state?.phase === 'ready' && state.agentRunning ? 'thinking' : state?.phase
   return <section className="saas-agent" aria-label={t('title')} aria-busy={busy}>
-    <header className="saas-agent-heading"><div><span className="saas-agent-eyebrow">{t('title')}</span><h2>{state?.siteName || t('title')}</h2></div><span className="saas-agent-badge">{t(state?.executionEnabled ? 'protected' : 'readonly')}</span></header>
+    <header className="saas-agent-heading"><div><span className="saas-agent-eyebrow">{t('title')}</span><h2>{state?.siteName || t('title')}</h2></div><span className="saas-agent-badge">{t(state?.approvalEnabled ? 'approvalEnabled' : state?.executionEnabled ? 'protected' : 'readonly')}</span></header>
     <div className="saas-agent-toolbar"><span role="status" className={'saas-agent-status ' + status}><i />{status ? t(status) : t('loading')}</span><button disabled={!state?.browserReady || connection !== 'connected'} onClick={openBrowser}>{t('browser')} ↗</button></div>
     {connection === 'disconnected' && <div className="saas-agent-notice" role="alert"><p>{t('disconnected')}</p><button onClick={retry}>{t('retry')}</button></div>}
     {state && !state.configured && <p className="saas-agent-empty">{t('notConfigured')}</p>}
@@ -82,6 +83,10 @@ export function AgentPanel(props: Props & { openBrowser: () => void }) {
     {!!state?.executionModes.length && <div className="saas-agent-actions">{state.executionModes.map(mode => <button key={mode} disabled={!canAct || !state.selected && !details} onClick={() => { void perform('execute', { mode }) }}>{t(mode)} →</button>)}{!state.selected && !details && <small>{t('selectFirst')}</small>}</div>}
     {state?.blockedOrigin && <div className="saas-agent-notice" role="alert">{t('blocked')} <code>{state.blockedOrigin}</code><p>{t('notAuthorized')}</p></div>}
     {(error || state?.error) && <p className="saas-agent-error" role="alert">{error || errorHint(state?.error, t)}</p>}
+    {state?.review && <ApprovalCard key={state.review.id} review={state.review} remote={remote} sessionId={sessionId} t={t}
+      disabled={busy || connection !== 'connected' || state.agentRunning || state.phase !== 'awaiting_approval'}
+      decide={approve => { void perform(approve ? 'approve' : 'cancelApproval', { approvalId: state.review!.id }) }} />}
+    {state?.operation === 'approval-cancelled' && <p role="status">{t('approvalCancelled')}</p>}
     {state?.phase === 'human' && <div className="saas-agent-prompt"><h3>{t(state.humanReason === 'login' ? 'login' : 'human')}</h3><p>{t(state.humanReason === 'login' ? 'loginHelp' : 'humanHelp')}</p><button onClick={openBrowser}>{t('browser')}</button></div>}
     {state?.question && <div className="saas-agent-prompt"><h3>{state.question.title}</h3><p className="saas-agent-caption">{t('requiredHelp')}</p><fieldset disabled={busy || state.phase !== 'awaiting_input' || connection !== 'connected'}><GenuiActionContext.Provider value={(name, payload) => {
       if (name !== 'answer' || busy || state.phase !== 'awaiting_input') return
@@ -89,7 +94,7 @@ export function AgentPanel(props: Props & { openBrowser: () => void }) {
       if (state.question!.fields.some(field => field.required && !String(fields[field.name] ?? '').trim())) { setError(t('requiredHelp')); return }
       void perform('answer', { questionId: state.question!.id, answers: fields })
     }}><ErrorBoundary><GenuiBlock key={state.question.id} spec={questionSpec(state.question, t)} stateKey={sessionId + ':' + state.question.id} animateEntrance={false} /></ErrorBoundary></GenuiActionContext.Provider>{state.question.fields.every(field => !field.required) && <button disabled={busy || state.phase !== 'awaiting_input'} onClick={() => { void perform('answer', { questionId: state.question!.id, answers: {} }) }}>{t('skipOptional')}</button>}</fieldset></div>}
-    {!tabs.length && state?.configured && state.phase !== 'human' && !state.question && <div className="saas-agent-empty"><div>↗</div><p>{t(state.phase === 'queued' || state.phase === 'working' || state.agentRunning ? 'loadingRecords' : 'empty')}</p></div>}
+    {!tabs.length && state?.configured && state.phase !== 'human' && !state.question && !state.review && <div className="saas-agent-empty"><div>↗</div><p>{t(state.phase === 'queued' || state.phase === 'working' || state.agentRunning ? 'loadingRecords' : 'empty')}</p></div>}
     {!!tabs.length && <>
       <nav className="saas-agent-tabs" aria-label={t('title')}>
         {tabs.map(kind => <button key={kind} disabled={busy || connection !== 'connected'} aria-pressed={view === kind} onClick={() => { void perform('view', { view: kind === 'queryResults' ? 'table' : kind }) }}>{t(kind)}</button>)}
@@ -114,6 +119,7 @@ export function BrowserOverlay(props: Props & { requests: EventTarget }) {
   useEffect(() => { if (login && !seen.current) setOpened(true); seen.current = login }, [login])
   useEffect(() => { if (opened && dialog.current && !dialog.current.open) dialog.current.showModal(); if (!opened) dialog.current?.close() }, [opened])
   const human = state?.phase === 'human'
+  useEffect(() => { if (state?.review) setOpened(false) }, [state?.review?.id])
   const transfer = async () => {
     if (!state || transferring.current) return
     transferring.current = true; setBusy(true); setError('')
@@ -122,7 +128,7 @@ export function BrowserOverlay(props: Props & { requests: EventTarget }) {
     finally { transferring.current = false; setBusy(false) }
   }
   return <dialog ref={dialog} className="saas-browser-dialog" onCancel={() => setOpened(false)} onClose={() => setOpened(false)} aria-label={t('live')}>
-    <header><div><strong>{t(human ? (login ? 'login' : 'human') : 'watch')}</strong><p>{t(human ? 'humanHelp' : 'watchHelp')}</p></div><div><button disabled={busy || connection !== 'connected' || !state?.browserReady} onClick={() => { void transfer() }}>{t(human ? 'resume' : 'takeover')}</button><button onClick={() => setOpened(false)}>{t('close')}</button></div></header>
+    <header><div><strong>{t(human ? (login ? 'login' : 'human') : 'watch')}</strong><p>{t(human ? 'humanHelp' : 'watchHelp')}</p></div><div><button disabled={busy || connection !== 'connected' || !state?.browserReady || !!state.review} onClick={() => { void transfer() }}>{t(human ? 'resume' : 'takeover')}</button><button onClick={() => setOpened(false)}>{t('close')}</button></div></header>
     {error && <p role="alert">{error}</p>}{connection === 'disconnected' && <p role="alert">{t('disconnected')}</p>}{state?.blockedOrigin && <p role="alert">{t('blocked')} {state.blockedOrigin}</p>}
     {opened && state?.browserReady && <LiveBrowser {...props} human={human && !busy && connection === 'connected'} />}
     <footer>{t(human && login ? 'loginInputNotice' : 'readOnlyNotice')}</footer>

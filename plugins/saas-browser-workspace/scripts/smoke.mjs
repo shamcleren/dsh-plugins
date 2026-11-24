@@ -10,7 +10,7 @@ import { startFixture } from './fixture.mjs'
 
 if (!process.env.DSH_SAAS_MODEL_CONFIG) throw new Error('Set DSH_SAAS_MODEL_CONFIG to an authorized real model route; this test does not simulate model decisions.')
 const scratch = await mkdtemp(join(tmpdir(), 'saas-agent-smoke-')), infoFile = join(scratch, 'info.json')
-const fixture = await startFixture({ indirectConfig: true, execution: true }), siteFile = join(scratch, 'site.json')
+const fixture = await startFixture({ indirectConfig: true, execution: true, approvals: true }), siteFile = join(scratch, 'site.json')
 await writeFile(siteFile, JSON.stringify(fixture.site), { mode: 0o600 })
 const demo = spawn(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), 'demo.mjs')], {
   env: { ...process.env, DSH_DEMO_INFO: infoFile, DSH_SAAS_SITE_CONFIG: siteFile,
@@ -70,6 +70,34 @@ try {
   assert.equal(Buffer.from(await image.arrayBuffer()).subarray(0, 2).toString('hex'), 'ffd8')
   assert.equal((await fetch(frame)).status, 401)
   assert.equal((await fetch(origin + '/api/saas-agent/frame?sessionId=unknown', { headers: { cookie } })).status, 404)
+  // Exercise the owner flow against a real browser and frozen proof on the official host.
+  assert.equal((await rpc('takeover', { sessionId: info.sessionId })).ok, true)
+  const reviewClick = () => rpc('input', { sessionId: info.sessionId, input: { kind: 'click', x: 180, y: 420 } })
+  assert.equal((await reviewClick()).ok, true)
+  const cancelled = (await state()).review
+  assert.equal(cancelled.label, '知识库（1）')
+  assert.equal((await rpc('cancelApproval', { sessionId: info.sessionId, approvalId: cancelled.id })).ok, true)
+  assert.equal((await rpc('approve', { sessionId: info.sessionId, approvalId: cancelled.id })).ok, false)
+  assert.equal((await rpc('takeover', { sessionId: info.sessionId })).ok, true)
+  assert.equal((await reviewClick()).ok, true)
+  const proposed = await state()
+  assert.equal(proposed.phase, 'awaiting_approval')
+  assert.equal(proposed.review.label, '知识库（1）')
+  assert.ok(!proposed.observation.text.includes('Fixture retrieval handbook'))
+  const reviewFrame = frame + '&approvalId=' + proposed.review.id
+  const preview = await fetch(reviewFrame, { headers: { cookie } })
+  assert.equal(preview.status, 200)
+  assert.equal(Buffer.from(await preview.arrayBuffer()).subarray(0, 2).toString('hex'), 'ffd8')
+  assert.equal((await fetch(reviewFrame)).status, 401)
+  assert.equal((await rpc('approve', { sessionId: info.sessionId, approvalId: proposed.review.id })).ok, true)
+  assert.equal((await rpc('approve', { sessionId: info.sessionId, approvalId: proposed.review.id })).ok, false)
+  assert.equal((await fetch(reviewFrame, { headers: { cookie } })).status, 404)
+  const expanded = await wait(async () => {
+    const value = await state()
+    return !value.agentRunning && value.phase === 'ready' && value.details?.text.includes('Fixture retrieval handbook') && value
+  }, 'owner approves one custom disclosure and the agent resumes')
+  assert.ok(expanded.details.document.blocks.flatMap(block => block.fields ?? []).some(field => field.label === '检索数量' && field.value === '5'))
+
   for (const mode of ['debug', 'use']) {
     assert.equal((await rpc('execute', { sessionId: info.sessionId, mode })).ok, true)
     let answered = false
@@ -94,7 +122,7 @@ try {
   assert.ok(calls.includes('saas_ask')); assert.ok(calls.filter(name => name === 'saas_browser').length >= 4); assert.ok(calls.includes('saas_present'))
   assert.ok(journal.filter(event => event.type === 'turn/end').length >= 3)
   assert.ok(journal.some(event => event.type === 'request/context' && event.data.provider === info.provider && event.data.model === info.model))
-  console.log('PASS packed official Web profile; real model; missing-parameter form; native queue continuation; query → selection → configuration → debug → use (one actual fixture POST per mode, no saves); authenticated JPEG frames; password redaction. Fixture data only.')
+  console.log('PASS packed official Web profile; real model; missing-parameter form; native queue continuation; query → selection → configuration → debug → use (one actual fixture POST per mode, no saves); authenticated JPEG frames; password redaction; cancel and single-use owner approval. Fixture data only.')
 } finally {
   if (demo.exitCode === null) demo.kill('SIGTERM')
   await exited; await fixture.close()

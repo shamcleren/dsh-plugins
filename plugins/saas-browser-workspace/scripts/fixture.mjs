@@ -1,8 +1,11 @@
 import { createServer } from 'node:http'
 
 /** Local synthetic service market; never uses an account or contacts another origin. */
-export async function startFixture({ requireLogin = false, indirectConfig = false, execution = false } = {}) {
+export async function startFixture({ requireLogin = false, indirectConfig = false, execution = false, approvals = false } = {}) {
   let origin
+  const disclosure = `<button type="button" style="position:fixed;top:400px;left:100px;width:180px;height:44px"
+    aria-expanded="false" onclick="this.setAttribute('aria-expanded','true');document.getElementById('fixture-resource').hidden=false">知识库（1）</button>
+    <section hidden id="fixture-resource"><p>Fixture retrieval handbook</p><label>检索数量<input type="number" value="5"></label></section>`
   const stats = { messages: [], saves: 0 }
   const rows = [
     ['初始化助手', '单智能体', 'v1.2', '运维', '帮助团队完成项目初始化和环境检查。'],
@@ -57,14 +60,14 @@ export async function startFixture({ requireLogin = false, indirectConfig = fals
       const row = rows.find(row => String(row.id) === url.searchParams.get('id'))
       if (!row) { response.writeHead(404); response.end(); return }
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      response.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>智能体配置 · 测试数据</title><main><h1>${row.name} · 配置</h1><label>名称<input value="${row.name}" readonly></label><label>模型<input value="fixture-model" readonly></label><label><input type="radio" name="mode" value="user_define" checked>自定义 Prompt</label><label><input type="radio" name="mode" value="collection">引用角色</label><label>系统提示词<textarea readonly>帮助团队完成初始化检查。</textarea></label><label>API Key<input type="password" value="fixture-secret" readonly></label><button onclick="fetch('/save',{method:'POST'})">保存</button>${execution ? '<button onclick="window.open(\'/use\')">去使用</button>' + chat('debug') : '<button>运行调试</button>'}<a href="/agents">返回</a></main></html>`); return
+      response.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>智能体配置 · 测试数据</title><main><h1>${row.name} · 配置</h1><label>名称<input value="${row.name}" readonly></label><label>模型<input value="fixture-model" readonly></label><label><input type="radio" name="mode" value="user_define" checked>自定义 Prompt</label><label><input type="radio" name="mode" value="collection">引用角色</label><label>系统提示词<textarea readonly>帮助团队完成初始化检查。</textarea></label><label>API Key<input type="password" value="fixture-secret" readonly></label><button onclick="fetch('/save',{method:'POST'})">保存</button>${execution ? '<button onclick="window.open(\'/use\')">去使用</button>' + chat('debug') : '<button>运行调试</button>'}<a href="/agents">返回</a>${approvals ? disclosure : ""}</main></html>`); return
     }
     if (url.pathname === '/agents' || url.pathname === '/development' || url.pathname === '/') { response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); response.end(html); return }
     response.writeHead(404); response.end()
   })
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
   origin = `http://127.0.0.1:${server.address().port}`
-  return { server, origin, stats, site: { name: '智能体服务市场 · 本地演示', url: origin + '/agents', allowedOrigins: [origin, ...(requireLogin ? [origin.replace('127.0.0.1', 'localhost')] : [])], blockedHosts: [],
+  return { server, origin, stats, site: { name: '智能体服务市场 · 本地演示', url: origin + '/agents', allowedOrigins: [origin, ...(requireLogin ? [origin.replace('127.0.0.1', 'localhost')] : [])], blockedHosts: [], ...(approvals ? { approvalPaths: ['/agents/config'] } : {}),
     ...(execution ? { execution: ['debug', 'use'].map(mode => ({ mode, origin, paths: [mode === 'debug' ? '/agents/config' : '/use'], scope: '.' + mode + '-chat', input: '.message', submit: '.send', output: '.reply', busy: '.send.busy', error: '.error' })) } : {}),
     selectors: { search: '.div-input[contenteditable="true"]', results: '.g-resource-list', card: '.resource-card-home', name: '.resource-card-name', type: '.agent-type', version: '.resource-version', tags: '.tag-home', description: '.resource-card-description' }, emptyText: '暂无智能体', screenshotMasks: [] },
     close: () => new Promise(resolve => server.close(resolve)) }

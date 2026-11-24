@@ -137,3 +137,26 @@ it('defaults unsupported HTML to the original image without requiring query reco
   await page.getByRole('button', { name: '结构视图', exact: true }).click()
   await page.getByText('部分内容无法整理成可靠结构，请查看原页面。').first().waitFor()
 }, 15_000)
+
+it('shows the action, proposed parameters and static screenshot before the owner can approve', async () => {
+  const id = '00000000-0000-4000-8000-000000000009'
+  await patch({ phase: 'awaiting_approval', approvalEnabled: true, review: {
+    id, action: 'fill', label: '检索数量', before: '5', after: '8', expiresAt: '2099-01-01T00:00:00.000Z',
+    url: 'https://portal.example.test/config', pageTitle: '智能体配置', fields: [], fieldsLimited: false,
+    target: { left: 9, top: 12, width: 30, height: 8 },
+  } })
+  const card = page.getByRole('region', { name: '确认网页操作' })
+  await card.getByText('填写 · 检索数量').waitFor()
+  await card.getByRole('img', { name: '操作前的原页面截图' }).waitFor()
+  await card.getByText('8', { exact: true }).waitFor()
+  await screenshot('saas-approval-card')
+  await card.getByRole('button', { name: '放大查看原页面 ↗' }).click()
+  const zoom = page.getByRole('dialog', { name: '操作前的原页面截图' })
+  await zoom.waitFor()
+  await zoom.getByRole('button', { name: '收起页面' }).click()
+  await card.getByRole('button', { name: '确认并执行' }).click()
+  await card.waitFor({ state: 'detached' })
+  expect(await page.evaluate(() => window.reviewUI.calls.filter(call => call.method === 'approve'))).toMatchObject([
+    { payload: { approvalId: id } },
+  ])
+}, 15_000)

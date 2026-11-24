@@ -5,7 +5,7 @@ export const BROWSER_TOOL = 'saas_browser'
 export const VIEW_TOOL = 'saas_present'
 export const ASK_TOOL = 'saas_ask'
 export const AgentSession = z.string().min(1).max(200)
-export const Control = z.object({ ref: z.string(), label: z.string(), role: z.string(), value: z.string(), canFill: z.boolean(), canClick: z.boolean(), sensitive: z.boolean(), purpose: z.enum(['search', 'message', 'submit', 'navigation', 'readonly']).default('readonly') })
+export const Control = z.object({ ref: z.string(), label: z.string(), role: z.string(), value: z.string(), canFill: z.boolean(), canClick: z.boolean(), sensitive: z.boolean(), purpose: z.enum(['search', 'message', 'submit', 'navigation', 'disclosure', 'readonly']).default('readonly'), approval: z.array(z.enum(['click', 'fill', 'select'])).optional(), options: z.array(z.object({ label: z.string(), value: z.string() })).optional() })
 export type Control = z.infer<typeof Control>
 export const AgentRecord = z.object({ id: z.string(), name: z.string(), type: z.string(), version: z.string(), description: z.string(), tags: z.array(z.string()), actions: z.array(z.object({ ref: z.string(), label: z.string() })) })
 export type AgentRecord = z.infer<typeof AgentRecord>
@@ -37,11 +37,26 @@ export const ExecutionResult = z.object({
   input: z.string(), output: z.string(), error: z.string().optional(), url: z.string(), startedAt: z.string(), updatedAt: z.string(),
 })
 export type ExecutionResult = z.infer<typeof ExecutionResult>
+export const ActionReview = z.object({
+  id: z.string().uuid(),
+  action: z.enum(['click', 'fill', 'select']),
+  label: z.string(),
+  url: z.string(),
+  pageTitle: z.string(),
+  expiresAt: z.string(),
+  before: z.string().optional(),
+  after: z.string().optional(),
+  fields: z.array(PageField).max(24),
+  fieldsLimited: z.boolean(),
+  target: z.object({ left: z.number(), top: z.number(), width: z.number(), height: z.number() }),
+})
+export type ActionReview = z.infer<typeof ActionReview>
 export const AgentState = z.object({
-  sessionId: AgentSession, configured: z.boolean(), siteName: z.string(), phase: z.enum(['ready', 'queued', 'working', 'awaiting_input', 'human', 'failed']),
+  sessionId: AgentSession, configured: z.boolean(), siteName: z.string(), phase: z.enum(['ready', 'queued', 'working', 'awaiting_input', 'awaiting_approval', 'human', 'failed']),
   operation: z.string(), view: z.enum(['table', 'list', 'summary', 'details', 'results']).default('table'), title: z.string(),
   executionEnabled: z.boolean().default(false), executions: z.array(ExecutionResult).default([]),
   observation: PageObservation.optional(), listing: PageObservation.optional(), details: PageObservation.optional(), selected: AgentRecord.optional(), executionModes: z.array(z.enum(['debug', 'use'])).default([]), question: Question.optional(), selectedId: z.string().optional(),
+  review: ActionReview.optional(), approvalEnabled: z.boolean().optional(),
   humanReason: z.enum(['login', 'requested']).optional(), blockedOrigin: z.string().optional(), error: z.string().optional(),
   agentRunning: z.boolean().default(false), browserReady: z.boolean(), revision: z.number().int(),
   generation: z.string().uuid().optional(),
@@ -50,7 +65,7 @@ export type AgentState = z.infer<typeof AgentState>
 export function latestAgentState(previous: AgentState | undefined, next: AgentState): AgentState {
   return previous && previous.sessionId === next.sessionId && previous.generation === next.generation && previous.revision >= next.revision ? previous : next
 }
-export const BrowserArgs = z.object({ action: z.enum(['open', 'observe', 'fill', 'press', 'click', 'submit', 'wait', 'back', 'scroll']), url: z.string().url().max(2000).optional(), observation_id: z.string().uuid().optional(), ref: z.string().max(30).optional(), text: z.string().max(2000).optional(), request_id: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).optional(), delta: z.number().int().min(-1200).max(1200).optional() }).strict()
+export const BrowserArgs = z.object({ action: z.enum(['open', 'observe', 'fill', 'select', 'press', 'click', 'submit', 'wait', 'back', 'scroll']), url: z.string().url().max(2000).optional(), observation_id: z.string().uuid().optional(), ref: z.string().max(30).optional(), text: z.string().max(2000).optional(), request_id: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).optional(), delta: z.number().int().min(-1200).max(1200).optional() }).strict()
 export type BrowserArgs = z.infer<typeof BrowserArgs>
 export const HumanInput = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('click'), x: z.number().min(0).max(1280), y: z.number().min(0).max(900) }).strict(),
@@ -62,5 +77,5 @@ export type HumanInput = z.infer<typeof HumanInput>
 export interface AgentRemote {
   state(sessionId: string, signal?: AbortSignal): Promise<AgentState>
   call(method: string, payload: unknown, signal?: AbortSignal): Promise<unknown>
-  frame(sessionId: string, signal: AbortSignal): Promise<Blob>
+  frame(sessionId: string, signal: AbortSignal, approvalId?: string): Promise<Blob>
 }

@@ -3,12 +3,13 @@ import { randomUUID } from 'node:crypto'
 import type { Page, BrowserContext, CDPSession, Request } from 'playwright'
 import type { BrowserService } from '@anweat/dsh-browser'
 import type { Site } from './site.js'
-import { createRequestPolicy, navigationUrl } from './site.js'
-import { BrowserArgs, type PageObservation, type Control, type HumanInput } from './agent-contract.js'
+import { allowsApproval, createRequestPolicy, navigationUrl } from './site.js'
+import { BrowserArgs, type PageObservation, type HumanInput } from './agent-contract.js'
+import { Approvals } from './approval.js'
 import { Executions, executionRule, normalizeLabel, forbiddenLabel } from './agent-execution.js'
 
 const READ_LABELS = ['配置调试', '去配置调试', '查看配置', '查看详情', '详情', '基本信息', '模型配置', '提示词', '知识库', '工具', '返回', '搜索', '智能体开发', '管理我的智能体']
-export interface LocatedControl extends Control { selector: string }
+type LocatedControl = ReturnType<typeof observePage>['controls'][number]
 
 /** Adds bounded site navigation and explicitly registered chat actions to the public browser service. */
 export class AgentBrowser {
@@ -19,6 +20,7 @@ export class AgentBrowser {
   private allowPopup = false
   private popupAdmitted = false
   private popupRequests = new WeakSet<Request>()
+  readonly approvals = new Approvals()
   readonly executions: Executions
   private controls = new Map<string, LocatedControl>()
   private observation?: PageObservation
@@ -106,6 +108,7 @@ export class AgentBrowser {
   async act(raw: BrowserArgs, signal: AbortSignal): Promise<PageObservation | undefined> {
     const args = BrowserArgs.parse(raw)
     signal.throwIfAborted(); await this.initialize(); signal.throwIfAborted()
+    if (this.approvals.review) throw new Error('approval-pending')
     let page = this.page!
     if (args.action === 'open') {
       delete this.blockedOrigin
@@ -118,12 +121,18 @@ export class AgentBrowser {
     }
     else if (args.action === 'scroll') await page.mouse.wheel(0, args.delta ?? 600)
     else if (args.action === 'submit' && args.request_id && this.executions.hasReceipt(args.request_id)) { /* Return current evidence without another dispatch. */ }
-    else if (['fill', 'press', 'click', 'submit'].includes(args.action)) {
+    else if (['fill', 'select', 'press', 'click', 'submit'].includes(args.action)) {
       const target = this.resolve(args.observation_id, args.ref)
       const locator = page.locator(target.selector)
       if (page.url() !== this.observation?.url || await locator.count() !== 1 || !await locator.isVisible()) throw new Error('page-changed-observe-again')
+      if (args.action === 'select' || (args.action === 'fill' && !target.canFill) || (args.action === 'click' && !target.canClick)) {
+        const action = args.action
+        if (action !== 'fill' && action !== 'select' && action !== 'click' || !allowsApproval(this.site, page.url())) throw new Error('read-only')
+        await this.approvals.prepare(page, target, action, args, () => this.snapshot(page), this.site.screenshotMasks)
+        return this.observation
+      }
       if (args.action === 'fill') {
-        if (!target.canFill || target.sensitive) throw new Error('read-only')
+        if (target.sensitive) throw new Error('read-only')
         await this.validateInput(locator, target)
         if (target.purpose === 'message') {
           const rule = executionRule(this.site, page.url())
@@ -139,8 +148,10 @@ export class AgentBrowser {
         const rule = executionRule(this.site, page.url())
         if (!rule || target.purpose !== 'submit' || !args.request_id) throw new Error('execution-not-authorized')
         await this.executions.submit(page, rule, args.request_id, target.selector)
+      } else if (target.purpose === 'disclosure') {
+        if (!await locator.evaluate(toggleDisclosure, this.site.screenshotMasks)) throw new Error('page-changed-observe-again')
       } else {
-        if (!target.canClick) throw new Error('read-only')
+        if (!target.canClick || target.purpose !== 'navigation') throw new Error('read-only')
         const label = await locator.getAttribute('aria-label') || (await locator.innerText().catch(() => '')).trim() || ''
         const allowed = [...READ_LABELS, ...(this.site.execution.length ? ['配置', '去使用'] : [])]
         if (label !== target.label || forbiddenLabel(label + ' ' + (await locator.getAttribute('title') ?? '')) || !allowed.includes(normalizeLabel(label))) throw new Error('page-changed-observe-again')
@@ -181,12 +192,30 @@ export class AgentBrowser {
     return control
   }
 
+  private snapshot(page: Page) {
+    const rule = executionRule(this.site, page.url())
+    const readLabels = [...READ_LABELS, ...(this.site.execution.length ? ['配置', '去使用'] : [])]
+    return page.evaluate(observePage, { selectors: this.site.selectors, readLabels, rule, emptyText: this.site.emptyText,
+      masks: this.site.screenshotMasks, approvalEnabled: allowsApproval(this.site, page.url()) })
+  }
+
+  async approve(id: string, signal: AbortSignal): Promise<PageObservation | undefined> {
+    const page = this.page!
+    if (!this.ready || this.login || !allowsApproval(this.site, page.url())) {
+      await this.approvals.clear(id)
+      throw new Error('stale-approval')
+    }
+    await this.approvals.apply(id, page, () => this.snapshot(page), signal)
+    // A dispatched action cannot be replayed if the resulting page fails to render.
+    try { return this.login ? undefined : await this.observe() }
+    catch { throw new Error('approval-result-uncertain') }
+  }
+
   async observe(): Promise<PageObservation> {
     const page = this.page!
     if (this.login) throw new Error('login-required')
     await page.waitForLoadState('domcontentloaded', { timeout: 10_000 })
-    const rule = executionRule(this.site, page.url())
-    const result = await page.evaluate(observePage, { selectors: this.site.selectors, readLabels: [...READ_LABELS, ...(this.site.execution.length ? ['配置', '去使用'] : [])], rule, emptyText: this.site.emptyText, masks: this.site.screenshotMasks })
+    const result = await this.snapshot(page)
     this.controls = new Map(result.controls.map(control => [control.ref, control]))
     const observation: PageObservation = { ...result, id: randomUUID(), url: page.url(), capturedAt: new Date().toISOString(), controls: result.controls.map(({ selector: _selector, ...control }) => control) }
     this.observation = observation
@@ -202,17 +231,39 @@ export class AgentBrowser {
 
   async input(input: HumanInput): Promise<void> {
     if (!this.ready) throw new Error('browser-not-ready')
+    if (this.approvals.review) throw new Error('approval-pending')
     const page = this.page!
     if (!this.login) {
       if (input.kind === 'scroll') { await page.mouse.wheel(0, input.delta); return }
       // Business pages remain read-only during takeover. Login pages accept native input.
       if (input.kind !== 'click') throw new Error('read-only')
+      const disclosure = await page.evaluateHandle(({ x, y }) => document.elementFromPoint(x, y)?.closest('summary') ?? null, input)
+      try {
+        const summary = disclosure.asElement()
+        if (summary && await summary.evaluate(toggleDisclosure, this.site.screenshotMasks)) return
+      } finally { await disclosure.dispose() }
       const label = await page.evaluate(({ x, y }) => {
         const el = document.elementFromPoint(x, y)?.closest('button,a,[role=button],[role=tab]')
         const label = el?.getAttribute('aria-label') || (el as HTMLElement | null)?.innerText?.trim() || ''
         return /保存|发布|删除|分享|权限|save|publish|delete|share|permission/i.test(label + ' ' + (el?.getAttribute('title') ?? '')) ? '' : label
       }, input)
-      if (!READ_LABELS.includes(label.replace(/\s+/g, ''))) throw new Error('read-only')
+      if (!READ_LABELS.includes(normalizeLabel(label))) {
+        if (!allowsApproval(this.site, page.url())) throw new Error('read-only')
+        await this.observe()
+        const candidates = [...this.controls.values()].filter(control => control.approval?.includes('click'))
+        const selector = await page.evaluate(({ x, y, selectors }) => {
+          const picked = document.elementFromPoint(x, y)
+          for (let el = picked; el; el = el.parentElement) {
+            const match = selectors.find(selector => el!.matches(selector))
+            if (match) return match
+          }
+          return undefined
+        }, { ...input, selectors: candidates.map(control => control.selector) })
+        const target = candidates.find(control => control.selector === selector)
+        if (!target) throw new Error('read-only')
+        await this.approvals.prepare(page, target, 'click', { action: 'click' }, () => this.snapshot(page), this.site.screenshotMasks)
+        return
+      }
     }
     if (input.kind === 'click') await page.mouse.click(input.x, input.y)
     else if (input.kind === 'text') await page.keyboard.insertText(input.text)
@@ -221,9 +272,21 @@ export class AgentBrowser {
   }
   async close(): Promise<void> {
     this.stopped = true
+    await this.approvals.clear()
     await Promise.allSettled(this.cdps.map(cdp => cdp.detach()))
     await Promise.allSettled([...this.pages].map(page => page.close()))
     const state = this.service.sessionState({ id: this.sessionId })
     if (state) await this.service.closePage(state)
   }
+}
+
+// Native disclosure can be toggled directly without dispatching a click to page handlers.
+function toggleDisclosure(el: Element, masks: string[]): boolean {
+  const parent = el.parentElement
+  if (el.tagName !== 'SUMMARY' || !(parent instanceof HTMLDetailsElement) || parent.querySelector(':scope > summary') !== el
+    || !el.getClientRects().length || el.closest('[inert],[hidden],[aria-hidden=true],[aria-disabled=true]')
+    || masks.some(selector => el.closest(selector))
+    || /保存|发布|删除|分享|权限|上传|下载|save|publish|delete|share|permission|upload|download|password|secret|token|api.?key|验证码|密码|密钥/i.test([el.textContent, el.getAttribute('aria-label'), el.getAttribute('title')].join(' '))) return false
+  parent.open = !parent.open
+  return true
 }

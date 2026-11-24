@@ -2,13 +2,14 @@ import type { Site, ExecutionRule } from './site.js'
 import type { PageDocument, PageBlock, PageField } from './agent-contract.js'
 
 /** Runs in the page's main frame. Read only DOM/ARIA, with shared masking and bounded output. */
-export function observePage({ selectors, readLabels, rule, emptyText, masks }: {
-  selectors: Site['selectors']; readLabels: string[]; rule: ExecutionRule | undefined; emptyText: string; masks: string[]
+export function observePage({ selectors, readLabels, rule, emptyText, masks, approvalEnabled }: {
+  selectors: Site['selectors']; readLabels: string[]; rule: ExecutionRule | undefined; emptyText: string; masks: string[]; approvalEnabled: boolean
 }) {
 
       const visible = (el: Element) => {
         if (!el.getClientRects().length) return false
         for (let current: Element | null = el; current; current = current.parentElement) {
+          if (current instanceof HTMLDetailsElement && !current.open && current !== el && !current.querySelector(':scope > summary')?.contains(el)) return false
           const style = getComputedStyle(current)
           if (current.hasAttribute('hidden') || current.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false
         }
@@ -26,11 +27,22 @@ export function observePage({ selectors, readLabels, rule, emptyText, masks }: {
         return 'html>' + parts.join('>')
       }
       const scope = rule ? document.querySelector(rule.scope) : null
-      const allElements = Array.from(document.querySelectorAll('input:not([type=hidden]),textarea,select,[contenteditable=true],button,[role=button],a,[role=tab],[role=switch],[role=checkbox],[role=radio],[role=combobox],[role=textbox]')).filter(visible)
+      const allElements = Array.from(document.querySelectorAll('input:not([type=hidden]),textarea,select,[contenteditable=true],button,[role=button],a,[role=tab],[role=switch],[role=checkbox],[role=radio],[role=combobox],[role=textbox],summary,[aria-expanded],[onclick]')).filter(visible)
       const masked = Array.from(document.querySelectorAll(masks.join(',') || ':not(*)'))
       const inMask = (el: Element) => masked.some(root => root === el || root.contains(el))
       const labelledBy = (el: Element) => (el.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => document.getElementById(id)).filter((node): node is HTMLElement => !!node && !inMask(node) && visible(node)).map(node => text(node, 200)).join(' ').trim()
-      const labelOf = (el: Element) => el.getAttribute('aria-label') || labelledBy(el) || el.getAttribute('aria-placeholder') || (el as HTMLInputElement).labels?.[0]?.textContent?.trim() || text(el, 200) || el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name') || el.tagName.toLowerCase()
+      const nativeLabel = (el: Element) => {
+        const label = (el as HTMLInputElement).labels?.[0]
+        if (!label || inMask(label)) return ''
+        const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT)
+        let value = '', visited = 0
+        for (let node = walker.nextNode(); node && value.length < 200 && visited++ < 100; node = walker.nextNode()) {
+          const parent = node.parentElement
+          if (parent && !inMask(parent) && !parent.closest('input,textarea,select,button,[contenteditable],script,style,[hidden],[aria-hidden=true]')) value += node.textContent ?? ''
+        }
+        return value.trim().slice(0, 200)
+      }
+      const labelOf = (el: Element) => el.getAttribute('aria-label') || labelledBy(el) || el.getAttribute('aria-placeholder') || nativeLabel(el) || text(el, 200) || el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name') || el.tagName.toLowerCase()
       const hiddenField = (el: Element) => inMask(el) || (el as HTMLInputElement).type === 'password' || sensitive.test(labelOf(el) + ' ' + el.getAttribute('name') + ' ' + el.id + ' ' + (el as HTMLInputElement).autocomplete)
       const redacted = new Set([...allElements.filter(hiddenField), ...masked])
       for (const term of document.querySelectorAll('dt')) if (sensitive.test(text(term, 200)) && term.nextElementSibling?.tagName === 'DD') redacted.add(term.nextElementSibling)
@@ -59,16 +71,29 @@ export function observePage({ selectors, readLabels, rule, emptyText, masks }: {
         const message = !!rule && !!scope?.contains(el) && el.matches(rule.input) && !hidden && !denied && !input.disabled && !input.readOnly
         const submit = !!rule && !!scope?.contains(el) && el.matches(rule.submit) && !hidden && !denied
         const search = el.matches(selectors.search) && !hidden && !denied && !input.disabled && !input.readOnly
-        const navigation = readLabels.includes(label.replace(/[\s\uE000-\uF8FF]/g, '')) && !input.disabled && !denied
+        const nativeDisclosure = !hidden && !denied && el.tagName === 'SUMMARY' && el.parentElement?.tagName === 'DETAILS'
+          && el.parentElement.querySelector(':scope > summary') === el
+        const navigation = !hidden && !input.disabled && !denied && el.matches('button,a,[role=button],[role=tab]')
+          && readLabels.includes(label.replace(/[\s\uE000-\uF8FF]/g, ''))
+        const approval: NonNullable<import('./agent-contract.js').Control['approval']> = []
+        if (approvalEnabled && !hidden && !input.disabled && !el.closest('[inert],[aria-disabled=true]') && !submit) {
+          if (!navigation && !nativeDisclosure && el.matches('button,a[href],[role=button],[role=tab],[role=switch],[role=checkbox],[role=radio],input[type=checkbox],input[type=radio],input[type=button],input[type=submit],input[type=reset],[aria-expanded],[onclick]')) approval.push('click')
+          if (!message && !search && !input.readOnly && el.matches('textarea,[contenteditable=true],input:not([type]),input[type=text],input[type=number],input[type=email],input[type=url],input[type=search],input[type=tel]')) approval.push('fill')
+          if (el.matches('select:not([multiple])')) approval.push('select')
+        }
+        const options = approval.includes('select') ? Array.from((el as HTMLSelectElement).options)
+          .filter(option => option.value.length <= 2000 && !option.disabled && !option.hidden && !option.closest('optgroup[disabled]') && !inMask(option))
+          .slice(0, 40).map(option => ({ label: option.label.slice(0, 200), value: option.value })) : undefined
         return { ref: 'e' + index, selector: address(el), label, role: el.getAttribute('role') || el.tagName.toLowerCase(), value,
-          canFill: message || search, canClick: navigation, sensitive: hidden,
-          purpose: message ? 'message' as const : submit ? 'submit' as const : search ? 'search' as const : navigation ? 'navigation' as const : 'readonly' as const }
+          canFill: message || search, canClick: navigation || nativeDisclosure, sensitive: hidden,
+          ...(approval.length ? { approval } : {}), ...(options ? { options } : {}),
+          purpose: message ? 'message' as const : submit ? 'submit' as const : search ? 'search' as const : nativeDisclosure ? 'disclosure' as const : navigation ? 'navigation' as const : 'readonly' as const }
       })
       const cards = Array.from(document.querySelectorAll(selectors.card)).filter(visible)
       const records = cards.slice(0, 50).map((card, index) => ({ id: 'r' + index,
         name: fieldText(card.querySelector(selectors.name), 500), type: fieldText(card.querySelector(selectors.type), 200), version: fieldText(card.querySelector(selectors.version), 200),
         description: fieldText(card.querySelector(selectors.description), 2000), tags: Array.from(card.querySelectorAll(selectors.tags)).filter(visible).map(el => fieldText(el, 200)).slice(0, 20),
-        actions: controls.filter((control, i) => card.contains(elements[i]!) && control.canClick).map(({ ref, label }) => ({ ref, label })),
+        actions: controls.filter((control, i) => card.contains(elements[i]!) && control.purpose === 'navigation').map(({ ref, label }) => ({ ref, label })),
       })).filter(row => row.name)
       function readDocument(): PageDocument {
         const root = Array.from(document.querySelectorAll('dialog[open],[role=dialog][aria-modal=true]')).filter(visible).at(-1) ?? document.querySelector('main,[role=main]') ?? document.body
@@ -80,8 +105,7 @@ export function observePage({ selectors, readLabels, rule, emptyText, masks }: {
         const name = (el: Element) => {
           const explicit = el.getAttribute('aria-label') || labelledBy(el)
           if (explicit) return explicit.slice(0, 200)
-          const label = (el as HTMLInputElement).labels?.[0]
-          return (label ? fieldText(label, 200) : '') || el.getAttribute('title') || el.getAttribute('name') || ''
+          return nativeLabel(el) || el.getAttribute('title') || el.getAttribute('name') || ''
         }
         const take = (value: string, limit = 3000) => {
           const count = Math.min(remaining, limit)

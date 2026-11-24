@@ -14,6 +14,7 @@ export const Site = z.object({
   loginPaths: z.array(z.string().regex(/^\/(?!\/)[^?#]*$/).max(300)).max(20).default([]),
   navigationPaths: z.array(z.string().regex(/^\/(?!\/)[^?#]*$/).max(300)).max(20).default([]),
   navigationQueryKeys: z.array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,50}$/)).max(20).default([]),
+  approvalPaths: z.array(z.string().regex(/^\/(?!\/)[^?#]*$/).max(300)).max(20).default([]),
   execution: z.array(ExecutionRule).max(2).default([]),
   selectors: z.object({
     search: Selector, results: Selector, card: Selector, name: Selector, type: Selector,
@@ -64,6 +65,11 @@ export function navigationUrl(site: Site, value?: string): string {
     || [...url.searchParams.keys()].some(key => !site.navigationQueryKeys.includes(key))) throw new Error('navigation-not-allowed')
   return url.href
 }
+export function allowsApproval(site: Site, value: string): boolean {
+  const url = new URL(value)
+  return url.origin === new URL(site.url).origin && site.approvalPaths.includes(url.pathname) && isAllowed(site, value)
+}
+
 export async function loadSite(path: string): Promise<Site> {
   const bytes = await readFile(path)
   if (bytes.length > 32_768) throw new Error('Site configuration exceeds 32 KiB')

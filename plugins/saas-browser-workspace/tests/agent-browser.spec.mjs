@@ -146,3 +146,79 @@ it('bounds large structures and marks clipped tables instead of implying complet
   expect(doc.truncated).toBe(true)
   expect(doc.gaps.some(g => g.kind === 'limit')).toBe(true)
 })
+
+it('opens a native disclosure directly and reads its resource and retrieval settings', async () => {
+  await act({ action: 'open' })
+  await page.setContent(`<main><details><summary>知识库（1）</summary><p>Fixture handbook</p>
+    <label>检索数量<input type="number" value="5"></label></details></main>`)
+  const before = await act({ action: 'observe' })
+  expect(before.text).not.toContain('Fixture handbook')
+  const toggle = before.controls.find(control => control.purpose === 'disclosure')
+  expect(toggle).toMatchObject({ label: '知识库（1）', canClick: true })
+  const after = await act({ action: 'click', observation_id: before.id, ref: toggle.ref })
+  expect(after.text).toContain('Fixture handbook')
+  expect(after.document.blocks.flatMap(block => block.fields ?? [])).toContainEqual(
+    expect.objectContaining({ label: '检索数量', value: '5' }),
+  )
+  expect(adapter.approvals.review).toBeUndefined()
+})
+
+it('reviews custom clicks and edits with a frozen image, rejects changed parameters, and consumes approval once', async () => {
+  const signal = new AbortController().signal
+  await act({ action: 'open' })
+  adapter.site.approvalPaths.push('/agents')
+  try {
+    await page.setContent(`<main><label>检索数量<input id="limit" type="number" value="5"></label>
+      <label>API Key<input type="password" value="fixture-private"></label>
+      <label>检索模式<select><option value="a">向量</option><option value="b">混合</option></select></label>
+      <button type="button" aria-expanded="false" onclick="this.setAttribute('aria-expanded','true');document.querySelector('section').hidden=false">知识库（1）</button>
+      <section hidden><p>Fixture handbook</p></section>
+      <button onclick="window.saves=(window.saves||0)+1">保存</button></main>`)
+    const request = async (action, label, text) => {
+      const observation = await act({ action: 'observe' })
+      const control = observation.controls.find(control => control.label === label)
+      expect(control.approval).toContain(action)
+      await act({ action, observation_id: observation.id, ref: control.ref, ...(text === undefined ? {} : { text }) })
+      return adapter.approvals.review
+    }
+    let review = await request('click', '知识库（1）')
+    expect(await page.getByText('Fixture handbook').isVisible()).toBe(false)
+    expect(await adapter.approve(review.id, signal)).toMatchObject({ text: expect.stringContaining('Fixture handbook') })
+
+    review = await request('fill', '检索数量', '8')
+    expect(review).toMatchObject({ before: '5', after: '8', label: '检索数量' })
+    expect(JSON.stringify(review)).not.toContain('fixture-private')
+    expect(adapter.approvals.frame(review.id).subarray(0, 2).toString('hex')).toBe('ffd8')
+    expect(() => adapter.approvals.frame('other')).toThrow('stale-approval')
+    expect(await page.locator('#limit').inputValue()).toBe('5')
+    await expect(act({ action: 'observe' })).rejects.toThrow('approval-pending')
+    await adapter.approve(review.id, signal)
+    expect(await page.locator('#limit').inputValue()).toBe('8')
+    await expect(adapter.approve(review.id, signal)).rejects.toThrow('stale-approval')
+
+    review = await request('select', '检索模式', 'b')
+    expect(review).toMatchObject({ before: '向量', after: '混合' })
+    await adapter.approve(review.id, signal)
+    expect(await page.locator('select').inputValue()).toBe('b')
+
+    review = await request('click', '保存')
+    await page.locator('#limit').evaluate(el => { el.value = '9' })
+    await expect(adapter.approve(review.id, signal)).rejects.toThrow('stale-approval')
+    expect(await page.evaluate(() => window.saves ?? 0)).toBe(0)
+
+    review = await request('click', '保存')
+    await adapter.approvals.clear(review.id)
+    await expect(adapter.approve(review.id, signal)).rejects.toThrow('stale-approval')
+    expect(await page.evaluate(() => window.saves ?? 0)).toBe(0)
+
+    review = await request('click', '保存')
+    await page.getByRole('button', { name: '保存' }).evaluate(el => el.replaceWith(el.cloneNode(true)))
+    await expect(adapter.approve(review.id, signal)).rejects.toThrow('stale-approval')
+    expect(await page.evaluate(() => window.saves ?? 0)).toBe(0)
+
+    review = await request('click', '保存')
+    await adapter.approve(review.id, signal)
+    expect(await page.evaluate(() => window.saves)).toBe(1)
+    await expect(adapter.approve(review.id, signal)).rejects.toThrow('stale-approval')
+  } finally { await adapter.approvals.clear(); adapter.site.approvalPaths.pop() }
+}, 20_000)

@@ -34,8 +34,9 @@ export function apply(ctx: Context): void {
       return result.value
     },
     state: async (sessionId, signal) => AgentState.parse(await remote.call('state', { sessionId }, signal)),
-    frame: async (sessionId, signal) => {
-      const response = await fetch('/api/saas-agent/frame?' + new URLSearchParams({ sessionId }), { credentials: 'same-origin', cache: 'no-store', signal })
+    frame: async (sessionId, signal, approvalId) => {
+      const query = new URLSearchParams({ sessionId, ...(approvalId ? { approvalId } : {}) })
+      const response = await fetch('/api/saas-agent/frame?' + query, { credentials: 'same-origin', cache: 'no-store', signal })
       if (!response.ok || !response.headers.get('content-type')?.startsWith('image/jpeg')) throw new Error('frame-unavailable')
       return response.blob()
     },

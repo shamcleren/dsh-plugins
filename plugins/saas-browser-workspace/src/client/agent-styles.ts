@@ -8,4 +8,15 @@ export const agentStyles = `
 .saas-query-meta ul{margin:4px 0;padding-inline-start:18px;overflow-wrap:anywhere}
 .saas-agent-tag{max-width:100%;overflow-wrap:anywhere}
 .saas-page-modes{display:flex;gap:5px;flex-wrap:wrap;margin:10px 0}.saas-page-modes button{font-size:12px;padding:5px 10px}.saas-page-modes button[aria-pressed=true]{background:#568bec18;color:#4678c5;border-color:#568bec60}.saas-page-block{border:1px solid #8796ad2b;border-radius:10px;padding:14px;margin:12px 0;min-width:0;overflow-wrap:anywhere}.saas-page-block h4{margin:0 0 10px;font-size:13px}.saas-page-block dl{margin:0}.saas-page-block dl>div{display:grid;grid-template-columns:minmax(80px,32%) minmax(0,1fr);gap:12px;padding:9px 0;border-top:1px solid #8796ad22}.saas-page-block dt,.saas-field-status{color:var(--muted-foreground,#64748b);font-size:12px}.saas-page-block dd{margin:0;white-space:pre-wrap;max-height:240px;overflow:auto}.saas-page-text,.saas-page-transcript pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.7 system-ui;margin:0;max-height:360px;overflow:auto}.saas-page-transcript summary{cursor:pointer;font-size:12px;color:var(--muted-foreground,#64748b);margin:14px 0}.saas-page-gaps{padding:12px;background:#c888380a;border:1px solid #c8883845;border-radius:10px;font-size:12px}.saas-page-gaps ul{padding-left:18px;max-height:180px;overflow:auto}.saas-page-block ul{padding-left:18px}.saas-field-check{font-size:12px;border-radius:5px;padding:2px 6px;background:#8796ad16}.saas-field-check.on{background:#39a87814;color:#398267}.saas-page-preview{border:1px solid #8796ad2b;border-radius:10px;padding:10px}.saas-page-preview .saas-live-browser{margin-bottom:10px;min-height:160px}.saas-page-content{min-width:0}.saas-page-content .saas-agent-table td{min-width:80px;max-width:260px;white-space:pre-wrap}
+
+.saas-approval{overflow-wrap:anywhere}
+.saas-approval figure{position:relative;margin:12px 0;border:1px solid #8796ad45;border-radius:8px;overflow:hidden}
+.saas-approval img{display:block;width:100%}
+.saas-approval figure span{position:absolute;outline:2px solid #f3a42c;min-width:2px;min-height:2px;pointer-events:none}
+.saas-approval dl{margin:10px 0}
+.saas-approval dt{color:var(--muted-foreground,#64748b)}
+.saas-approval dd{margin:0 0 8px;white-space:pre-wrap}
+.saas-approval summary{cursor:pointer}
+.saas-agent .saas-approve{background:#2355a7;color:#fff;border-color:transparent}
+.saas-agent .saas-approve:hover:not(:disabled){background:#1b478f}
 `

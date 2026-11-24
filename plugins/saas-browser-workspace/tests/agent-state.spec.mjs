@@ -128,3 +128,29 @@ it.each([{ kind: 'error', error: { code: 'UNKNOWN', message: 'private' } }, { ki
   listeners.get('session/event')({ id: sessionId }, { type: 'turn/end', data: { reason } })
   expect(await state()).toMatchObject({ phase: 'awaiting_input', question, error: reason.kind === 'error' ? 'agent-turn-failed' : 'agent-turn-interrupted' })
 })
+
+it('ends the current turn, accepts only the matching approval and resumes after one dispatch', async () => {
+  const id = randomUUID()
+  const pending = { id, action: 'click', label: '保存' }
+  let review
+  vi.spyOn(AgentBrowser.prototype, 'act').mockImplementation(async function () {
+    Object.defineProperty(this.approvals, 'review', { get: () => review })
+    review = pending
+    return observed()
+  })
+  const apply = vi.spyOn(AgentBrowser.prototype, 'approve').mockImplementation(async () => {
+    review = undefined
+    return observed([], 'Configuration')
+  })
+  const execContext = exec()
+  const output = await tools.get('saas_browser').execute({ action: 'observe' }, execContext)
+  expect(JSON.parse(output.result)).toMatchObject({ phase: 'awaiting_approval', review: { id } })
+  expect(execContext.concludeTurn).toHaveBeenCalledOnce()
+  expect((await call('takeover')).ok).toBe(false)
+  expect((await call('approve', { approvalId: randomUUID() })).ok).toBe(false)
+  const decisions = await Promise.all([call('approve', { approvalId: id }), call('approve', { approvalId: id })])
+  expect(decisions.filter(result => result.ok)).toHaveLength(1)
+  expect(apply).toHaveBeenCalledOnce()
+  expect(prompt).toHaveBeenCalledOnce()
+  expect(await state()).toMatchObject({ phase: 'queued', operation: 'approval-dispatched', view: 'details' })
+})

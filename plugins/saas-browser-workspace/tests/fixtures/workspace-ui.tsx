@@ -23,13 +23,20 @@ const remote: AgentRemote = {
   state: async () => { if (offline) throw new Error('offline'); return structuredClone(value) },
   call: async (method, payload) => {
     calls.push({ method, payload }); const input = payload as Record<string, any>
+    if (method === 'approve' || method === 'cancelApproval') patch({ phase: 'ready', review: undefined })
     if (method === 'view') patch({ view: input.view })
     if (method === 'answer') { patch({ phase: 'queued', question: undefined }); return }
     if (method === 'select') patch({ selected: value.listing!.records.find(row => row.id === input.recordId), selectedId: input.recordId, phase: 'queued' })
     if (method === 'takeover') patch({ phase: 'human', humanReason: 'requested' })
     if (method === 'resume') patch({ phase: 'ready', humanReason: undefined })
   },
-  frame: async () => { if (frameOffline) throw new Error('offline'); return new Blob(['<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900"><rect width="1280" height="900" fill="#f3f6fc"/><text x="60" y="100" fill="#25334b" font-size="32">Original page · synthetic UI fixture</text></svg>'], { type: 'image/svg+xml' }) },
+  frame: async (_sessionId, _signal, approvalId) => {
+    if (frameOffline) throw new Error('offline')
+    const content = approvalId
+      ? '<text x="115" y="86" font-size="30">检索数量</text><rect x="116" y="108" width="384" height="72" rx="8" fill="#fff" stroke="#8796ad"/><text x="140" y="154" font-size="30">5</text>'
+      : '<text x="60" y="100" font-size="32">Original page · synthetic UI fixture</text>'
+    return new Blob(['<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900"><rect width="1280" height="900" fill="#f3f6fc"/><g fill="#25334b">' + content + '</g></svg>'], { type: 'image/svg+xml' })
+  },
 }
 Object.assign(window, { reviewUI: { patch, calls, disconnect: (flag: boolean) => { offline = flag }, disconnectFrame: (flag: boolean) => { frameOffline = flag } } })
 const style = document.createElement('style'); style.textContent = [...importedStyles, agentStyles].join('\n'); document.head.append(style)
