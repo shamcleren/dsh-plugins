@@ -16,6 +16,18 @@ let value: AgentState = {
   ] },
 }
 let offline = false, frameOffline = false
+let epoch = 1, width = 1280, height = 900
+function jpeg() {
+  const canvas = document.createElement('canvas')
+  canvas.width = width; canvas.height = height
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#f1f5fb'; ctx.fillRect(0, 0, width, height)
+  ctx.fillStyle = '#253e6a'; ctx.font = '24px system-ui'; ctx.fillText('智能体配置 · 原网页演示', 24, 46)
+  ctx.fillStyle = '#fff'; ctx.fillRect(24, 76, width - 48, 165)
+  ctx.fillStyle = '#26334b'; ctx.font = '16px system-ui'
+  ctx.fillText('关联配置', 42, 113); ctx.fillText('知识库（1）  ▾', 42, 153); ctx.fillText('检索数量  5', 42, 194)
+  return Uint8Array.from(atob(canvas.toDataURL('image/jpeg').split(',')[1]!), character => character.charCodeAt(0))
+}
 const calls: { method: string; payload: any }[] = []
 const requests = new EventTarget()
 const patch = (next: Partial<AgentState>) => { value = { ...value, ...next, revision: value.revision + 1 } }
@@ -27,8 +39,21 @@ const remote: AgentRemote = {
     if (method === 'view') patch({ view: input.view })
     if (method === 'answer') { patch({ phase: 'queued', question: undefined }); return }
     if (method === 'select') patch({ selected: value.listing!.records.find(row => row.id === input.recordId), selectedId: input.recordId, phase: 'queued' })
-    if (method === 'takeover') patch({ phase: 'human', humanReason: 'requested' })
+    if (method === 'takeover') patch({ phase: 'human', humanReason: 'requested', view: 'details' })
+    if (method === 'resizeBrowser') { width = input.width; height = input.height; epoch++ }
     if (method === 'resume') patch({ phase: 'ready', humanReason: undefined })
+  },
+  live: async (_session, signal, receive) => {
+    await new Promise<void>((resolve, reject) => {
+      let sent = 0
+      const tick = () => {
+        if (frameOffline) { clearInterval(timer); reject(new Error('offline')); return }
+        if (sent !== epoch) { sent = epoch; receive({ epoch, width, height, jpeg: jpeg() }) }
+      }
+      const timer = setInterval(tick, 50)
+      signal.addEventListener('abort', () => { clearInterval(timer); resolve() }, { once: true })
+      tick()
+    })
   },
   frame: async (_sessionId, _signal, approvalId) => {
     if (frameOffline) throw new Error('offline')

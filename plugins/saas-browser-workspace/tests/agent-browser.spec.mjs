@@ -1,3 +1,6 @@
+import { createServer } from 'node:http'
+import { once } from 'node:events'
+import { readLivePackets } from '../src/client/live-stream.ts'
 import { chromium } from 'playwright'
 import { beforeAll, afterAll, expect, it } from 'vitest'
 import { AgentBrowser } from '../src/agent-browser.ts'
@@ -221,4 +224,43 @@ it('reviews custom clicks and edits with a frozen image, rejects changed paramet
     expect(await page.evaluate(() => window.saves)).toBe(1)
     await expect(adapter.approve(review.id, signal)).rejects.toThrow('stale-approval')
   } finally { await adapter.approvals.clear(); adapter.site.approvalPaths.pop() }
+}, 20_000)
+
+it('pushes changing Chromium frames over one connection and rejects coordinates from an old viewport', async () => {
+  await act({ action: 'open' })
+  await page.setContent(`<main style="height:1800px"><div style="position:fixed;inset:0;pointer-events:none;animation:pulse 800ms infinite alternate"></div>
+    <section id="scroll" style="margin:24px;width:320px;height:120px;overflow:auto"><div style="height:1200px">Scrollable content</div></section>
+    <style>@keyframes pulse {to{background:#3080fb50}}</style></main>`)
+  const server = createServer((_, response) => adapter.live.connect(response)).listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const abort = new AbortController()
+  const frames = []
+  let requests = 0
+  server.on('request', () => { requests++ })
+  const result = await fetch('http://127.0.0.1:' + server.address().port, { signal: abort.signal })
+  expect(result.headers.get('content-type')).toBe('application/octet-stream')
+  const stream = readLivePackets(result.body, packet => { if ('jpeg' in packet) frames.push(packet) })
+  // Fetch rejects on intentional cancellation; attach early to avoid an unhandled rejection.
+  void stream.catch(() => {})
+  try {
+    await expect.poll(() => frames.length, { timeout: 5000 }).toBeGreaterThanOrEqual(3)
+    expect(frames[0]).toMatchObject({ epoch: adapter.live.epoch, width: 1280, height: 900 })
+    expect(Array.from(frames[0].jpeg.slice(0, 2))).toEqual([255, 216])
+    expect(Buffer.from(frames[0].jpeg).equals(Buffer.from(frames[2].jpeg))).toBe(false)
+    const previous = adapter.live.epoch
+    await adapter.resize(640, 560)
+    await expect.poll(() => frames.find(frame => frame.epoch !== previous)?.width, { timeout: 5000 }).toBe(640)
+    expect(frames.find(frame => frame.epoch !== previous).height).toBe(560)
+    await expect(adapter.input({ kind: 'scroll', x: 100, y: 60, delta: 300 }, previous)).rejects.toThrow('stale-frame')
+    await adapter.input({ kind: 'scroll', x: 100, y: 60, delta: 300 }, adapter.live.epoch)
+    await expect.poll(() => page.locator('#scroll').evaluate(el => el.scrollTop)).toBeGreaterThan(0)
+    const resized = adapter.live.epoch
+    await page.goto(fixture.origin + '/development')
+    await expect.poll(() => frames.some(frame => frame.epoch > resized), { timeout: 5000 }).toBe(true)
+    expect(requests).toBe(1)
+  } finally {
+    abort.abort(); await stream.catch(() => {})
+    const closed = once(server, 'close'); server.close(); server.closeAllConnections(); await closed
+    await adapter.restoreViewport()
+  }
 }, 20_000)

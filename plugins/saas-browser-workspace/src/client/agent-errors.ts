@@ -1,6 +1,7 @@
 import type { AgentTranslate, AgentLocaleKey } from '../agent-locales.js'
 const hints: Record<string, AgentLocaleKey> = {
   'model-auth-required': 'modelAuthHelp', 'agent-turn-failed': 'modelFailureHelp', 'agent-turn-interrupted': 'interruptedHelp',
+  'stale-frame': 'frameChanged',
   'stale-approval': 'approvalStale', 'approval-pending': 'approvalContext', 'approval-result-uncertain': 'approvalUncertain',
   'approval-continuation-failed': 'approvalContinuation',
   'workspace-busy': 'busyHelp', 'stale-question': 'staleQuestion', 'invalid-answers': 'requiredHelp',

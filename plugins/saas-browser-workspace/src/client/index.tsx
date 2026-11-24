@@ -8,6 +8,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import { AGENT_CHANNEL, BROWSER_TOOL, VIEW_TOOL, ASK_TOOL, AgentState, type AgentRemote } from '../agent-contract.js'
 import { agentZh, agentEn, type AgentLocaleKey } from '../agent-locales.js'
+import { readLiveStream } from './live-stream.js'
 import { AgentPanel, BrowserOverlay } from './AgentPanel.js'
 import { agentStyles } from './agent-styles.js'
 import { importedStyles } from './styles.js'
@@ -34,6 +35,7 @@ export function apply(ctx: Context): void {
       return result.value
     },
     state: async (sessionId, signal) => AgentState.parse(await remote.call('state', { sessionId }, signal)),
+    live: readLiveStream,
     frame: async (sessionId, signal, approvalId) => {
       const query = new URLSearchParams({ sessionId, ...(approvalId ? { approvalId } : {}) })
       const response = await fetch('/api/saas-agent/frame?' + query, { credentials: 'same-origin', cache: 'no-store', signal })

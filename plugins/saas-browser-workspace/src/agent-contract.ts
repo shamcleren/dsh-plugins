@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { LiveFrame, LiveSurface } from './live-protocol.js'
 
 export const AGENT_CHANNEL = '/saas-agent'
 export const BROWSER_TOOL = 'saas_browser'
@@ -68,14 +69,16 @@ export function latestAgentState(previous: AgentState | undefined, next: AgentSt
 export const BrowserArgs = z.object({ action: z.enum(['open', 'observe', 'fill', 'select', 'press', 'click', 'submit', 'wait', 'back', 'scroll']), url: z.string().url().max(2000).optional(), observation_id: z.string().uuid().optional(), ref: z.string().max(30).optional(), text: z.string().max(2000).optional(), request_id: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).optional(), delta: z.number().int().min(-1200).max(1200).optional() }).strict()
 export type BrowserArgs = z.infer<typeof BrowserArgs>
 export const HumanInput = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('click'), x: z.number().min(0).max(1280), y: z.number().min(0).max(900) }).strict(),
+  z.object({ kind: z.literal('click'), x: z.number().min(0).max(1600), y: z.number().min(0).max(1200) }).strict(),
   z.object({ kind: z.literal('text'), text: z.string().max(1000) }).strict(),
   z.object({ kind: z.literal('key'), key: z.enum(['Enter', 'Tab', 'Backspace', 'Delete', 'Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'ControlOrMeta+A']) }).strict(),
-  z.object({ kind: z.literal('scroll'), delta: z.number().int().min(-1200).max(1200) }).strict(),
+  z.object({ kind: z.literal('scroll'), delta: z.number().int().min(-1200).max(1200), deltaX: z.number().int().min(-1200).max(1200).optional(),
+    x: z.number().min(0).max(1600).optional(), y: z.number().min(0).max(1200).optional() }).strict(),
 ])
 export type HumanInput = z.infer<typeof HumanInput>
 export interface AgentRemote {
   state(sessionId: string, signal?: AbortSignal): Promise<AgentState>
   call(method: string, payload: unknown, signal?: AbortSignal): Promise<unknown>
   frame(sessionId: string, signal: AbortSignal, approvalId?: string): Promise<Blob>
+  live(sessionId: string, signal: AbortSignal, receive: (packet: LiveSurface | LiveFrame) => void): Promise<void>
 }

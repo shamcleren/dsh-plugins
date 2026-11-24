@@ -70,6 +70,27 @@ try {
   assert.equal(Buffer.from(await image.arrayBuffer()).subarray(0, 2).toString('hex'), 'ffd8')
   assert.equal((await fetch(frame)).status, 401)
   assert.equal((await fetch(origin + '/api/saas-agent/frame?sessionId=unknown', { headers: { cookie } })).status, 404)
+  const live = origin + '/api/saas-agent/live?' + new URLSearchParams({ sessionId: info.sessionId })
+  assert.equal((await fetch(live)).status, 401)
+  const viewing = new AbortController()
+  try {
+    const connected = await fetch(live, { headers: { cookie }, signal: AbortSignal.any([viewing.signal, AbortSignal.timeout(12_000)]) })
+    assert.equal(connected.headers.get('content-type'), 'application/octet-stream')
+    const reader = connected.body.getReader()
+    let bytes = Buffer.alloc(0)
+    while (true) {
+      const next = await reader.read()
+      assert.equal(next.done, false)
+      bytes = Buffer.concat([bytes, next.value])
+      while (bytes.length >= 16 && !bytes.readUInt32BE(0)) bytes = bytes.subarray(16)
+      if (bytes.length < 18) continue
+      assert.ok(bytes.readUInt32BE(0) > 2)
+      assert.ok(bytes.readUInt32BE(12) > 0)
+      assert.equal(bytes.subarray(16, 18).toString('hex'), 'ffd8')
+      break
+    }
+  } finally { viewing.abort() }
+
   // Exercise the owner flow against a real browser and frozen proof on the official host.
   assert.equal((await rpc('takeover', { sessionId: info.sessionId })).ok, true)
   const reviewClick = () => rpc('input', { sessionId: info.sessionId, input: { kind: 'click', x: 180, y: 420 } })
@@ -122,7 +143,7 @@ try {
   assert.ok(calls.includes('saas_ask')); assert.ok(calls.filter(name => name === 'saas_browser').length >= 4); assert.ok(calls.includes('saas_present'))
   assert.ok(journal.filter(event => event.type === 'turn/end').length >= 3)
   assert.ok(journal.some(event => event.type === 'request/context' && event.data.provider === info.provider && event.data.model === info.model))
-  console.log('PASS packed official Web profile; real model; missing-parameter form; native queue continuation; query → selection → configuration → debug → use (one actual fixture POST per mode, no saves); authenticated JPEG frames; password redaction; cancel and single-use owner approval. Fixture data only.')
+  console.log('PASS packed official Web profile; real model; missing-parameter form; native queue continuation; query → selection → configuration → debug → use (one actual fixture POST per mode, no saves); authenticated Chromium stream and JPEG evidence; password redaction; cancel and single-use owner approval. Fixture data only.')
 } finally {
   if (demo.exitCode === null) demo.kill('SIGTERM')
   await exited; await fixture.close()

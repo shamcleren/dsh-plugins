@@ -1,8 +1,8 @@
 import { ApprovalCard } from './ApprovalCard.js'
-import { PageContent } from './PageContent.js'
+import { LiveBrowser } from './LiveBrowser.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { ErrorBoundary, GenuiActionContext, GenuiBlock, type GenuiSpec } from '@changfenhuang/dsh-genui/embed'
-import type { AgentRemote, HumanInput, Question, PageObservation } from '../agent-contract.js'
+import type { AgentRemote, Question, PageObservation } from '../agent-contract.js'
 import type { AgentTranslate } from '../agent-locales.js'
 import { plain } from './spec.js'
 import { workspaceStore } from './workspace-store.js'
@@ -67,16 +67,24 @@ export function AgentPanel(props: Props & { openBrowser: () => void }) {
   }
   const listing = state?.listing ?? (state?.observation?.recordsState !== 'unavailable' ? state?.observation : undefined)
   const details = state?.details ?? (state?.observation?.recordsState === 'unavailable' ? state.observation : undefined)
-  const showDetails = state?.view === 'details' || (!listing && !!details)
-  // Older query view values all open the same result cards.
-  const view = state?.view === 'results' ? 'results' : showDetails ? 'details' : 'queryResults'
+  const human = state?.phase === 'human'
+  const login = human && state.humanReason === 'login'
+  const hasPage = !!state?.browserReady || !!details
+  const view = state?.view === 'results' ? 'results' : state?.view === 'details' || !listing && hasPage ? 'details' : 'queryResults'
   const canAct = connection === 'connected' && !busy && state?.phase === 'ready' && !state.agentRunning
   const action = (id: string) => { if (canAct && listing) void perform('select', { observationId: listing.id, recordId: id }) }
-  const tabs = [...(listing ? ['queryResults'] as const : []), ...(details ? ['details'] as const : []), ...(state?.executions.length ? ['results'] as const : [])]
+  const tabs = [...(listing ? ['queryResults'] as const : []), ...(hasPage ? ['details'] as const : []), ...(state?.executions.length ? ['results'] as const : [])]
   const status = state?.phase === 'ready' && state.agentRunning ? 'thinking' : state?.phase
   return <section className="saas-agent" aria-label={t('title')} aria-busy={busy}>
     <header className="saas-agent-heading"><div><span className="saas-agent-eyebrow">{t('title')}</span><h2>{state?.siteName || t('title')}</h2></div><span className="saas-agent-badge">{t(state?.approvalEnabled ? 'approvalEnabled' : state?.executionEnabled ? 'protected' : 'readonly')}</span></header>
-    <div className="saas-agent-toolbar"><span role="status" className={'saas-agent-status ' + status}><i />{status ? t(status) : t('loading')}</span><button disabled={!state?.browserReady || connection !== 'connected'} onClick={openBrowser}>{t('browser')} ↗</button></div>
+    <div className="saas-agent-toolbar">
+      <span role="status" className={'saas-agent-status ' + status}><i />{status ? t(status) : t('loading')}</span>
+      <div className="saas-agent-tools">
+        <button disabled={!state?.browserReady || connection !== 'connected' || busy || !!state.review}
+          onClick={() => { void perform(human ? 'resume' : 'takeover', { revision: state?.revision }) }}>{t(human ? 'resume' : 'takeover')}</button>
+        <button disabled={!state?.browserReady || connection !== 'connected'} onClick={openBrowser}>{t('browserExpand')} ↗</button>
+      </div>
+    </div>
     {connection === 'disconnected' && <div className="saas-agent-notice" role="alert"><p>{t('disconnected')}</p><button onClick={retry}>{t('retry')}</button></div>}
     {state && !state.configured && <p className="saas-agent-empty">{t('notConfigured')}</p>}
     {state?.selected && <div className="saas-agent-selection"><span className="saas-agent-eyebrow">{t('currentSelection')}</span><strong>{state.selected.name}</strong><span>{state.selected.type} · {state.selected.version}</span></div>}
@@ -87,7 +95,7 @@ export function AgentPanel(props: Props & { openBrowser: () => void }) {
       disabled={busy || connection !== 'connected' || state.agentRunning || state.phase !== 'awaiting_approval'}
       decide={approve => { void perform(approve ? 'approve' : 'cancelApproval', { approvalId: state.review!.id }) }} />}
     {state?.operation === 'approval-cancelled' && <p role="status">{t('approvalCancelled')}</p>}
-    {state?.phase === 'human' && <div className="saas-agent-prompt"><h3>{t(state.humanReason === 'login' ? 'login' : 'human')}</h3><p>{t(state.humanReason === 'login' ? 'loginHelp' : 'humanHelp')}</p><button onClick={openBrowser}>{t('browser')}</button></div>}
+    {login && <p className="saas-agent-caption">{t('loginHelp')}</p>}
     {state?.question && <div className="saas-agent-prompt"><h3>{state.question.title}</h3><p className="saas-agent-caption">{t('requiredHelp')}</p><fieldset disabled={busy || state.phase !== 'awaiting_input' || connection !== 'connected'}><GenuiActionContext.Provider value={(name, payload) => {
       if (name !== 'answer' || busy || state.phase !== 'awaiting_input') return
       const fields = payload.fields && typeof payload.fields === 'object' ? payload.fields as Record<string, unknown> : {}
@@ -100,9 +108,11 @@ export function AgentPanel(props: Props & { openBrowser: () => void }) {
         {tabs.map(kind => <button key={kind} disabled={busy || connection !== 'connected'} aria-pressed={view === kind} onClick={() => { void perform('view', { view: kind === 'queryResults' ? 'table' : kind }) }}>{t(kind)}</button>)}
       </nav>
       {listing && view === 'queryResults' && <QueryResults observation={listing} selectedId={state?.selectedId} canAct={canAct} select={action} t={t} />}
-      {view === 'details' && (details ? <PageContent key={details.id} observation={details} t={t} current={!!state?.browserReady && state.phase === 'ready' && !state.agentRunning && connection === 'connected' && details.url === state.observation?.url} preview={<LiveBrowser {...props} human={false} interval={1800} />} openBrowser={openBrowser} /> : <p>{t('missingDetails')}</p>)}
+      {view === 'details' && (state?.browserReady
+        ? <LiveBrowser {...props} human={human && !busy && connection === 'connected'} keyboard={login} fit={!login} />
+        : <p>{t('browserNotReady')}</p>)}
       {view === 'results' && <div className="saas-agent-executions"><p className="saas-agent-caption">{t('replyNotice')}</p>{state?.executions.map(run => <article key={run.id}><header><h3>{t(run.mode)}</h3><span className={'saas-run-status ' + run.status}>{t(run.status)}</span></header><h4>{t('message')}</h4><p>{run.input}</p><h4>{t('response')}</h4><pre>{run.output || t(run.status === 'running' ? 'waitingResponse' : 'noResponse')}</pre>{run.error && <p role="alert">{t('executionError')}: {errorHint(run.error, t)}<small>{run.error}</small></p>}<footer>{new Date(run.startedAt).toLocaleString()} · {run.url}</footer></article>)}{!state?.executions.length && <p>{t('noExecutions')}</p>}</div>}
-      {view !== 'results' && <Source observation={view === 'details' ? details : listing} t={t} />}
+      {view === 'queryResults' && <Source observation={listing} t={t} />}
     </>}
   </section>
 }
@@ -130,44 +140,7 @@ export function BrowserOverlay(props: Props & { requests: EventTarget }) {
   return <dialog ref={dialog} className="saas-browser-dialog" onCancel={() => setOpened(false)} onClose={() => setOpened(false)} aria-label={t('live')}>
     <header><div><strong>{t(human ? (login ? 'login' : 'human') : 'watch')}</strong><p>{t(human ? 'humanHelp' : 'watchHelp')}</p></div><div><button disabled={busy || connection !== 'connected' || !state?.browserReady || !!state.review} onClick={() => { void transfer() }}>{t(human ? 'resume' : 'takeover')}</button><button onClick={() => setOpened(false)}>{t('close')}</button></div></header>
     {error && <p role="alert">{error}</p>}{connection === 'disconnected' && <p role="alert">{t('disconnected')}</p>}{state?.blockedOrigin && <p role="alert">{t('blocked')} {state.blockedOrigin}</p>}
-    {opened && state?.browserReady && <LiveBrowser {...props} human={human && !busy && connection === 'connected'} />}
+    {opened && state?.browserReady && <LiveBrowser {...props} human={human && !busy && connection === 'connected'} keyboard={login} />}
     <footer>{t(human && login ? 'loginInputNotice' : 'readOnlyNotice')}</footer>
   </dialog>
-}
-function LiveBrowser({ sessionId, remote, t, human, interval = 400 }: Props & { human: boolean; interval?: number }) {
-  const [src, setSrc] = useState(''), [error, setError] = useState(''), [connected, setConnected] = useState(false)
-  const queue = useRef(Promise.resolve()), permission = useRef({ allowed: false, epoch: 0 })
-  const allowed = human && connected
-  if (permission.current.allowed !== allowed) permission.current = { allowed, epoch: permission.current.epoch + 1 }
-  useEffect(() => {
-    const abort = new AbortController(); let timer: ReturnType<typeof setTimeout>, current = ''
-    const frame = async () => {
-      try {
-        const blob = await remote.frame(sessionId, abort.signal)
-        if (!abort.signal.aborted) { const old = current; current = URL.createObjectURL(blob); setSrc(current); setConnected(true); if (old) URL.revokeObjectURL(old) }
-      } catch { if (!abort.signal.aborted) setConnected(false) }
-      if (!abort.signal.aborted) timer = setTimeout(() => { void frame() }, interval)
-    }
-    void frame(); return () => { permission.current = { allowed: false, epoch: permission.current.epoch + 1 }; abort.abort(); clearTimeout(timer); if (current) URL.revokeObjectURL(current) }
-  }, [sessionId, remote, interval])
-  const send = (input: HumanInput) => {
-    if (!permission.current.allowed) return
-    const epoch = permission.current.epoch
-    queue.current = queue.current.then(async () => { if (permission.current.allowed && permission.current.epoch === epoch) await remote.call('input', { sessionId, input }) }).catch(e => { if (permission.current.epoch === epoch) setError(errorHint(e instanceof Error ? e.message : undefined, t)) })
-  }
-  return <div className="saas-live-browser" data-stale={!connected}>
-    {!connected && <p role="status" className="saas-frame-notice">{t(src ? 'frameLost' : 'frameLoading')}</p>}
-    {error && <p role="alert">{error}</p>}
-    {src && <img src={src} alt={t('live')} tabIndex={allowed ? 0 : -1} draggable={false} aria-disabled={!allowed} onPointerDown={event => {
-      if (!allowed) return
-      event.preventDefault(); event.currentTarget.focus(); const rect = event.currentTarget.getBoundingClientRect()
-      send({ kind: 'click', x: Math.min(1280, Math.max(0, (event.clientX - rect.left) * 1280 / rect.width)), y: Math.min(900, Math.max(0, (event.clientY - rect.top) * 900 / rect.height)) })
-    }} onWheel={event => { if (allowed) send({ kind: 'scroll', delta: Math.max(-1200, Math.min(1200, Math.round(event.deltaY))) }) }} onKeyDown={event => {
-      if (!allowed || event.nativeEvent.isComposing || event.key === 'Escape' || event.key === 'Tab' && event.shiftKey) return
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); send({ kind: 'key', key: 'ControlOrMeta+A' }); return }
-      const key = (['Enter', 'Tab', 'Backspace', 'Delete', 'Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'] as const).find(k => k === event.key)
-      if (key) { event.preventDefault(); send({ kind: 'key', key }) }
-      else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); send({ kind: 'text', text: event.key }) }
-    }} onCompositionEnd={event => { if (event.data) send({ kind: 'text', text: event.data }) }} onPaste={event => { event.preventDefault(); send({ kind: 'text', text: event.clipboardData.getData('text/plain') }) }} />}
-  </div>
 }

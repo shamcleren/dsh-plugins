@@ -5,6 +5,8 @@ import type { BrowserService } from '@anweat/dsh-browser'
 import type { Site } from './site.js'
 import { allowsApproval, createRequestPolicy, navigationUrl } from './site.js'
 import { BrowserArgs, type PageObservation, type HumanInput } from './agent-contract.js'
+import { BrowserStream } from './browser-stream.js'
+import { INITIAL_VIEWPORT } from './live-protocol.js'
 import { Approvals } from './approval.js'
 import { Executions, executionRule, normalizeLabel, forbiddenLabel } from './agent-execution.js'
 
@@ -15,11 +17,13 @@ type LocatedControl = ReturnType<typeof observePage>['controls'][number]
 export class AgentBrowser {
   private page?: Page
   private context?: BrowserContext
-  private cdps: CDPSession[] = []
+  private cdps = new Map<Page, CDPSession>()
   private pages = new Set<Page>()
   private allowPopup = false
   private popupAdmitted = false
   private popupRequests = new WeakSet<Request>()
+  readonly live = new BrowserStream()
+  private viewport = INITIAL_VIEWPORT
   readonly approvals = new Approvals()
   readonly executions: Executions
   private controls = new Map<string, LocatedControl>()
@@ -47,7 +51,7 @@ export class AgentBrowser {
     const page: Page | undefined = state?.page
     if (!page || typeof page.context !== 'function') throw new Error('browser-provider-incompatible')
     this.page = page; this.context = page.context(); this.pages.add(page)
-    await page.setViewportSize({ width: 1280, height: 900 })
+    await page.setViewportSize(this.viewport)
     await this.context.addInitScript(() => {
       // A fresh context has no existing workers. Keep new workers outside this browsing session.
       if ('serviceWorker' in navigator) Object.defineProperty(navigator, 'serviceWorker', { get: () => undefined, configurable: false })
@@ -85,9 +89,18 @@ export class AgentBrowser {
 
   private async attach(page: Page): Promise<void> {
     const policy = createRequestPolicy(this.site)
-    this.page = page; this.pages.add(page)
-    await page.setViewportSize({ width: 1280, height: 900 })
-    const cdp = await this.context!.newCDPSession(page); this.cdps.push(cdp)
+    this.pages.add(page)
+    await page.setViewportSize(this.viewport)
+    const cdp = await this.context!.newCDPSession(page); this.cdps.set(page, cdp)
+    if (this.viewport !== INITIAL_VIEWPORT) await this.fitContents(cdp, this.viewport.width, this.viewport.height)
+    page.on('framenavigated', frame => { if (this.page === page && frame === page.mainFrame()) this.live.invalidate() })
+    page.once('close', () => {
+      this.pages.delete(page); this.cdps.delete(page)
+      if (this.stopped || this.page !== page) return
+      const previous = [...this.pages].reverse().find(candidate => !candidate.isClosed())
+      if (previous) this.activatePage(previous)
+      else this.live.setPage()
+    })
     cdp.on('Fetch.requestPaused', event => {
       const secure = event.resourceType === 'Document' && event.request.method === 'GET' ? policy.upgrade(event.request.url) : undefined
       if (secure) {
@@ -103,6 +116,45 @@ export class AgentBrowser {
     })
     await cdp.send('Network.setBypassServiceWorker', { bypass: true })
     await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] })
+    this.activatePage(page)
+  }
+
+  private activatePage(page: Page): void {
+    this.page = page
+    const cdp = this.cdps.get(page)
+    if (cdp) this.live.setPage(page, cdp)
+  }
+
+  async restoreViewport(): Promise<void> { await this.resize(INITIAL_VIEWPORT.width, INITIAL_VIEWPORT.height) }
+
+  async resize(width: number, height: number): Promise<void> {
+    if (!this.ready) throw new Error('browser-not-ready')
+    if (this.approvals.review) throw new Error('approval-pending')
+    if (this.viewport.width === width && this.viewport.height === height) return
+    this.live.invalidate()
+    delete this.observation
+    this.controls.clear()
+    try {
+      for (const [page, cdp] of this.cdps) {
+        if (page.isClosed()) continue
+        await page.setViewportSize({ width, height })
+        await this.fitContents(cdp, width, height)
+      }
+      this.viewport = width === INITIAL_VIEWPORT.width && height === INITIAL_VIEWPORT.height ? INITIAL_VIEWPORT : { width, height }
+    } catch (error) {
+      await Promise.allSettled([...this.cdps].map(async ([page, cdp]) => {
+        if (page.isClosed()) return
+        await page.setViewportSize(this.viewport)
+        await this.fitContents(cdp, this.viewport.width, this.viewport.height)
+      }))
+      throw error
+    }
+  }
+
+  // Desktop Chrome can add window insets that make the compositor smaller than the emulated viewport.
+  private async fitContents(cdp: CDPSession, width: number, height: number): Promise<void> {
+    const { windowId } = await cdp.send('Browser.getWindowForTarget')
+    await cdp.send('Browser.setContentsSize', { windowId, width, height })
   }
 
   async act(raw: BrowserArgs, signal: AbortSignal): Promise<PageObservation | undefined> {
@@ -117,7 +169,7 @@ export class AgentBrowser {
     else if (args.action === 'wait') await this.executions.wait(signal)
     else if (args.action === 'back') {
       const response = await page.goBack({ waitUntil: 'domcontentloaded', timeout: 20_000 })
-      if (!response && this.pages.size > 1) { const previous = [...this.pages].find(candidate => candidate !== page && !candidate.isClosed()); if (previous) this.page = previous }
+      if (!response && this.pages.size > 1) { const previous = [...this.pages].find(candidate => candidate !== page && !candidate.isClosed()); if (previous) this.activatePage(previous) }
     }
     else if (args.action === 'scroll') await page.mouse.wheel(0, args.delta ?? 600)
     else if (args.action === 'submit' && args.request_id && this.executions.hasReceipt(args.request_id)) { /* Return current evidence without another dispatch. */ }
@@ -229,12 +281,21 @@ export class AgentBrowser {
     return this.page!.screenshot({ type: 'jpeg', quality: 65, timeout: 5000 })
   }
 
-  async input(input: HumanInput): Promise<void> {
+  async input(input: HumanInput, epoch?: number): Promise<void> {
     if (!this.ready) throw new Error('browser-not-ready')
     if (this.approvals.review) throw new Error('approval-pending')
     const page = this.page!
+    if (epoch !== undefined && epoch !== this.live.epoch) throw new Error('stale-frame')
+    const viewport = page.viewportSize() ?? this.viewport
+    if ('x' in input && input.x !== undefined && input.x >= viewport.width
+      || 'y' in input && input.y !== undefined && input.y >= viewport.height) throw new Error('stale-frame')
+    if (input.kind === 'scroll') {
+      if (input.x !== undefined && input.y !== undefined) await page.mouse.move(input.x, input.y)
+      if (epoch !== undefined && epoch !== this.live.epoch) throw new Error('stale-frame')
+      await page.mouse.wheel(input.deltaX ?? 0, input.delta)
+      return
+    }
     if (!this.login) {
-      if (input.kind === 'scroll') { await page.mouse.wheel(0, input.delta); return }
       // Business pages remain read-only during takeover. Login pages accept native input.
       if (input.kind !== 'click') throw new Error('read-only')
       const disclosure = await page.evaluateHandle(({ x, y }) => document.elementFromPoint(x, y)?.closest('summary') ?? null, input)
@@ -268,12 +329,12 @@ export class AgentBrowser {
     if (input.kind === 'click') await page.mouse.click(input.x, input.y)
     else if (input.kind === 'text') await page.keyboard.insertText(input.text)
     else if (input.kind === 'key') await page.keyboard.press(input.key)
-    else await page.mouse.wheel(0, input.delta)
   }
   async close(): Promise<void> {
     this.stopped = true
     await this.approvals.clear()
-    await Promise.allSettled(this.cdps.map(cdp => cdp.detach()))
+    await this.live.close()
+    await Promise.allSettled([...this.cdps.values()].map(cdp => cdp.detach()))
     await Promise.allSettled([...this.pages].map(page => page.close()))
     const state = this.service.sessionState({ id: this.sessionId })
     if (state) await this.service.closePage(state)
