@@ -13,7 +13,8 @@ describe('WeCom tools bundle', () => {
 
     const candidates = await fiber.ctx.skills.list()
     expect(candidates).toContainEqual(expect.objectContaining({
-      name: 'wecom-unified', description: expect.stringContaining('群聊历史'),
+      name: 'wecom-unified',
+      description: expect.stringMatching(/以授权人身份代发文本.*群聊历史/),
     }))
     const skill = await fiber.ctx.skills.get('wecom-unified')
     expect(skill).toMatchObject({ name: 'wecom-unified', provider: 'wecom-tools', source: 'bundled' })
@@ -21,6 +22,7 @@ describe('WeCom tools bundle', () => {
     if (base?.kind !== 'directory') throw new Error('WeCom Skill references must use a local directory')
 
     const routes = [
+      ['wecomcli-message-as-user.md', ['message send']],
       ['wecomcli-message.md', ['message aibot sessions list', 'message aibot send']],
       ['wecomcli-chat.md', ['chat groups list', 'chat messages list', 'message files get']],
     ] as const

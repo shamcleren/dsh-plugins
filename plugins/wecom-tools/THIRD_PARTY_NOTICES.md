@@ -8,6 +8,6 @@
 - Packaged path: `skills/wecom-unified/`
 - Local normalization: trailing whitespace removed from Markdown files.
 - Local CLI preflight: `skills/wecom-unified/SKILL.md` requires version 1.3.4 or newer, pins installation to `@wecom/cli@1.3.4`, checks command-path/global-prefix mismatches, and requires one verified CLI path for the entire workflow.
-- Local messaging changes: `SKILL.md` routes proactive sends and group history to their respective references. `references/wecomcli-message.md` clarifies target and delivery checks, and `references/wecomcli-chat.md` adds group lookup, history pagination, and attachment retrieval based on the official `wecom-cli` 1.3.4 command documentation.
+- Local messaging changes: `SKILL.md` routes employee text messages, bot sends and group history to their respective references. `references/wecomcli-message-as-user.md` covers employee text messages, `references/wecomcli-message.md` clarifies bot target and delivery checks, and `references/wecomcli-chat.md` adds group lookup, history pagination, and attachment retrieval based on the official `wecom-cli` 1.3.4 command documentation.
 
 The upstream license text is included as `LICENSE.wecom-unified`.

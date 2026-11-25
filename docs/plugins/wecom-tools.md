@@ -12,7 +12,7 @@ The WeCom adapter in `@shamcleren/dsh-im` owns message transport and uses Bot ID
 
 The tools plugin mounts one read-only bundled Skill through the official DSH filesystem Skill provider. The Skill guides CLI installation and `wecom-cli auth init --noninteractive` on first use. DSH shell and approval policy remain authoritative for command execution.
 
-The Skill uses `message aibot` to send as the authorized CLI bot. It uses `chat groups list` and `chat messages list` to look up a group and read history from the last 7 days. History access requires its own WeCom permission. See the [plugin guide](../../plugins/wecom-tools/README.md) for supported requests.
+The Skill uses `message send` for employee text messages and `message aibot` when a user explicitly chooses the bot as sender. It uses `chat groups list` and `chat messages list` to look up a group and read history from the last 7 days. Employee messaging and history are subject to the organization's WeCom permissions. See the [plugin guide](../../plugins/wecom-tools/README.md) for supported requests.
 
 ## Shared-identity warning
 

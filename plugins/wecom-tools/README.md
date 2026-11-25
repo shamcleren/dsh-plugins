@@ -4,7 +4,8 @@ Independent WeCom office-tool capability for DeepSeek Harness. It contributes th
 
 ## Messaging
 
-- Ask the Skill to send a message as the intelligent bot to the authorized user or to a recently active conversation returned by WeCom. Text uses Markdown. WeCom also accepts images, files, AMR voice and video.
+- Ask the Skill to send a plain-text message as the authorized employee to a coworker or a named group. This uses the employee messaging permission in the authorized WeCom organization. A named group is resolved through the WeCom chat lookup API.
+- To send as the intelligent bot, explicitly request that identity and give the recipient. The bot can send Markdown, images, files, AMR voice and video to the authorized user or a recently active conversation returned by WeCom.
 - Ask the Skill to read a named group's messages in a time range within the last 7 days. The Skill can extract text and summarize the discussion. Access depends on the organization's chat history permission and the authorized user's visibility.
 
 ## Authentication boundary

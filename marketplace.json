@@ -5,16 +5,16 @@
       "id": "wecom-tools",
       "package": "@shamcleren/dsh-wecom-tools",
       "name": "WeCom Tools",
-      "description": "企业微信机器人发消息、查群聊记录及文档、日程、待办等办公能力",
-      "version": "0.2.10",
+      "description": "企业微信本人代发、机器人发消息、查群聊记录及文档、日程、待办等办公能力",
+      "version": "0.2.11",
       "dshVersion": "0.2.1-rc.5",
       "placement": "after-web-app",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-wecom-tools-0.2.10.tgz",
-        "sha256": "e9e9bb37e847efdbf785f44d76cbb787f98ccffef296d4e455d4852c47d012e3",
-        "size": 578305
+        "path": "artifacts/shamcleren-dsh-wecom-tools-0.2.11.tgz",
+        "sha256": "1fa6d77d833a12d8bad48f8643d42a77d72997c6d5a779ce720554bed3bfbc99",
+        "size": 579149
       },
-      "sourceDigest": "b7fa8c0ef808f104679fa0dec90a21dcbeeee3761052b5ac788a6095862a4e13",
+      "sourceDigest": "f9d242987c44b951c4a17a193d37a1eb6644d73d8946fd5ed4345aa277e51603",
       "sourceLock": "artifacts/locks/7109c74f15cf723ba546eb8c43176f74885bcca64e85365fb4249f99d92498be.yaml"
     },
     {
