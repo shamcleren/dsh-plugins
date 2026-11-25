@@ -5,17 +5,17 @@
       "id": "wecom-tools",
       "package": "@shamcleren/dsh-wecom-tools",
       "name": "WeCom Tools",
-      "description": "独立的企业微信文档、日程、待办等办公 Skill 能力",
-      "version": "0.2.9",
+      "description": "企业微信机器人发消息、查群聊记录及文档、日程、待办等办公能力",
+      "version": "0.2.10",
       "dshVersion": "0.2.1-rc.5",
       "placement": "after-web-app",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-wecom-tools-0.2.9.tgz",
-        "sha256": "f6876e993c8c2d5aef990f17c9a5b4ed5325ef7ce1b0be037412ef9fc8799f07",
-        "size": 576220
+        "path": "artifacts/shamcleren-dsh-wecom-tools-0.2.10.tgz",
+        "sha256": "e9e9bb37e847efdbf785f44d76cbb787f98ccffef296d4e455d4852c47d012e3",
+        "size": 578305
       },
-      "sourceDigest": "8ccc3ddad1654afc05bc284ec342752613167643680a877e9ddd50f6decd9123",
-      "sourceLock": "artifacts/locks/d83897f590589aa64d65d1af36be8af4847ac529a2579b678e9451b28521da72.yaml"
+      "sourceDigest": "b7fa8c0ef808f104679fa0dec90a21dcbeeee3761052b5ac788a6095862a4e13",
+      "sourceLock": "artifacts/locks/7109c74f15cf723ba546eb8c43176f74885bcca64e85365fb4249f99d92498be.yaml"
     },
     {
       "id": "trusted-marketplace",

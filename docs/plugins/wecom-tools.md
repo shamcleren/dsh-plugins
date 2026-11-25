@@ -12,13 +12,15 @@ The WeCom adapter in `@shamcleren/dsh-im` owns message transport and uses Bot ID
 
 The tools plugin mounts one read-only bundled Skill through the official DSH filesystem Skill provider. The Skill guides CLI installation and `wecom-cli auth init --noninteractive` on first use. DSH shell and approval policy remain authoritative for command execution.
 
+The Skill uses `message aibot` to send as the authorized CLI bot. It uses `chat groups list` and `chat messages list` to look up a group and read history from the last 7 days. History access requires its own WeCom permission. See the [plugin guide](../../plugins/wecom-tools/README.md) for supported requests.
+
 ## Shared-identity warning
 
 All sessions on one Host process share the operating-system account's `wecom-cli` authorization. A multi-user Chatbot deployment must restrict who may invoke the Skill and keep write approvals enabled; installing the package does not create per-chat-user WeCom identities.
 
 ## Upstream ownership
 
-The packaged content follows the upstream snapshot and local CLI preflight override recorded in [THIRD_PARTY_NOTICES.md](../../plugins/wecom-tools/THIRD_PARTY_NOTICES.md). The package carries the upstream MIT license. Updating it requires source review, tests, a version bump, and a new catalog artifact hash.
+The upstream snapshot and local additions are recorded in [THIRD_PARTY_NOTICES.md](../../plugins/wecom-tools/THIRD_PARTY_NOTICES.md). The package carries the upstream MIT license. Updating it requires source review, tests, a version bump, and a new catalog artifact hash.
 
 ## Acceptance criteria
 
