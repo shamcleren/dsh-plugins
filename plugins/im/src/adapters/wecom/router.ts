@@ -180,6 +180,7 @@ export interface RouterConfig {
   allowedUsers: readonly string[]
   adminUsers: readonly string[]
   agentPreset?: string
+  rolePrompt?: string
   thinkingText: string
   turnTimeoutMs: number
 }
@@ -311,6 +312,7 @@ export class WeComConversationRouter {
   private deliveryAbort = new AbortController()
   /** Live channel preset; `/preset` moves it without reopening the socket. */
   private agentPreset: string | undefined
+  private rolePrompt: string | undefined
 
   constructor(
     private readonly api: HostApiProxy,
@@ -324,11 +326,18 @@ export class WeComConversationRouter {
     this.allowedUsers = new Set(config.allowedUsers)
     this.adminUsers = new Set(config.adminUsers)
     this.agentPreset = config.agentPreset
+    this.rolePrompt = config.rolePrompt
   }
 
   /** Adopt a settings-side preset change without disturbing live conversations. */
   setAgentPreset(next: string | undefined): void {
     this.agentPreset = next
+  }
+
+  setRolePrompt(next: string | undefined): void { this.rolePrompt = next }
+
+  rolePromptForSession(sessionId: string): string | undefined {
+    return this.observesSession(sessionId) ? this.rolePrompt : undefined
   }
 
   setDefaultWorkspace(workspace: HostWorkspace): void { this.runtime.defaultWorkspace = workspace }

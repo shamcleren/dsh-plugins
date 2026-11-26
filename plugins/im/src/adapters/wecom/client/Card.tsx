@@ -21,6 +21,7 @@ const FIELD_LABELS: Readonly<Record<string, LocaleKey>> = {
   workspaceId: 'workspace',
   preventIdleSleep: 'preventIdleSleep',
   agentPreset: 'agentPreset',
+  rolePrompt: 'rolePrompt',
   thinkingText: 'thinkingText',
   turnTimeoutMs: 'timeout',
   name: 'botName',
@@ -33,6 +34,7 @@ interface ValueFieldProps {
   state: FieldState
   disabled: boolean
   numeric?: boolean
+  multiline?: boolean
   invalidLabel: string
   overriddenLabel: string
   resetLabel: string
@@ -41,6 +43,7 @@ interface ValueFieldProps {
 }
 
 function ValueField(props: ValueFieldProps) {
+  const inputStyle = { ...styles.input, ...(props.state.invalid ? { borderColor: 'var(--dsw-alias-label-error)' } : {}) }
   return (
     <div style={styles.field}>
       <div style={styles.fieldHead}>
@@ -49,16 +52,28 @@ function ValueField(props: ValueFieldProps) {
           ? <><span style={styles.badge}>{props.overriddenLabel}</span><button type="button" style={styles.reset} disabled={props.disabled} onClick={props.onReset}>{props.resetLabel}</button></>
           : null}
       </div>
-      <input
-        id={props.id}
-        type="text"
-        style={{ ...styles.input, ...(props.state.invalid ? { borderColor: 'var(--dsw-alias-label-error)' } : {}) }}
-        value={props.state.text}
-        disabled={props.disabled}
-        {...props.numeric === true ? { inputMode: 'numeric' as const } : {}}
-        {...props.state.invalid ? { 'aria-invalid': true } : {}}
-        onChange={event => { props.onEdit(event.target.value) }}
-      />
+      {props.multiline ? (
+        <textarea
+          id={props.id}
+          rows={4}
+          style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }}
+          value={props.state.text}
+          disabled={props.disabled}
+          aria-invalid={props.state.invalid || undefined}
+          onChange={event => { props.onEdit(event.target.value) }}
+        />
+      ) : (
+        <input
+          id={props.id}
+          type="text"
+          style={inputStyle}
+          value={props.state.text}
+          disabled={props.disabled}
+          inputMode={props.numeric ? 'numeric' : undefined}
+          aria-invalid={props.state.invalid || undefined}
+          onChange={event => { props.onEdit(event.target.value) }}
+        />
+      )}
       <p style={props.state.invalid ? styles.error : styles.hint}>
         {props.state.invalid ? props.invalidLabel : props.hint}
       </p>
@@ -204,7 +219,7 @@ export function WeComCard(props: WeComCardProps) {
   const disabled = !state.writable
   const emptyBots = state.multiBot && state.bots.length === 0
   const valueField = (
-    field: 'allowedUsers' | 'adminUsers' | 'thinkingText' | 'turnTimeoutMs' | 'model' | 'name',
+    field: 'allowedUsers' | 'adminUsers' | 'rolePrompt' | 'thinkingText' | 'turnTimeoutMs' | 'model' | 'name',
     id: string,
     label: LocaleKey,
     hint: LocaleKey,
@@ -217,6 +232,7 @@ export function WeComCard(props: WeComCardProps) {
       state={state[field]}
       disabled={disabled}
       numeric={numeric}
+      multiline={field === 'rolePrompt'}
       invalidLabel={t('invalid')}
       overriddenLabel={t('overridden')}
       resetLabel={t('reset')}
@@ -243,6 +259,7 @@ export function WeComCard(props: WeComCardProps) {
       <section style={styles.section} aria-labelledby="wecom-section-connection">
         <h3 id="wecom-section-connection" style={styles.sectionHeading}>{t('sectionConnection')}</h3>
         {valueField('name', 'wecom-bot-name', 'botName', 'botNameHint')}
+        {valueField('rolePrompt', 'wecom-role-prompt', 'rolePrompt', 'rolePromptHint')}
         <SecretField id="wecom-bot-id" label={t('botId')} hint={t('botIdHint')} state={state.botId} configured={state.botIdConfigured} configuredLabel={t('configured')} unconfiguredLabel={t('unconfigured')} disabled={!state.botIdWritable} onEdit={text => { props.edit('botId', text) }} />
         <SecretField id="wecom-secret" label={t('secret')} hint={t('secretHint')} state={state.secret} configured={state.secretConfigured} configuredLabel={t('configured')} unconfiguredLabel={t('unconfigured')} disabled={!state.secretWritable} onEdit={text => { props.edit('secret', text) }} />
         {state.credentialFailure === undefined ? null : (

@@ -111,6 +111,7 @@ describe('WeCom browser settings card', () => {
     const tags = intrinsicTags(WeComCard({ ...face, useWeComCard: (select: (value: typeof snapshot) => unknown) => select(snapshot), t: (key: string) => key } as never))
     expect(tags).not.toContain('details')
     expect(tags.filter(tag => tag === 'h3')).toHaveLength(5)
+    expect(tags.filter(tag => tag === 'textarea')).toHaveLength(1)
     expect(tags.filter(tag => tag === 'input').length).toBeGreaterThanOrEqual(4)
   })
 
@@ -317,10 +318,17 @@ it('writes only the selected Bot and fences roster edits by revision', async () 
   const controller = new WeComCardController(host.scope, credentials.api), face = controller.inject()
   face.selectBot('beta')
   expect(face.hooks.weComCard.getSnapshot().workspaceId.text).toBe('workspace-b')
-  face.edit('workspaceId', 'workspace-c'); face.save()
-  await vi.waitFor(() => expect(host.scope.mutate).toHaveBeenCalledWith([
-    { op: 'set', path: ['bots', '1', 'workspaceId'], value: 'workspace-c' },
-  ], 7))
+  face.edit('workspaceId', 'workspace-c')
+  face.edit('rolePrompt', '先给结论。\n再写建议。')
+  face.save()
+  await vi.waitFor(() => {
+    expect(host.scope.mutate).toHaveBeenCalledWith([
+      { op: 'set', path: ['bots', '1', 'workspaceId'], value: 'workspace-c' },
+    ], 7)
+    expect(host.scope.mutate).toHaveBeenCalledWith([
+      { op: 'set', path: ['bots', '1', 'rolePrompt'], value: '先给结论。\n再写建议。' },
+    ], 7)
+  })
   controller.dispose()
 })
 

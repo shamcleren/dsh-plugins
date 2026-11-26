@@ -24,12 +24,15 @@ The adapter always mounts so it remains configurable. Reception defaults off for
 | `workspaceName` | `企业微信机器人` | Title of the managed fallback Workspace created when `workspaceId` is omitted. |
 | `preventIdleSleep` | `false` | On macOS, run a managed idle-sleep assertion while the Bot is active. |
 | `agentPreset` | omitted | Harness agent preset used when a new WeCom session is created. Omitted inherits the deployment default. |
+| `rolePrompt` | omitted | Optional role instructions shared by this Bot’s WeCom conversations. |
 | `thinkingText` | `正在思考…` | Initial content of the WeCom stream while the Harness turn starts. |
 | `turnTimeoutMs` | `300000` | Maximum observation time for one admitted Harness turn. |
 
+Edit **Role prompt** for the selected Bot to add role and response-style instructions. Saving or clearing it takes effect when the next model step assembles the prompt, including in existing WeCom conversations. The selected Agent preset still defines the mode and tools. A preset that supplies a complete system prompt keeps its full-prompt behavior.
+
 The reference fields are names, not credential literals. The plugin resolves the Host credentials service first and then the process environment. Installing the plugin without both values keeps it disconnected and emits one warning per unconfigured streak; writing either referenced credential or changing settings reconciles the connection without remounting the plugin.
 
-The settings card shows Bot ID, Secret, the two userid lists, and the default Workspace directly, and keeps `preventIdleSleep`, `agentPreset`, `thinkingText`, and `turnTimeoutMs` in the **Advanced settings** section. `botIdEnv`, `secretEnv`, and `workspaceName` stay configuration-file only.
+The settings card shows the Role prompt, Bot ID, Secret, the two userid lists, and the default Workspace directly, and keeps `preventIdleSleep`, `agentPreset`, `thinkingText`, and `turnTimeoutMs` in the **Advanced settings** section. `botIdEnv`, `secretEnv`, and `workspaceName` stay configuration-file only.
 
 The UI stores Bot ID and Secret through the Host credentials API, never in the settings document or a browser response. A save that does not land names the fields the deployment refused, and a credential write reports the deployment's own refusal text — or, when the write was accepted while the reference still reads unconfigured, says exactly that. Refusal text is diagnostic only and never carries the value back. Ordinary settings and credentials remain under the Harness home and survive application restarts.
 

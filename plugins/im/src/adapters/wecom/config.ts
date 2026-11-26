@@ -32,6 +32,8 @@ export interface Config {
   preventIdleSleep?: boolean
   /** Optional Harness agent preset selected for new WeCom conversations. */
   agentPreset?: string
+  /** Optional role instructions shared by this Bot’s conversations. */
+  rolePrompt?: string
   /** Initial stream content sent while the Harness turn starts. */
   thinkingText?: string
   /** Maximum time to observe one admitted Harness turn. */
@@ -62,6 +64,7 @@ const fields = {
   workspaceId: z.string().min(1),
   preventIdleSleep: z.boolean().default(false),
   agentPreset: z.string().min(1),
+  rolePrompt: z.string(),
   thinkingText: z.string().min(1).default(DEFAULT_THINKING_TEXT),
   turnTimeoutMs: z.number().step(1).min(1_000).default(DEFAULT_TURN_TIMEOUT_MS),
 }
@@ -108,6 +111,7 @@ export interface WeComRuntimeConfig {
   allowedUsers: readonly string[]
   adminUsers: readonly string[]
   agentPreset?: string
+  rolePrompt?: string
   thinkingText: string
   turnTimeoutMs: number
 }
@@ -115,12 +119,14 @@ export interface WeComRuntimeConfig {
 /** Resolve optional channel policy defaults for direct programmatic callers. */
 export function resolveRuntimeConfig(config: Config): WeComRuntimeConfig {
   const model = resolveModel(config.model)
+  const rolePrompt = config.rolePrompt?.trim()
   return {
     ...config.mediaMaxBytes === undefined ? {} : { mediaMaxBytes: config.mediaMaxBytes },
     ...model === undefined ? {} : { model },
     allowedUsers: config.allowedUsers ?? [],
     adminUsers: config.adminUsers ?? [],
     ...config.agentPreset === undefined ? {} : { agentPreset: config.agentPreset },
+    ...rolePrompt ? { rolePrompt } : {},
     thinkingText: config.thinkingText ?? DEFAULT_THINKING_TEXT,
     turnTimeoutMs: config.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS,
   }

@@ -347,12 +347,20 @@ describe('WeComConversationRouter', () => {
     ...test === undefined ? {} : { readImage: test.readImage },
   })
 
-  it('submits turns from two schema-resolved Bots with inherited models into separate Sessions', async () => {
-    const bots = configuredBots(Config({ bots: [{ id: 'alpha' }, { id: 'beta' }] }))
+  it('applies each schema-resolved Bot’s role prompt to its own turn', async () => {
+    const bots = configuredBots(Config({ bots: [{ id: 'alpha', rolePrompt: '  Alpha {{literal}}  ' }, { id: 'beta', rolePrompt: 'Beta' }] }))
     const tests = bots.map(() => harness())
     const routers = bots.map((bot, index) => {
       const test = tests[index]!
       return new WeComConversationRouter(test.api, test.replies, logger(), resolveRuntimeConfig(bot), runtime())
+    })
+    const roles: Array<Array<string | undefined>> = []
+    tests.forEach(({ api }, index) => {
+      const submit = api.sessions.prompt
+      api.sessions.prompt = async request => {
+        roles[index] = routers.map(router => router.rolePromptForSession(request.payload.sessionId))
+        return await submit(request)
+      }
     })
     try {
       routers.forEach((router, index) => {
@@ -368,6 +376,7 @@ describe('WeComConversationRouter', () => {
       expect(created[0]!.sessionId).not.toBe(created[1]!.sessionId)
       for (const request of created) expect(request).not.toHaveProperty('model')
       for (const test of tests) expect(test.prompt).toHaveBeenCalledTimes(1)
+      expect(roles).toEqual([['Alpha {{literal}}', undefined], [undefined, 'Beta']])
     } finally { await Promise.all(routers.map(router => router.stop())) }
   })
 

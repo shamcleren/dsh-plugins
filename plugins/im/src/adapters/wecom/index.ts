@@ -95,6 +95,14 @@ export function apply(ctx: Context, config: PlainConfig | Volatile<PlainConfig>)
       },
     }),
   })
+  ctx.inject(['systemPrompt'], scope => {
+    scope.systemPrompt.section({
+      name: 'im:wecom-role',
+      order: 9500,
+      interpolate: false,
+      text: ({ agent }) => agent === undefined ? '' : runtime.rolePromptForSession(agent.session.id) ?? '',
+    })
+  })
   ctx.inject(['attachments'], scope => {
     attachments = scope.attachments
     scope.effect(() => () => { if (attachments === scope.attachments) attachments = undefined },

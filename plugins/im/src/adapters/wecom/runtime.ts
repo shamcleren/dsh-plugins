@@ -70,6 +70,10 @@ class SingleBotRuntimeController {
     return this.active?.router.ownsSession(sessionId) === true
   }
 
+  rolePromptForSession(sessionId: string): string | undefined {
+    return this.active?.router.rolePromptForSession(sessionId)
+  }
+
   /** Present an approval through the live channel router. */
   async requestApproval(request: ChannelApprovalRequest): Promise<ChannelApprovalAnswer | undefined> {
     return await this.active?.router.requestApproval(request)
@@ -99,7 +103,7 @@ class SingleBotRuntimeController {
     // The preset is deliberately outside the key: `/preset` persists through the
     // settings service, which reconciles us back synchronously, and tearing the
     // socket down there would drop the command's own reply mid-flight.
-    const { agentPreset, ...connectionPolicy } = resolveRuntimeConfig(config)
+    const { agentPreset, rolePrompt, ...connectionPolicy } = resolveRuntimeConfig(config)
     const key = JSON.stringify([
       credentials,
       connectionPolicy,
@@ -115,6 +119,7 @@ class SingleBotRuntimeController {
         this.active.labelKey = labelKey
       }
       this.active.router.setAgentPreset(agentPreset)
+      this.active.router.setRolePrompt(rolePrompt)
       return
     }
     await this.stopActive()
@@ -228,6 +233,14 @@ export class WeComRuntimeController {
   routesSession(id: string): boolean { return [...this.bots.values()].some(bot => bot.routesSession(id)) }
   observesSession(id: string): boolean { return [...this.bots.values()].some(bot => bot.observesSession(id)) }
   ownsSession(id: string): boolean { return [...this.bots.values()].some(bot => bot.ownsSession(id)) }
+  rolePromptForSession(sessionId: string): string | undefined {
+    for (const bot of this.bots.values()) {
+      const prompt = bot.rolePromptForSession(sessionId)
+      if (prompt !== undefined) return prompt
+    }
+    return undefined
+  }
+
   async requestApproval(request: ChannelApprovalRequest): Promise<ChannelApprovalAnswer | undefined> {
     for (const bot of this.bots.values()) {
       const answer = await bot.requestApproval(request)

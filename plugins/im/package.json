@@ -1,6 +1,6 @@
 {
   "name": "@shamcleren/dsh-im",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "Unified personal workbench messaging with WeChat and WeCom adapters",
   "type": "module",
   "main": "lib/index.js",

@@ -84,7 +84,7 @@ const prepareContext = async () => ({
 })
 
 describe('WeComRuntimeController', () => {
-  it('renames the workspace without disconnecting an active Bot', async () => {
+  it('updates workspace labels and role prompts without disconnecting an active Bot', async () => {
     const client = new FakeClient(), prepare = vi.fn(prepareContext)
     const runtime = new WeComRuntimeController({ api: api(), logger: logger(), resolveCredentials: async () => ({ botId: 'fixture-bot', secret: 'fixture-secret' }), createClient: () => client, prepareContext: prepare, writeSettings })
     try {
@@ -93,6 +93,8 @@ describe('WeComRuntimeController', () => {
       runtime.update({ connectionEnabled: true, name: '开发助手' })
       await runtime.ready()
       runtime.update({ connectionEnabled: true, name: '开发助手', workspaceName: '我的工作' })
+      await runtime.ready()
+      runtime.update({ connectionEnabled: true, name: '开发助手', workspaceName: '我的工作', rolePrompt: '先说结论。' })
       await runtime.ready()
       expect(prepare).toHaveBeenCalledTimes(3)
       expect(client.connect).toHaveBeenCalledOnce()

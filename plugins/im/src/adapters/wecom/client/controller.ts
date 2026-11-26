@@ -52,6 +52,7 @@ export interface WeComCardState extends FormState {
   presetDefaultId?: string
   preventIdleSleep: FieldState
   agentPreset: FieldState
+  rolePrompt: FieldState
   thinkingText: FieldState
   turnTimeoutMs: FieldState
   botIdConfigured: boolean
@@ -114,6 +115,7 @@ export class WeComCardController {
         textField('workspaceId'),
         booleanField('preventIdleSleep'),
         textField('agentPreset'),
+        textField('rolePrompt'),
         textField('thinkingText'),
         numberField('turnTimeoutMs'),
       ],
@@ -207,6 +209,7 @@ export class WeComCardController {
       ...this.presetDefaultId === undefined ? {} : { presetDefaultId: this.presetDefaultId },
       preventIdleSleep: this.form.field('preventIdleSleep'),
       agentPreset: this.form.field('agentPreset'),
+      rolePrompt: this.form.field('rolePrompt'),
       thinkingText: this.form.field('thinkingText'),
       turnTimeoutMs: this.form.field('turnTimeoutMs'),
       botIdConfigured: this.botId.configured,
