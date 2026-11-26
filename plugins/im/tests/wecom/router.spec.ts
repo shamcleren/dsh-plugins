@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Logger } from '@deepseek-ai/cordis'
 import { Context } from '@deepseek-ai/cordis'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -5,6 +8,7 @@ import { EventType, MessageType } from '@wecom/aibot-node-sdk'
 import type { TemplateCard, WsFrame } from '@wecom/aibot-node-sdk'
 import { describe, expect, it, vi } from 'vitest'
 import type {
+  AskUserQuestionItem,
   HostApiProxy,
   HostMuxFrame,
   RpcRequest,
@@ -14,6 +18,8 @@ import { createHostApi } from '../../src/adapters/wecom/host-api.js'
 import { normalizeTextFrame, promptRpcIdFor } from '../../src/adapters/wecom/inbound.js'
 import type { WeComTextFrame } from '../../src/adapters/wecom/inbound.js'
 import { WeComConversationRouter } from '../../src/adapters/wecom/router.js'
+import { ConversationBindings } from '../../src/adapters/wecom/bindings.js'
+import { MAX_STREAM_REPLY_BYTES } from '../../src/adapters/wecom/reply.js'
 import { Config, configuredBots, resolveRuntimeConfig } from '../../src/adapters/wecom/config.js'
 import type { WeComReplyClient, WeComTemplateCardEventFrame } from '../../src/adapters/wecom/router.js'
 
@@ -259,6 +265,7 @@ function harness(
     },
     presets: { list: listPresets },
     sessions: {
+      list: async request => ({ rpcId: request.rpcId, result: { ok: true as const, value: { items: [] } } }),
       cancel: async request => ({ rpcId: request.rpcId, result: { ok: true as const, value: { accepted: true as const } } }),
       create,
       history,
@@ -334,6 +341,7 @@ describe('WeComConversationRouter', () => {
     defaultWorkspace: defaultWorkspace(),
     bindings: {
       current: (_key: string, fallback: string) => fallback,
+      list: (_key: string, fallback: string) => [fallback],
       set: vi.fn(async () => undefined),
     },
     ...test === undefined ? {} : { readImage: test.readImage },
@@ -532,7 +540,7 @@ describe('WeComConversationRouter', () => {
       allowedUsers: [], adminUsers: [], agentPreset: 'aidev', thinkingText: '处理中', turnTimeoutMs: 1_000,
     }, {
       defaultWorkspace: defaultWorkspace(),
-      bindings: { current: (_key, fallback) => fallback, set },
+      bindings: { current: (_key, fallback) => fallback, list: (_key, fallback) => [fallback], set },
     })
     router.start()
     router.accept(textFrame())
@@ -591,7 +599,7 @@ describe('WeComConversationRouter', () => {
       allowedUsers: [], adminUsers: ['user-1'], thinkingText: '处理中', turnTimeoutMs: 1_000,
     }, {
       defaultWorkspace: defaultWorkspace(),
-      bindings: { current: (_key, fallback) => fallback, set },
+      bindings: { current: (_key, fallback) => fallback, list: (_key, fallback) => [fallback], set },
     })
     router.start()
     router.accept(textFrame('/new'))
@@ -604,11 +612,68 @@ describe('WeComConversationRouter', () => {
     await router.stop()
   })
 
+  it('lists and switches only the current WeCom chat history, including after restart', async () => {
+    const test = harness()
+    const directory = await mkdtemp(join(tmpdir(), 'wecom-session-command-'))
+    const file = join(directory, 'bindings.json')
+    const makeRouter = (bindings: ConversationBindings) => new WeComConversationRouter(test.api, test.replies, logger(), {
+      allowedUsers: [], adminUsers: ['user-1'], thinkingText: '处理中', turnTimeoutMs: 1_000,
+    }, { defaultWorkspace: defaultWorkspace(), bindings })
+    const bindings = await ConversationBindings.open(file)
+    let router = makeRouter(bindings), sequence = 0
+    const reply = async (text: string, user = 'user-1', group = false) => {
+      const reqId = `session-command-${++sequence}`
+      router.accept(textFrame(group ? `@dsh ${text}` : text, user, group ? 'group' : 'single', reqId, reqId))
+      const finished = () => test.streamCalls.find(call => call.reqId === reqId && call.finish)
+      await vi.waitFor(() => expect(finished()).toBeDefined())
+      return finished()!.content
+    }
+    router.start()
+    try {
+      expect(await reply('/session')).toContain('还没有历史会话')
+      expect(test.create).not.toHaveBeenCalled()
+      expect(test.prompt).not.toHaveBeenCalled()
+      await reply('开始处理任务')
+      const first = test.prompt.mock.calls.at(-1)![0].payload.sessionId
+      expect(await reply('/new')).toContain('/session')
+      const second = test.create.mock.calls.at(-1)![0].payload.sessionId
+      expect(second).not.toBe(first)
+      const other = 'session-wecom-another-chat'
+      await bindings.set('b'.repeat(64), other)
+      const summaries = [
+        { sessionId: first, title: '【企业微信】原任务', workspaceTitle: '项目 Alpha', running: false },
+        { sessionId: second, title: '【企业微信】新任务', workspaceTitle: '项目 Alpha', running: true },
+        { sessionId: other, title: '其他聊天的任务', running: false },
+      ]
+      test.api.sessions.list = vi.fn(async request => success(request, {
+        items: summaries.filter(item => request.payload.sessionIds.includes(item.sessionId)),
+      }))
+      expect(await reply('/session')).toContain('[2] 新任务（当前 · 执行中） · 工作区：项目 Alpha\n- [1] 原任务')
+      expect(test.api.sessions.list).toHaveBeenLastCalledWith(expect.objectContaining({ payload: { sessionIds: [first, second] } }))
+      expect(await reply('/session', 'user-1', true)).toContain('还没有历史会话')
+      expect(await reply('/session 1', 'guest')).toContain('只有机器人管理员')
+      expect(await reply(`/session ${other}`)).toContain('没有找到')
+      expect(await reply('/session 1')).toContain('已切换到会话：原任务')
+      await router.stop()
+      router = makeRouter(await ConversationBindings.open(file))
+      router.start()
+      expect(await reply('/session list 1')).toContain('[1] 原任务（当前）')
+      await reply('继续原任务')
+      expect(test.prompt.mock.calls.at(-1)![0].payload.sessionId).toBe(first)
+      summaries.splice(0, 1)
+      expect(await reply('/session 1')).toContain('没有找到')
+    } finally {
+      await router.stop()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('switches one conversation to a selected Workspace and routes its next message there', async () => {
     const test = harness()
     let boundSession: string | undefined
     const bindings = {
       current: (_key: string, fallback: string) => boundSession ?? fallback,
+      list: (_key: string, fallback: string) => [boundSession ?? fallback],
       set: async (_key: string, sessionId: string) => { boundSession = sessionId },
     }
     const router = new WeComConversationRouter(test.api, test.replies, logger(), {
@@ -709,6 +774,7 @@ describe('WeComConversationRouter', () => {
       defaultWorkspace: defaultWorkspace(),
       bindings: {
         current: (_key, fallback) => boundSession ?? fallback,
+        list: (_key, fallback) => [boundSession ?? fallback],
         set: async (_key, sessionId) => { boundSession = sessionId },
       },
     }, writeSettings)
@@ -735,6 +801,7 @@ describe('WeComConversationRouter', () => {
       defaultWorkspace: defaultWorkspace(),
       bindings: {
         current: (_key, fallback) => boundSession ?? fallback,
+        list: (_key, fallback) => [boundSession ?? fallback],
         set: async (_key, sessionId) => { boundSession = sessionId },
       },
     }, writeSettings)
@@ -1183,6 +1250,111 @@ describe('WeComConversationRouter', () => {
     await router.stop()
   })
 
+  async function startQuestionTurn() {
+    const test = harness()
+    test.prompt.mockImplementationOnce(async request => success(request, {
+      accepted: true as const, disposition: 'next-turn' as const,
+    }))
+    const router = new WeComConversationRouter(test.api, test.replies, logger(), {
+      allowedUsers: [], adminUsers: [], thinkingText: '处理中', turnTimeoutMs: 10_000,
+    }, runtime())
+    router.start()
+    router.accept(textFrame('请问我下一步怎么做', 'user-1', 'group'))
+    await vi.waitFor(() => expect(test.prompt).toHaveBeenCalledTimes(1))
+    const sessionId = test.prompt.mock.calls[0]![0].payload.sessionId
+    await vi.waitFor(() => expect(router.ownsSession(sessionId)).toBe(true))
+    const ask = (questions: AskUserQuestionItem[], rpcId = 'question-text') => test.pushMux({
+      rpcId, payload: { type: 'question/requested', sessionId, questions },
+    })
+    const answer = (text: string) => router.accept(textFrame(text, 'user-1', 'group', `answer-${text}`))
+    return { test, router, sessionId, ask, answer }
+  }
+
+  it.each([
+    { field: 'a wide option', question: { options: [{ label: '整理完整回复' }, { label: '稍后' }] }, shown: '整理完整回复' },
+    { field: 'a long title', question: { header: '请从下面确认接下来要怎么处理这项任务' }, shown: '请从下面确认接下来要怎么处理这项任务' },
+    { field: 'a long question', question: { question: '你希望先整理已经收集的信息然后再发送给群里的其他参与者吗？' }, shown: '你希望先整理已经收集的信息然后再发送给群里的其他参与者吗？' },
+    { field: 'multiline detail', question: { detail: '事项背景\n需要审核' }, shown: '事项背景\n需要审核' },
+    { field: 'a long option description', question: { options: [{ label: '确认', description: '保留已经整理好的全部细节并附上后续处理建议' }] }, shown: '保留已经整理好的全部细节并附上后续处理建议' },
+  ])('shows $field in text and accepts the numbered answer', async ({ question, shown }) => {
+    const f = await startQuestionTurn()
+    try {
+      const item: AskUserQuestionItem = { id: 'choice', question: '选择下一步', options: [{ label: '确认' }], ...question }
+      f.ask([item])
+      await vi.waitFor(() => expect(f.test.replyCalls.at(-1)).toMatchObject({ finish: true, content: expect.stringContaining(shown) }))
+      const notice = f.test.replyCalls.at(-1)!.content
+      expect(notice).toContain('`/answer 1`')
+      expect(notice).toContain(`- 1）${item.options![0]!.label}`)
+      expect(f.test.sentCards).toEqual([])
+
+      f.answer('/answer 1')
+      await vi.waitFor(() => expect(f.test.respond).toHaveBeenCalledWith(expect.objectContaining({
+        result: { ok: true, value: { sessionId: f.sessionId, answer: { answers: [{ id: 'choice', selected: [item.options![0]!.label] }] } } },
+      })))
+    } finally {
+      await f.router.stop()
+    }
+  })
+
+  it('closes a short question card when the next question in the batch needs text', async () => {
+    const f = await startQuestionTurn()
+    const longOption = '先整理完整回复，随后把结果同步到群里'
+    try {
+      f.ask([
+        { id: 'timing', question: '现在开始吗？', options: [{ label: '开始' }] },
+        { id: 'delivery', question: '怎么提交结果？', options: [{ label: longOption }, { label: '先发草稿' }] },
+      ])
+      await vi.waitFor(() => expect(f.test.sentCards).toHaveLength(1))
+      expect(f.test.replyCalls.at(-1)?.content).toContain(`- 1）${longOption}`)
+      const taskId = f.test.sentCards[0]!.card.task_id!
+      f.router.acceptTemplateCardEvent(cardEvent(taskId, 'question_0_option_0'))
+      await vi.waitFor(() => expect(f.test.updatedCards.at(-1)).toMatchObject({
+        main_title: { desc: '回复 /answer 2 <答案>' }, replace_text: '操作成功',
+      }))
+      f.answer(`/answer 2 ${longOption}`)
+      await vi.waitFor(() => expect(f.test.respond).toHaveBeenCalledWith(expect.objectContaining({
+        result: { ok: true, value: { sessionId: f.sessionId, answer: { answers: [
+          { id: 'timing', selected: ['开始'] }, { id: 'delivery', selected: [longOption] },
+        ] } } },
+      })))
+      expect(f.test.sentCards).toHaveLength(1)
+    } finally {
+      await f.router.stop()
+    }
+  })
+
+  it('sends an oversized question in ordered UTF-8 text parts and keeps later questions answerable', async () => {
+    const f = await startQuestionTurn()
+    const detail = '🧭'.repeat(6000)
+    try {
+      f.ask([{ id: 'oversized', question: '继续吗？', detail, options: [{ label: '继续' }, { label: '下次处理' }] }])
+      await vi.waitFor(() => expect(f.test.proactiveTexts.at(-1)?.content).toContain('- 2）下次处理'))
+      const parts = f.test.proactiveTexts.map(message => message.content)
+      expect(parts).toHaveLength(2)
+      expect(parts.every(part => Buffer.byteLength(part) <= MAX_STREAM_REPLY_BYTES)).toBe(true)
+      expect(parts.join('')).toContain(detail)
+      expect(parts[0]).toContain('`/answer 1`')
+      expect(f.test.replyCalls.at(-1)).toMatchObject({ finish: true, content: expect.stringContaining('接下来的消息') })
+      expect(f.test.sentCards).toEqual([])
+
+      f.answer('/answer 2')
+      await vi.waitFor(() => expect(f.test.respond).toHaveBeenCalledTimes(1))
+      f.test.pushMux({ rpcId: 'resolved', payload: {
+        type: 'question/resolved', sessionId: f.sessionId, questionRpcId: 'question-text', outcome: 'answered',
+      } })
+      f.ask([{ id: 'followup', question: '还能补充什么？' }], 'follow-up')
+      await vi.waitFor(() => expect(f.test.proactiveTexts.at(-1)?.content).toContain('还能补充什么？'))
+      f.answer('/answer 补充测试结果')
+      await vi.waitFor(() => expect(f.test.respond).toHaveBeenLastCalledWith(expect.objectContaining({
+        rpcId: 'follow-up', result: { ok: true, value: { sessionId: f.sessionId, answer: { answers: [
+          { id: 'followup', selected: [], custom: '补充测试结果' },
+        ] } } },
+      })))
+    } finally {
+      await f.router.stop()
+    }
+  })
+
   it('delegates approvals that do not belong to an active WeCom turn', async () => {
     const test = harness()
     const router = new WeComConversationRouter(test.api, test.replies, logger(), {
@@ -1206,7 +1378,7 @@ it('uploads and sends file and video attachments to the originating WeCom chat',
   const router = new WeComConversationRouter(test.api, test.replies, logger(), {
     allowedUsers: [], adminUsers: [], thinkingText: '处理中', turnTimeoutMs: 1000,
   }, {
-    bindings: { current: (_key, fallback) => fallback, set: async () => undefined },
+    bindings: { current: (_key, fallback) => fallback, list: (_key, fallback) => [fallback], set: async () => undefined },
     defaultWorkspace: { workspaceId: 'files', path: '/tmp', title: 'Files', sessionIds: [] },
     readFile: async function* () { yield Buffer.from('data') },
   })
@@ -1231,7 +1403,7 @@ it('drains shutdown while prompt admission is still pending without an unhandled
   const router = new WeComConversationRouter(test.api, test.replies, logger(), {
     allowedUsers: [], adminUsers: [], thinkingText: '处理中', turnTimeoutMs: 1000,
   }, {
-    bindings: { current: (_key, fallback) => fallback, set: async () => undefined },
+    bindings: { current: (_key, fallback) => fallback, list: (_key, fallback) => [fallback], set: async () => undefined },
     defaultWorkspace: { workspaceId: 'shutdown', path: '/tmp', title: 'Shutdown', sessionIds: [] },
   })
   router.start(); router.accept(textFrame())
@@ -1249,7 +1421,7 @@ it('releases a claimed Host question when shutdown precedes its channel presenta
   const router = new WeComConversationRouter(test.api, test.replies, logger(), {
     allowedUsers: [], adminUsers: [], thinkingText: '处理中', turnTimeoutMs: 5000,
   }, {
-    bindings: { current: (_key, fallback) => fallback, set: async () => undefined },
+    bindings: { current: (_key, fallback) => fallback, list: (_key, fallback) => [fallback], set: async () => undefined },
     defaultWorkspace: { workspaceId: 'shutdown-question', path: '/tmp', title: 'Questions', sessionIds: [] },
   })
   ctx.provide('sessionController', {} as never)

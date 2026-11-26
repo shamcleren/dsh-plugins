@@ -1,18 +1,39 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it, vi } from 'vitest'
-import { WorkspaceService } from '../src/service.js'
-import { commandEnvironment, execute, type CommandOptions, type Execute } from '../src/process.js'
-import { WorkspaceError, type Activity, type Preview, type Project, type ProjectStatus, type State, type Task } from '../src/types.js'
+import { pathToFileURL } from 'node:url'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import * as sourceService from '../src/service.js'
+import { commandEnvironment, execute as cleanupCommand, type CommandOptions, type Execute } from '../src/process.js'
+import { TestResources } from './resources.js'
+import * as sourceTypes from '../src/types.js'
+import type { Activity, Preview, Project, ProjectStatus, State, Task } from '../src/types.js'
 
-const disposals: Array<() => Promise<void>> = []
-afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
+// Release verification can run these same isolated Git scenarios against tarball bytecode.
+const packaged = process.env.DSH_GITHUB_WORKSPACE_TEST_PACKAGE
+const { WorkspaceService }: typeof sourceService = packaged
+  ? await import(pathToFileURL(join(packaged, 'lib/service.js')).href) : sourceService
+const { WorkspaceError }: typeof sourceTypes = packaged
+  ? await import(pathToFileURL(join(packaged, 'lib/types.js')).href) : sourceTypes
 
-async function fixture(empty = false, encrypted: boolean | 'gpg' = false) {
+// Each scenario includes real repository creation and many external Git calls.
+// Give the integration a bounded budget; timeout cancellation still owns every child.
+vi.setConfig({ testTimeout: 30_000 })
+let resources: TestResources
+beforeEach(({ signal }) => { resources = new TestResources(signal) })
+afterEach(async () => { await resources.close() })
+const execute: Execute = (command, args, options) => resources.execute(command, args, options)
+
+const httpsHost = 'git.example.invalid'
+const httpsUrl = `https://${httpsHost}/demo/project.git`
+
+function fixture(empty = false, encrypted: boolean | 'gpg' = false, https = false) {
+  return resources.run(() => createFixture(empty, encrypted, https))
+}
+async function createFixture(empty: boolean, encrypted: boolean | 'gpg', https: boolean) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'github-workspace-test-')))
-  disposals.push(() => rm(base, { recursive: true, force: true }))
+  resources.defer(() => rm(base, { recursive: true, force: true }))
   const bare = join(base, 'remote.git'), seed = join(base, 'seed'), home = join(base, 'home')
   await mkdir(seed); await mkdir(home)
   const isolation = { HOME: home, XDG_CONFIG_HOME: join(home, '.config'), GNUPGHOME: join(home, '.gnupg'), GH_CONFIG_DIR: join(home, '.gh'), GH_TOKEN: '', GITHUB_TOKEN: '' }
@@ -24,13 +45,14 @@ async function fixture(empty = false, encrypted: boolean | 'gpg' = false) {
   }
   await git(base, 'init', '--bare', '--initial-branch=main', bare)
   await git(seed, 'init', '--initial-branch=main')
+  const httpsBare = join(base, 'https.git')
   const keyFile = join(base, 'fixture.key')
   if (encrypted) {
     if (encrypted === 'gpg') {
       isolation.GNUPGHOME = await mkdtemp(join(process.platform === 'darwin' ? '/private/tmp' : tmpdir(), 'ghw-gpg-'))
       env.GNUPGHOME = isolation.GNUPGHOME
-      disposals.push(async () => {
-        await execute('gpgconf', ['--homedir', isolation.GNUPGHOME, '--kill', 'gpg-agent'], { env })
+      resources.defer(async () => {
+        await cleanupCommand('gpgconf', ['--homedir', isolation.GNUPGHOME, '--kill', 'gpg-agent'], { env, timeoutMs: 10_000 })
         await rm(isolation.GNUPGHOME, { recursive: true, force: true })
       })
       const generated = await execute('gpg', ['--batch', '--pinentry-mode', 'loopback', '--passphrase', '', '--quick-generate-key', 'Fixture <fixture@example.invalid>', 'default', 'default', '0'], { env, timeoutMs: 30_000 })
@@ -51,6 +73,11 @@ async function fixture(empty = false, encrypted: boolean | 'gpg' = false) {
     await writeFile(join(seed, 'a.txt'), 'original a\n'); await writeFile(join(seed, 'b.txt'), 'original b\n')
     await git(seed, 'add', '.'); await git(seed, 'commit', '-m', 'Initial fixture'); await git(seed, 'push', bare, 'HEAD:refs/heads/main')
   }
+  if (https) {
+    await writeFile(join(home, 'github-workspace.https.json'), JSON.stringify({ host: httpsHost, credentialHelper: 'osxkeychain' }), { mode: 0o600 })
+    await git(base, 'init', '--bare', '--initial-branch=main', httpsBare)
+    await git(seed, 'push', httpsBare, 'HEAD:refs/heads/main')
+  }
   const commands: string[][] = []
   const control: { account: string; before?: (args: string[], options: CommandOptions | undefined) => Promise<void> } = { account: 'fixture' }
   const run: Execute = async (command, args, options) => {
@@ -66,9 +93,9 @@ async function fixture(empty = false, encrypted: boolean | 'gpg' = false) {
       return { code: 0, stdout: JSON.stringify(value), stderr: '' }
     }
     const transport = args.findIndex(arg => ['clone', 'fetch', 'push', 'ls-remote'].includes(arg))
-    // Production always uses HTTPS github.com. Only this fixture rewrites the
-    // transport to its private bare repository; no real account is consulted.
-    if (transport >= 0) args = [...args.slice(0, transport), '-c', 'protocol.file.allow=always', '-c', 'url.file://' + bare + '.insteadOf=https://github.com/demo/project.git', ...args.slice(transport)]
+    // Rewrite transport only in the fixture, after recording the real Git options.
+    if (transport >= 0) args = [...args.slice(0, transport), '-c', 'protocol.file.allow=always', '-c', 'url.file://' + bare + '.insteadOf=https://github.com/demo/project.git',
+      ...(https ? ['-c', `url.file://${httpsBare}.insteadOf=${httpsUrl}`] : []), ...args.slice(transport)]
     await control.before?.(args, options)
     return execute(command, args, { ...options, env: { ...options?.env, ...isolation } })
   }
@@ -77,8 +104,8 @@ async function fixture(empty = false, encrypted: boolean | 'gpg' = false) {
     const id = registered.get(path) ?? randomUUID(); registered.set(path, id); return { id }
   }) }
   const service = await WorkspaceService.create(home, registry, run)
-  disposals.push(() => service.stop())
-  const call = <T>(method: string, payload: unknown = {}) => service.request(method, payload) as Promise<T>
+  resources.defer(() => service.stop())
+  const call = <T>(method: string, payload: unknown = {}) => resources.run(signal => service.request(method, payload, signal)) as Promise<T>
   const project = await call<Project>('open', { fullName: 'demo/project' })
   const status = () => call<ProjectStatus>('status', { fullName: project.fullName })
   const preview = (paths: string[]) => call<Preview>('preview', { fullName: project.fullName, paths })
@@ -94,8 +121,72 @@ async function fixture(empty = false, encrypted: boolean | 'gpg' = false) {
     }, { timeout: 10_000, interval: 100 })
     return task!
   }
-  return { base, bare, seed, home, service, call, git, registry, project, status, preview, commands, remoteChange, control, finished, keyFile }
+  return { base, bare, httpsBare, seed, home, service, call, git, registry, project, status, preview, commands, remoteChange, control, finished, keyFile }
 }
+
+it('imports a configured HTTPS repository and manually commits, pushes and pulls independently of GitHub', async () => {
+  const f = await fixture(false, false, true)
+  const githubHead = (await f.status()).head
+  f.control.account = ''
+  expect(await f.call<State>('state')).toMatchObject({ httpsHost, account: null })
+  f.commands.length = 0
+  const task = await f.call<Task>('startOpenHttps', { url: ' https://GIT.EXAMPLE.INVALID/demo/project/ ' })
+  expect(task.fullName).toBe(httpsUrl)
+  expect(await f.finished(task.id)).toMatchObject({ status: 'complete' })
+  const selector = { fullName: httpsUrl }
+  const { project } = await f.call<ProjectStatus>('status', selector)
+  expect(project).toMatchObject({ fullName: f.project.fullName, remoteUrl: httpsUrl })
+  expect(project.path).not.toBe(f.project.path)
+  expect(project.workspaceId).not.toBe(f.project.workspaceId)
+  expect(await f.call('open', selector)).toEqual(project)
+  expect(await f.call<ProjectStatus>('status', { fullName: f.project.fullName })).toMatchObject({ project: f.project, head: githubHead })
+
+  await writeFile(join(project.path, 'a.txt'), 'HTTPS workspace update\n')
+  const preview = await f.call<Preview>('preview', { ...selector, paths: ['a.txt'] })
+  expect(preview.fullName).toBe(httpsUrl)
+  const commit = { id: preview.id, message: 'HTTPS fixture commit' }
+  await expect(f.call('commit', commit)).rejects.toMatchObject({ code: 'gitIdentity' })
+  await writeFile(join(f.home, '.gitconfig'), '[user]\n\tname = HTTPS Fixture\n\temail = https-fixture@example.invalid\n')
+  const { head } = await f.call<ProjectStatus>('commit', commit)
+  expect((await f.git(project.path, 'show', '-s', '--format=%an <%ae>', 'HEAD')).trim()).toBe('HTTPS Fixture <https-fixture@example.invalid>')
+  await f.call('push', { ...selector, head })
+  expect((await f.git(f.base, '--git-dir=' + f.httpsBare, 'rev-parse', 'main')).trim()).toBe(head)
+  expect((await f.git(f.base, '--git-dir=' + f.bare, 'rev-parse', 'main')).trim()).toBe(githubHead)
+
+  await f.git(f.seed, 'fetch', f.httpsBare, 'main')
+  await f.git(f.seed, 'merge', '--ff-only', 'FETCH_HEAD')
+  await writeFile(join(f.seed, 'b.txt'), 'HTTPS remote update\n')
+  await f.git(f.seed, 'add', 'b.txt'); await f.git(f.seed, 'commit', '-m', 'Remote update')
+  await f.git(f.seed, 'push', f.httpsBare, 'HEAD:refs/heads/main')
+  expect(await f.call('fetch', selector)).toMatchObject({ behind: 1 })
+  expect(await f.call('pull', selector)).toMatchObject({ ahead: 0, behind: 0 })
+  expect(await readFile(join(project.path, 'b.txt'), 'utf8')).toBe('HTTPS remote update\n')
+  const transport = f.commands.filter(args => args.some(arg => ['clone', 'fetch', 'push'].includes(arg)))
+  expect(transport.map(args => args.find(arg => ['clone', 'fetch', 'push'].includes(arg)))).toEqual(['clone', 'push', 'fetch', 'fetch'])
+  for (const args of transport) {
+    expect(args).toContain(`credential.https://${httpsHost}.helper=osxkeychain`)
+    expect(args).toContain('http.followRedirects=false')
+    expect(args).not.toContain('credential.helper=!gh auth git-credential')
+  }
+  expect(f.commands.some(args => args[0] === 'gh')).toBe(false)
+
+  await f.git(project.path, 'remote', 'set-url', '--push', 'origin', 'https://another.example.invalid/demo/project.git')
+  await expect(f.call('push', { ...selector, head })).rejects.toMatchObject({ code: 'wrongRemote' })
+  await expect(f.call('configureSync', { ...selector, enabled: true, intervalMinutes: 5 })).rejects.toMatchObject({ code: 'invalidRequest' })
+})
+
+it('rejects unsafe URLs and other hosts before starting network commands', async () => {
+  const f = await fixture(false, false, true)
+  f.commands.length = 0
+  for (const url of [`http://${httpsHost}/a/b`, `https://user:secret@${httpsHost}/a/b`, `https://${httpsHost}/a/../b`,
+    `https://${httpsHost}/a/%2e%2e/b`, `https://${httpsHost}/a/b?token=fixture`, `https://${httpsHost}:444/a/b`,
+    `https://${httpsHost}/a/b#fragment`, `https://${httpsHost}/a/b\\extra`]) {
+    await expect(f.call('startOpenHttps', { url })).rejects.toMatchObject({ code: 'httpsUrl' })
+  }
+  await expect(f.call('startOpenHttps', { url: 'https://another.example.invalid/a/b' })).rejects.toMatchObject({ code: 'httpsHost' })
+  expect(f.commands).toEqual([])
+  expect(await f.call('activity')).toMatchObject({ projects: [f.project], tasks: [] })
+})
 
 it('unlocks configured git-crypt repositories and keeps manual and automatic remote blobs encrypted', async () => {
   const f = await fixture(false, true)
@@ -133,10 +224,49 @@ it('recovers unchanged ciphertext after an interrupted unlock while preserving p
   await writeFile(join(f.project.path, 'private/note.md'), cipher.stdoutBytes!)
   await writeFile(join(f.project.path, 'a.txt'), 'preserve edit\n')
   await expect(f.preview(['private/note.md'])).rejects.toMatchObject({ code: 'encryptionRequired' })
+  // Model a pre-unlock stat cache that already matches the unchanged ciphertext.
+  // A past mtime prevents Git's racy-index fallback from hiding the regression.
+  const past = new Date('2000-01-01T00:00:00Z')
+  await utimes(join(f.project.path, 'private/note.md'), past, past)
+  await f.git(f.project.path, '-c', 'filter.git-crypt.clean=', '-c', 'filter.git-crypt.required=false', 'add', '--', 'private/note.md')
+  await writeFile(join(f.project.path, 'b.txt'), 'unrelated staged edit\n')
+  await f.git(f.project.path, 'add', 'b.txt')
+  const index = await readFile(join(f.project.path, '.git/index'))
   await f.call('open', { fullName: f.project.fullName })
   expect(await readFile(join(f.project.path, 'private/note.md'), 'utf8')).toBe('synthetic private fixture\n')
   expect(await readFile(join(f.project.path, 'a.txt'), 'utf8')).toBe('preserve edit\n')
+  expect(await readFile(join(f.project.path, '.git/index'))).toEqual(index)
 }, 30_000)
+
+it('rejects modified ciphertext without replacing it during unlock recovery', async () => {
+  const f = await fixture(false, true)
+  const cipher = await execute('git', ['cat-file', 'blob', 'HEAD:private/note.md'], { cwd: f.project.path, env: commandEnvironment(), captureBinary: true })
+  const changed = Buffer.from(cipher.stdoutBytes!)
+  changed[changed.length - 1] = changed[changed.length - 1]! ^ 1
+  await writeFile(join(f.project.path, 'private/note.md'), changed)
+  const index = await readFile(join(f.project.path, '.git/index'))
+  await expect(f.call('open', { fullName: f.project.fullName })).rejects.toMatchObject({ code: 'encryptionUnlock' })
+  expect(await readFile(join(f.project.path, 'private/note.md'))).toEqual(changed)
+  expect(await readFile(join(f.project.path, '.git/index'))).toEqual(index)
+})
+
+it('preserves an edit made while constructing the recovery index', async () => {
+  const f = await fixture(false, true)
+  const cipher = await execute('git', ['cat-file', 'blob', 'HEAD:private/note.md'], { cwd: f.project.path, env: commandEnvironment(), captureBinary: true })
+  await writeFile(join(f.project.path, 'private/note.md'), cipher.stdoutBytes!)
+  const index = await readFile(join(f.project.path, '.git/index'))
+  let edited = false
+  f.control.before = async args => {
+    if (args.includes('--cacheinfo')) {
+      edited = true
+      await writeFile(join(f.project.path, 'private/note.md'), 'edit during recovery\n')
+    }
+  }
+  await expect(f.call('open', { fullName: f.project.fullName })).rejects.toMatchObject({ code: 'encryptionUnlock' })
+  expect(edited).toBe(true)
+  expect(await readFile(join(f.project.path, 'private/note.md'), 'utf8')).toBe('edit during recovery\n')
+  expect(await readFile(join(f.project.path, '.git/index'))).toEqual(index)
+})
 
 it('refuses registration and commits while locked, preserves ciphertext on a wrong key, and permits correction', async () => {
   const f = await fixture(false, true)

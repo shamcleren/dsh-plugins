@@ -145,7 +145,7 @@ export class WeChatRuntimeController {
             sendImage: (userId, bytes, token) => account.sendImage(userId, bytes, token),
             sendFile: (userId, bytes, name, token) => account.sendFile(userId, bytes, name, token),
             sendVideo: (userId, bytes, token) => account.sendVideo(userId, bytes, token),
-            typing: (userId, status, token) => account.typing(userId, status, token),
+            typing: (userId, status, token, signal) => account.typing(userId, status, token, signal),
           },
           this.options.logger,
           runtimeConfig,

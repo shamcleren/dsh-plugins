@@ -143,6 +143,9 @@ export class TurnProjection {
 
   constructor(private readonly promptRpcId: string) {}
 
+  /** The journal has associated this prompt with an executing turn. */
+  get hasStarted(): boolean { return this.ownedTurn !== undefined }
+
   push(event: HostSessionEvent): TurnProjectionUpdate {
     if (eventAdmitsPrompt(event, this.promptRpcId)) this.admitted = true
     if (event.type === 'turn/start') {

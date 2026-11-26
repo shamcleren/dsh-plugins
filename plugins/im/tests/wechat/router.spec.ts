@@ -3,6 +3,7 @@ import type { HostApiProxy, HostMuxFrame, RpcRequest } from '../../src/adapters/
 import type { WeChatInboundMessage } from '../../src/adapters/wechat/inbound.js'
 import { promptRpcIdFor } from '../../src/adapters/wechat/inbound.js'
 import { WeChatConversationRouter } from '../../src/adapters/wechat/router.js'
+import type { WeChatRuntimeConfig } from '../../src/adapters/wechat/config.js'
 
 class MuxBus {
   private frames: RpcRequest<HostMuxFrame>[] = []
@@ -68,6 +69,7 @@ function hostFixture(disposition: 'next-turn' | 'next-step', historyEvents: Arra
       rename: async (request: { rpcId: string }) => ok(request.rpcId, { workspace: {} }),
     },
     sessions: {
+      list: async (request: { rpcId: string }) => ok(request.rpcId, { items: [] }),
       create: async (request: { rpcId: string; payload: { sessionId: string; agentPreset?: string } }) => ok(request.rpcId, request.payload),
       history: async (request: { rpcId: string }) => ok(request.rpcId, { events: historyEvents, hasMore: false }),
       prompt,
@@ -84,13 +86,13 @@ function routerFixture(
   api: HostApiProxy,
   runtime?: ConstructorParameters<typeof WeChatConversationRouter>[4],
   writeSettings?: ConstructorParameters<typeof WeChatConversationRouter>[5],
-  config: { agentPreset?: string } = {},
+  config: Partial<Pick<WeChatRuntimeConfig, 'agentPreset' | 'turnTimeoutMs' | 'sendTyping'>> = {},
 ) {
   const sendText = vi.fn(async (_userId: string, _text: string, _token?: string) => undefined)
   const sendImage = vi.fn(async (_userId: string, _bytes: Buffer, _token?: string) => undefined)
   const sendFile = vi.fn(async (_userId: string, _bytes: Buffer, _name: string, _token?: string) => undefined)
   const sendVideo = vi.fn(async (_userId: string, _bytes: Buffer, _token?: string) => undefined)
-  const typing = vi.fn(async () => undefined)
+  const typing = vi.fn(async (_userId: string, _status: 1 | 2, _token?: string, _signal?: AbortSignal) => undefined)
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), success: vi.fn() }
   const router = new WeChatConversationRouter(
     api,
@@ -98,7 +100,7 @@ function routerFixture(
     logger as never,
     { adminUsers: ['peer-a'], thinkingText: '正在思考…', turnTimeoutMs: 5_000,
       mediaMaxBytes: 1024, sendTyping: true, ...config },
-    runtime ?? { bindings: { current: (_key, fallback) => fallback, set: async () => undefined },
+    runtime ?? { bindings: { current: (_key, fallback) => fallback, list: (_key, fallback) => [fallback], set: async () => undefined },
       defaultWorkspace: { workspaceId: 'workspace-a', path: '/tmp/workspace', title: 'WeChat', sessionIds: [] },
       readImage: async (ref: { attachmentId: string }) =>
         new Uint8Array(Buffer.from(`bytes-of-${ref.attachmentId}`)) },
@@ -109,6 +111,118 @@ function routerFixture(
 }
 
 describe('WeChatConversationRouter', () => {
+  it('sends only the completed reply even when the typing indicator fails', async () => {
+    const { api } = hostFixture('next-turn')
+    const { router, sendText, typing } = routerFixture(api)
+    typing.mockRejectedValueOnce(new Error('fixture typing failed'))
+    try {
+      await router.accept(inbound('你好'))
+      await vi.waitFor(() => { expect(sendText).toHaveBeenCalledWith('peer-a', '最终回复', 'context-a') })
+      expect(sendText).toHaveBeenCalledTimes(1)
+    } finally { await router.stop() }
+  })
+
+  it('keeps a started turn typing past the five-minute admission deadline until its final reply', async () => {
+    vi.useFakeTimers()
+    const { api, prompt, bus } = hostFixture('next-step')
+    const { router, sendText, typing } = routerFixture(api, undefined, undefined, { turnTimeoutMs: 300_000 })
+    try {
+      await router.accept(inbound('long task'))
+      const request = prompt.mock.calls[0]![0]
+      for (const event of [
+        { type: 'agent/inbox/spliced', seq: 0, data: { inserted: [{ source: { rpcId: request.rpcId } }] } },
+        { type: 'turn/start', seq: 1, data: { turn: 1 } },
+      ]) bus.push({ rpcId: 'fixture-event', payload: { type: 'session/event', sessionId: request.payload.sessionId, event } })
+      // Include a silent tool wait: elapsed time alone cannot end an executing turn.
+      await vi.advanceTimersByTimeAsync(900_000)
+      expect(sendText).not.toHaveBeenCalled()
+      expect(typing.mock.calls.map(call => call[1])).toEqual(Array<number>(181).fill(1))
+      const events = [
+        { type: 'assistant/message', seq: 2, data: { turn: 1, message: { content: [{ type: 'text', text: '最终回复' }] } } },
+        { type: 'turn/end', seq: 3, data: { turn: 1, reason: { kind: 'completed' } } },
+      ]
+      for (const event of events) bus.push({ rpcId: 'fixture-event', payload: { type: 'session/event', sessionId: request.payload.sessionId, event } })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(sendText).toHaveBeenCalledExactlyOnceWith('peer-a', '最终回复', 'context-a')
+      expect(typing.mock.calls.map(call => call[1])).toEqual([...Array<number>(181).fill(1), 2])
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(typing).toHaveBeenCalledTimes(182)
+    } finally { await router.stop(); vi.useRealTimers() }
+  })
+
+  it('sends no filler or typing when typing indicators are disabled', async () => {
+    const { api } = hostFixture('next-turn')
+    const { router, sendText, typing } = routerFixture(api, undefined, undefined, { sendTyping: false })
+    try {
+      await router.accept(inbound('你好'))
+      await vi.waitFor(() => { expect(sendText).toHaveBeenCalledWith('peer-a', '最终回复', 'context-a') })
+      expect(sendText).toHaveBeenCalledTimes(1)
+      expect(typing).not.toHaveBeenCalled()
+    } finally { await router.stop() }
+  })
+
+  it('follows a started journal turn beyond the admission budget and releases it on unload', async () => {
+    vi.useFakeTimers()
+    const { api } = hostFixture('next-step')
+    let rpcId = ''
+    let admit!: () => void
+    const admitted = new Promise<void>(resolve => { admit = resolve })
+    api.sessions.prompt = async request => {
+      rpcId = request.rpcId
+      admit()
+      return ok(rpcId, { accepted: true as const })
+    }
+    let closed = false
+    api.sessions.follow = async function* (_request, signal) {
+      try {
+        await admitted
+        yield { type: 'turn/start', seq: 0, data: { turn: 1 } }
+        yield { type: 'user/message', seq: 1, data: { source: { rpcId } } }
+        if (!signal.aborted) await new Promise<void>(resolve => { signal.addEventListener('abort', () => resolve(), { once: true }) })
+      } finally { closed = true }
+    }
+    const { router, sendText, typing } = routerFixture(api, undefined, undefined, { turnTimeoutMs: 1_000 })
+    try {
+      await router.accept(inbound('long tool wait'))
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(sendText).not.toHaveBeenCalled()
+      expect(closed).toBe(false)
+      expect(typing.mock.calls.map(call => call[1])).toEqual([1, 1, 1])
+      await router.stop()
+      expect(closed).toBe(true)
+      expect(sendText).not.toHaveBeenCalled()
+      expect(typing.mock.calls.map(call => call[1])).toEqual([1, 1, 1, 2])
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(typing).toHaveBeenCalledTimes(4)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { await router.stop(); vi.useRealTimers() }
+  })
+
+  it.each(['failed', 'timeout', 'unrelated-turn'] as const)('reports a safe notice when journal admission %s', async failure => {
+    vi.useFakeTimers()
+    const { api } = hostFixture('next-step')
+    let closed = false
+    api.sessions.follow = async function* (_request, signal) {
+      try {
+        if (failure === 'failed') throw new Error('fixture-private-host-detail')
+        if (failure === 'unrelated-turn') {
+          yield { type: 'user/message', seq: 0, data: { source: { rpcId: 'another-prompt' } } }
+          yield { type: 'turn/start', seq: 1, data: { turn: 99 } }
+        }
+        if (!signal.aborted) await new Promise<void>(resolve => { signal.addEventListener('abort', () => resolve(), { once: true }) })
+      } finally { closed = true }
+    }
+    const { router, sendText } = routerFixture(api)
+    try {
+      await router.accept(inbound('你好'))
+      await vi.advanceTimersByTimeAsync(failure === 'failed' ? 0 : 5_000)
+      expect(sendText).toHaveBeenCalledWith('peer-a',
+        '本轮回复未能取回，请在 DSH 会话中查看结果，或稍后重试。', 'context-a')
+      expect(JSON.stringify(sendText.mock.calls)).not.toContain('fixture-private-host-detail')
+      expect(closed).toBe(true)
+    } finally { await router.stop(); vi.useRealTimers() }
+  })
+
   it('answers help, unknown commands and workspace queries while model-session creation is broken', async () => {
     const { api, prompt } = hostFixture('next-turn')
     const create = vi.fn(async () => { throw new Error('fixture model setup unavailable') })
@@ -116,6 +230,10 @@ describe('WeChatConversationRouter', () => {
     const { router, sendText } = routerFixture(api)
     try {
       await router.accept(inbound('/help', 'fixture-help'))
+      const help = sendText.mock.calls.at(-1)![1]
+      expect(help).toContain('【会话与工作区】\n\n- /session：')
+      expect(help).toContain('\n- /tasks：')
+      expect(help).toContain('\n\n【模型与预设】\n\n- /status：')
       await router.accept(inbound('/workspace', 'fixture-workspaces'))
       await router.accept(inbound('/spacework', 'fixture-typo'))
       expect(sendText).toHaveBeenCalledWith('peer-a', expect.stringContaining('/workspace'), 'context-a')
@@ -146,6 +264,7 @@ describe('WeChatConversationRouter', () => {
     const { router, sendText } = routerFixture(api, {
       bindings: {
         current: (_key, fallback) => boundSession ?? fallback,
+        list: (_key, fallback) => [boundSession ?? fallback],
         set: async (_key, sessionId) => { boundSession = sessionId },
       },
       defaultWorkspace: workspaces[0]!,
@@ -212,8 +331,8 @@ describe('WeChatConversationRouter', () => {
 
     await vi.waitFor(() => { expect(sendText).toHaveBeenCalledWith('peer-a', '最终回复', 'context-a') })
     expect(prompt).toHaveBeenCalledOnce()
-    expect(typing).toHaveBeenCalledWith('peer-a', 1, 'context-a')
-    expect(typing).toHaveBeenCalledWith('peer-a', 2, 'context-a')
+    await vi.waitFor(() => { expect(typing).toHaveBeenCalledWith('peer-a', 2, 'context-a', expect.any(AbortSignal)) })
+    expect(typing).toHaveBeenCalledWith('peer-a', 1, 'context-a', expect.any(AbortSignal))
     await router.stop()
   })
 
@@ -235,6 +354,15 @@ describe('WeChatConversationRouter', () => {
       ],
       finalText: '图片如下：',
       attachments: ['image-a', 'image-b'],
+    },
+    {
+      name: 'with only prose whitespace',
+      content: [
+        { type: 'text', text: ' \n\n' },
+        { type: 'image', attachment: { attachmentId: 'image-a', mediaType: 'image/png' } },
+      ],
+      finalText: '图片如下：',
+      attachments: ['image-a'],
     },
   ])('sends durable image attachments $name', async ({ content, finalText, attachments }) => {
     const { api } = hostFixture('next-turn', [], content)
@@ -349,6 +477,7 @@ describe('WeChatConversationRouter', () => {
     const { router, sendText } = routerFixture(api, {
       bindings: {
         current: (_key, fallback) => boundSession ?? fallback,
+        list: (_key, fallback) => [boundSession ?? fallback],
         set: async (_key, sessionId) => { boundSession = sessionId },
       },
       defaultWorkspace: workspaces[0]!,
@@ -435,7 +564,7 @@ it('sends file and video deliveries and reports partial failures', async () => {
     { type: 'file', attachment: { attachmentId: 'video', name: 'video.mp4', bytes: 4 } },
   ])
   const { router, sendFile, sendVideo, sendText } = routerFixture(api, {
-    bindings: { current: (_key, fallback) => fallback, set: async () => undefined },
+    bindings: { current: (_key, fallback) => fallback, list: (_key, fallback) => [fallback], set: async () => undefined },
     defaultWorkspace: { workspaceId: 'workspace-a', path: '/tmp', title: 'WeChat', sessionIds: [] },
     readFile: async function* () { yield Buffer.from('data') },
   })
@@ -462,7 +591,7 @@ it('releases reply ownership after prompt admission fails, then queues the next 
   } finally { await router.stop() }
 })
 
-it('cleans up a turn when sending the initial thinking message fails', async () => {
+it('cleans up a turn when sending its final reply fails', async () => {
   const { api, prompt } = hostFixture('next-turn')
   const { router, sendText } = routerFixture(api)
   sendText.mockRejectedValueOnce(new Error('transport failed'))
@@ -498,6 +627,7 @@ it('lists and cancels only this peer\'s active tasks without creating a model tu
   } finally { await router.stop() }
 })
 
+
 it.each([false, true])('routes a presented JPEG to native image delivery (read failure=%s)', async failRead => {
   const { api, bus } = hostFixture('next-step')
   const jpeg = Buffer.from('ffd8ffe000104a464946', 'hex')
@@ -506,7 +636,7 @@ it.each([false, true])('routes a presented JPEG to native image delivery (read f
     return { name: '中文行程.jpg', bytes: jpeg }
   })
   const { router, sendImage, sendFile, sendText, logger } = routerFixture(api, {
-    bindings: { current: (_key, fallback) => fallback, set: async () => undefined },
+    bindings: { current: (_key, fallback) => fallback, list: (_key, fallback) => [fallback], set: async () => undefined },
     defaultWorkspace: { workspaceId: 'workspace-a', path: '/tmp', title: 'WeChat', sessionIds: [] },
     readPresentedFile,
   })

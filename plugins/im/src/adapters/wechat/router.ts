@@ -1,6 +1,7 @@
 import { isImageBytes, mediaFailure, type MediaStage } from './media-delivery.js'
 import { ensureConversationSession } from '../../core/sessions.js'
 import { managementHelp, requiresHostSession, managementFailure } from '../../core/commands.js'
+import { displayLabel, runSessionCommand } from '../../core/session-commands.js'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Logger } from '@deepseek-ai/cordis'
 import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -26,6 +27,8 @@ import type { TurnOutcome } from './reply.js'
 import { collectFileBytes } from './files.js'
 import type { OutboundFileBytes } from './files.js'
 import type { WeChatRuntimeConfig, WeChatSettingsPatch } from './config.js'
+import { WeChatTyping } from './typing.js'
+import { formatWeChatReply } from './format.js'
 
 const HISTORY_PAGE_MESSAGES = 100
 const CONTINUATION_REPLY = '已加入当前任务。'
@@ -34,18 +37,18 @@ const COMMAND_PERMISSION_REPLY = '只有机器人管理员可以执行该命令�
 /** Session create refusals that mean the bound Session cannot accept this channel's workspace or preset. */
 
 const LOCAL_MODEL_NOTICE = '此选择仅作用于当前微信会话。'
-const COMMAND_HELP = managementHelp({ tasks: true })
+const COMMAND_HELP = managementHelp({ tasks: true, sessions: true })
 
 interface WeChatReplies {
   sendText(userId: string, text: string, contextToken?: string): Promise<void>
   sendImage(userId: string, bytes: Buffer, contextToken?: string): Promise<void>
   sendFile(userId: string, bytes: Buffer, name: string, contextToken?: string): Promise<void>
   sendVideo(userId: string, bytes: Buffer, contextToken?: string): Promise<void>
-  typing(userId: string, status: 1 | 2, contextToken?: string): Promise<void>
+  typing(userId: string, status: 1 | 2, contextToken?: string, signal?: AbortSignal): Promise<void>
 }
 
 export interface RouterRuntimeContext {
-  bindings: Pick<ConversationBindings, 'current' | 'set'>
+  bindings: Pick<ConversationBindings, 'current' | 'set' | 'list'>
   defaultWorkspace: HostWorkspace
   /** Absent on deployments without an attachment store; images then fall back to text. */
   readImage?: (ref: ImageAttachmentRef) => Promise<Uint8Array>
@@ -114,7 +117,7 @@ function undeliveredImageNotice(failed: number, total: number): string {
 }
 
 function finalReply(completed: TurnOutcome): string {
-  if (completed.text !== '') return completed.text
+  if (completed.text.trim() !== '') return formatWeChatReply(completed.text)
   if (completed.files.length > 0) return '附件如下：'
   return completed.images.length > 0 ? IMAGE_LEAD_IN : fallbackReply(completed.reason)
 }
@@ -133,6 +136,7 @@ export class WeChatConversationRouter {
   private muxTask: Promise<void> | undefined
   private stopping = false
   private deliveryAbort = new AbortController()
+  private readonly typing: WeChatTyping
   /** Live channel preset; `/preset` moves it without reopening the accounts. */
   private agentPreset: string | undefined
 
@@ -147,6 +151,8 @@ export class WeChatConversationRouter {
   ) {
     this.adminUsers = new Set(config.adminUsers)
     this.agentPreset = config.agentPreset
+    this.typing = new WeChatTyping((userId, status, token, signal) => replies.typing(userId, status, token, signal),
+      () => { logger.warn('wechat: typing indicator update failed') })
   }
 
   /** Adopt a settings-side preset change without disturbing live conversations. */
@@ -183,6 +189,7 @@ export class WeChatConversationRouter {
   async stop(): Promise<void> {
     if (this.stopping) return
     this.stopping = true
+    const typingStopped = this.typing.stop()
     this.deliveryAbort.abort()
     for (const sessionId of this.activeTurns.keys()) this.api.releaseSession?.(sessionId)
     for (const pending of this.pendingApprovals.values()) this.withdrawApproval(pending)
@@ -190,6 +197,7 @@ export class WeChatConversationRouter {
     this.muxAbort?.abort()
     await this.muxTask
     await Promise.allSettled([...this.tasks])
+    await typingStopped
     this.listeners.clear()
     this.activeTurns.clear()
     this.pendingQuestions.clear()
@@ -298,6 +306,7 @@ export class WeChatConversationRouter {
   }
 
   private async admit(message: WeChatInboundMessage, key: string): Promise<void> {
+    this.typing.update(key, message.contextToken)
     if (await this.answerInteraction(message)) return
     const requested = this.runtime.bindings.current(key, sessionIdFor(message))
     const text = promptText(message)
@@ -335,6 +344,8 @@ export class WeChatConversationRouter {
       case '/tasks': return args.length === 0 ? this.taskStatus(conversationKey) : '用法：/tasks'
       case '/cancel': return await this.cancelTask(conversationKey, sessionId, args)
       case '/new': return args.length === 0 ? await this.newSession(conversationKey, sessionId) : '用法：/new'
+      case '/session': return await runSessionCommand({ sessions: this.api.sessions, bindings: this.runtime.bindings,
+        key: conversationKey, currentSessionId: sessionId, args, titlePrefix: '【微信】' })
       case '/workspace': return await this.workspace(conversationKey, sessionId, args)
       case '/preset': return await this.preset(conversationKey, sessionId, args)
       case '/model': return await this.model(sessionId, args)
@@ -371,19 +382,32 @@ export class WeChatConversationRouter {
   }
 
   private async newSession(key: string, currentSessionId: string): Promise<string> {
-    const workspaceId = await this.workspaceIdForSession(currentSessionId)
+    const previousWorkspace = await this.workspaceIdForSession(currentSessionId)
+    const workspaceId = previousWorkspace
       ?? this.runtime.defaultWorkspace.workspaceId
     const sessionId = await this.createSession(`session-wechat-${randomUUID().replaceAll('-', '')}`, workspaceId)
-    await this.runtime.bindings.set(key, sessionId)
-    return '已创建并切换到新会话（当前工作区）。旧会话仍保留。'
+    await this.runtime.bindings.set(key, sessionId, previousWorkspace === undefined ? undefined : currentSessionId)
+    return '已创建并切换到新会话（当前工作区）。发送 /session 可按标题切回历史会话。'
   }
 
   private async workspace(key: string, currentSessionId: string, args: readonly string[]): Promise<string> {
     const workspaces = await this.listWorkspaces()
     const current = workspaces.find(entry => entry.sessionIds.includes(currentSessionId))
     if (args.length === 0) {
-      return [`当前工作区：${current?.title ?? '未分组'}`, `默认工作区：${this.runtime.defaultWorkspace.title}`,
-        '可选工作区：', ...workspaces.map(entry => `${entry.title} (${entry.workspaceId})`)].join('\n')
+      const defaultWorkspace = workspaces.find(entry => entry.workspaceId === this.runtime.defaultWorkspace.workspaceId)
+        ?? this.runtime.defaultWorkspace
+      const currentLine = `当前工作区：${displayLabel(current?.title, '未分组')}`
+      const summary = current?.workspaceId === defaultWorkspace.workspaceId
+        ? `${currentLine}（默认）` : `${currentLine}；默认：${displayLabel(defaultWorkspace.title, '未分组')}`
+      const labels = workspaces.map(entry => displayLabel(entry.title, '未命名工作区'))
+      const rows = workspaces.map((entry, index) => {
+        const label = labels[index]!
+        const ambiguous = labels.filter(value => value === label).length > 1 || entry.title.trim().replace(/\s+/gu, ' ') !== entry.title || [...entry.title].length > 60
+        const marks = [entry.workspaceId === current?.workspaceId ? '当前' : '', entry.workspaceId === defaultWorkspace.workspaceId ? '默认' : ''].filter(Boolean)
+        return `- ${label}${marks.length ? `（${marks.join(' · ')}）` : ''}${ambiguous ? ` · ID：${entry.workspaceId}` : ''}`
+      })
+      return [`${summary}。可选工作区（/workspace <名称> 切换；/workspace reset 恢复默认）：`,
+        rows.join('\n') || '（暂无）'].join('\n')
     }
     const selector = args.join(' ')
     const target = selector === 'reset'
@@ -392,7 +416,7 @@ export class WeChatConversationRouter {
     if (target === undefined) return `没有找到工作区“${selector}”；发送 /workspace 查看可选项。`
     if (target.workspaceId === current?.workspaceId) return `当前已经在工作区“${target.title}”。`
     const sessionId = await this.createSession(`session-wechat-${randomUUID().replaceAll('-', '')}`, target.workspaceId)
-    await this.runtime.bindings.set(key, sessionId)
+    await this.runtime.bindings.set(key, sessionId, current === undefined ? undefined : currentSessionId)
     return `已切换到工作区“${target.title}”并创建新会话。旧会话仍保留。`
   }
 
@@ -449,10 +473,11 @@ export class WeChatConversationRouter {
     // A running session keeps the preset it was composed from, so the switch only
     // becomes observable on a session created after the write.
     this.agentPreset = next
-    const workspaceId = await this.workspaceIdForSession(currentSessionId)
+    const previousWorkspace = await this.workspaceIdForSession(currentSessionId)
+    const workspaceId = previousWorkspace
       ?? this.runtime.defaultWorkspace.workspaceId
     const sessionId = await this.createSession(`session-wechat-${randomUUID().replaceAll('-', '')}`, workspaceId)
-    await this.runtime.bindings.set(conversationKey, sessionId)
+    await this.runtime.bindings.set(conversationKey, sessionId, previousWorkspace === undefined ? undefined : currentSessionId)
     return next === undefined
       ? '已恢复跟随全局默认预设，并创建新会话。旧会话仍保留。'
       : `已切换到预设“${next}”，并创建新会话。旧会话仍保留。`
@@ -502,9 +527,11 @@ export class WeChatConversationRouter {
   }
 
   private async ensureSession(key: string, requested: string): Promise<string> {
-    return ensureConversationSession({ api: this.api, key, requested,
+    const actual = await ensureConversationSession({ api: this.api, key, requested,
       defaultWorkspaceId: this.runtime.defaultWorkspace.workspaceId,
       bindings: this.runtime.bindings, create: (id, workspace) => this.createSession(id, workspace) })
+    await this.runtime.bindings.set(key, actual)
+    return actual
   }
 
   private async createSession(sessionId: string, workspaceId: string): Promise<string> {
@@ -584,23 +611,44 @@ export class WeChatConversationRouter {
     this.turnAborts.add(abort)
     let listener: EventListener | undefined
     let timer: ReturnType<typeof setTimeout> | undefined
+    let follower: Promise<void> | undefined
     const promise = new Promise<TurnOutcome>((resolve, reject) => {
       listener = event => {
         if (event.seq <= baselineSeq) return
         const update = projection.push(event)
+        // Admission is bounded; an executing turn belongs to its journal until
+        // completion or disposal, including long tools and approval waits.
+        if (projection.hasStarted && timer !== undefined) {
+          clearTimeout(timer)
+          timer = undefined
+        }
         if (update.outcome !== undefined) resolve(update.outcome)
       }
-      this.addListener(sessionId, listener)
-      timer = setTimeout(() => reject(new Error('wechat: turn observation timed out')), this.config.turnTimeoutMs)
+      const follow = this.api.sessions.follow?.bind(this.api.sessions)
+      if (follow === undefined) this.addListener(sessionId, listener)
+      else {
+        const receive = listener
+        follower = (async () => {
+          try {
+            for await (const event of follow(apiRequest({ sessionId, afterSeq: baselineSeq }), abort.signal)) receive(event)
+            if (!abort.signal.aborted) reject(new Error('wechat: Session journal ended before turn completion'))
+          } catch (error) {
+            if (!abort.signal.aborted) reject(error)
+          }
+        })()
+      }
+      timer = setTimeout(() => reject(new Error('wechat: turn did not start in time')), this.config.turnTimeoutMs)
       abort.signal.addEventListener('abort', () => reject(new Error('wechat: turn observation aborted')), { once: true })
     })
-    void promise.finally(() => {
+    const settled = promise.finally(async () => {
       if (timer !== undefined) clearTimeout(timer)
       if (listener !== undefined) this.removeListener(sessionId, listener)
+      abort.abort()
+      await follower
       this.turnAborts.delete(abort)
-    }).catch(() => undefined)
-    void promise.catch(() => undefined)
-    return { promise, abort }
+    })
+    void settled.catch(() => undefined)
+    return { promise: settled, abort }
   }
 
   /**
@@ -677,11 +725,19 @@ export class WeChatConversationRouter {
     activeTurn: ActiveTurn,
     outcome: Promise<TurnOutcome>,
   ): Promise<void> {
+    const stopTyping = this.config.sendTyping
+      ? this.typing.acquire(activeTurn.conversationKey, activeTurn.userId, activeTurn.contextToken)
+      : async () => undefined
     try {
-      await this.replies.sendText(activeTurn.userId, this.config.thinkingText, activeTurn.contextToken)
-    if (this.config.sendTyping) void this.replies.typing(activeTurn.userId, 1, activeTurn.contextToken)
-      .catch((error: unknown) => { this.logger.warn(`wechat: typing failed: ${String(error)}`) })
-      const completed = await outcome
+      let completed: TurnOutcome
+      try { completed = await outcome }
+      catch {
+        if (this.stopping) return
+        this.logger.warn('wechat: turn reply observation failed')
+        await this.replies.sendText(activeTurn.userId,
+          '本轮回复未能取回，请在 DSH 会话中查看结果，或稍后重试。', activeTurn.contextToken)
+        return
+      }
       await this.replies.sendText(
         activeTurn.userId,
         finalReply(completed),
@@ -690,8 +746,7 @@ export class WeChatConversationRouter {
       await this.sendImages(activeTurn, completed.images)
       await this.sendFiles(activeTurn, completed.files)
     } finally {
-      if (this.config.sendTyping) void this.replies.typing(activeTurn.userId, 2, activeTurn.contextToken)
-        .catch((error: unknown) => { this.logger.warn(`wechat: typing cancellation failed: ${String(error)}`) })
+      await stopTyping()
       if (this.activeTurns.get(activeTurn.sessionId) === activeTurn) this.activeTurns.delete(activeTurn.sessionId)
     }
   }
