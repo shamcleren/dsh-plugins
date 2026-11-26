@@ -33,6 +33,20 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes git-crypt gnupg
       - if: runner.os == 'macOS'
         run: brew install git-crypt gnupg
+      - name: Install Chromium for browser tests
+        if: runner.os == 'Linux'
+        working-directory: plugins/saas-browser-workspace
+        run: |
+          pnpm exec playwright install --with-deps --only-shell chromium
+          # The MCP integration tests also launch the Chromium pinned by @playwright/mcp.
+          mcp_playwright_cli=$(node -e '
+            const { createRequire } = require("node:module")
+            const { dirname, resolve } = require("node:path")
+            const fromMcp = createRequire(require.resolve("@playwright/mcp/package.json"))
+            const manifest = fromMcp.resolve("playwright/package.json")
+            console.log(resolve(dirname(manifest), require(manifest).bin.playwright))
+          ')
+          node "$mcp_playwright_cli" install --only-shell chromium
       - run: pnpm typecheck
       - if: runner.os == 'macOS'
         run: pnpm build
