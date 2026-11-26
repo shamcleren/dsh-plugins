@@ -5,7 +5,7 @@ export type WeComTextFrame = WsFrame<BaseMessage>
 
 export interface WeComInboundText {
   media?: readonly InboundMedia[]
-  quote?: string
+  quote?: MessageParts
   messageId: string
   userId: string
   text: string
@@ -15,6 +15,12 @@ export interface WeComInboundText {
 }
 
 export interface InboundMedia { kind: 'image' | 'file' | 'video'; url: string; key?: string }
+
+interface MessageParts {
+  text: string
+  media: readonly InboundMedia[]
+  unavailableMedia: boolean
+}
 
 /** Routing fields recovered from a WeCom template-card callback. */
 export interface WeComTemplateCardClick {
@@ -41,31 +47,12 @@ export function normalizeTextFrame(frame: WeComTextFrame): WeComInboundText {
   const botId = requiredString(message.aibotid, 'aibotid')
   const userId = requiredString(message.from?.userid, 'from.userid')
   const fields = objectFields(body) ?? {}
-  const media: InboundMedia[] = []
-  const texts: string[] = []
-  const readPart = (part: Record<string, unknown>): void => {
-    const kind = part.msgtype
-    if (kind === 'text' || kind === 'voice') {
-      const text = stringField(objectFields(part[kind])?.content)
-      if (text !== undefined) texts.push(text)
-    }
-    if (kind === 'image' || kind === 'file' || kind === 'video') {
-      const value = objectFields(part[kind]), url = stringField(value?.url), key = stringField(value?.aeskey)
-      if (url === undefined) throw new Error('wecom-aibot: media callback has no URL')
-      media.push({ kind, url, ...key === undefined ? {} : { key } })
-    }
-  }
-  if (fields.msgtype === 'mixed') {
-    const items = objectFields(fields.mixed)?.msg_item
-    if (!Array.isArray(items)) throw new Error('wecom-aibot: malformed mixed callback')
-    for (const item of items) { const part = objectFields(item); if (part !== undefined) readPart(part) }
-  } else readPart(fields)
-  // Programmatic text callers predating msgtype remain supported.
-  if (fields.msgtype === undefined && message.text?.content) texts.push(message.text.content)
-  const text = texts.join('\n') || (media.length ? '[企微附件]' : '')
-  requiredString(text, 'message content')
-  const quote = objectFields(fields.quote)
-  const quoteText = stringField(objectFields(quote?.text)?.content) ?? stringField(objectFields(quote?.voice)?.content)
+  const content = readContent(fields)
+  const quotedFields = objectFields(fields.quote)
+  const quoted = quotedFields === undefined ? undefined : readContent(quotedFields, true)
+  const quote = quoted && (quoted.text || quoted.media.length || quoted.unavailableMedia) ? quoted : undefined
+  const text = content.text || (content.media.length ? '[企微附件]' : '')
+  if (quote === undefined) requiredString(text, 'message content')
   if (message.chattype !== 'single' && message.chattype !== 'group') {
     throw new Error('wecom-aibot: text frame has invalid chattype')
   }
@@ -73,7 +60,37 @@ export function normalizeTextFrame(frame: WeComTextFrame): WeComInboundText {
     ? requiredString(message.chatid, 'chatid')
     : userId
   return { messageId, userId, text, chatType: message.chattype, conversationId, botId,
-    ...media.length ? { media } : {}, ...quoteText === undefined ? {} : { quote: quoteText } }
+    ...content.media.length ? { media: content.media } : {}, ...quote === undefined ? {} : { quote } }
+}
+
+function readContent(fields: Record<string, unknown>, quoted = false): MessageParts {
+  const items = fields.msgtype === 'mixed' ? objectFields(fields.mixed)?.msg_item : [fields]
+  if (!Array.isArray(items)) {
+    if (quoted) return { text: '', media: [], unavailableMedia: true }
+    throw new Error('wecom-aibot: malformed mixed callback')
+  }
+  const media: InboundMedia[] = []
+  const texts: string[] = []
+  let unavailableMedia = false
+  for (const item of items) {
+    const part = objectFields(item)
+    if (part === undefined) continue
+    // Older programmatic callers can omit msgtype for text and transcribed quotes.
+    const kind = part.msgtype === undefined ? (quoted && part.text === undefined && part.voice !== undefined ? 'voice' : 'text') : part.msgtype
+    if (kind === 'text' || kind === 'voice') {
+      const text = stringField(objectFields(part[kind])?.content)
+      if (text?.trim()) texts.push(text)
+    } else if (kind === 'image' || kind === 'file' || kind === 'video') {
+      const value = objectFields(part[kind]), url = stringField(value?.url), key = stringField(value?.aeskey)
+      if (url === undefined) {
+        if (!quoted) throw new Error('wecom-aibot: media callback has no URL')
+        unavailableMedia = true
+        continue
+      }
+      media.push({ kind, url, ...key === undefined ? {} : { key } })
+    }
+  }
+  return { text: texts.join('\n'), media, unavailableMedia }
 }
 
 function objectFields(value: unknown): Record<string, unknown> | undefined {

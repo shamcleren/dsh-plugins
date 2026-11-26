@@ -65,8 +65,7 @@ Observed WeCom channel text callbacks use `chattype: "group"` with `compat_info.
 
 ## Known limitations
 
-- User messages are limited to text; template-card click events are handled. Images, voice, files, video, mixed messages, and proactive sends are deferred.
-- A turn's durable images are uploaded as WeCom temporary media and pushed as their own messages after the text reply. Whatever the deployment cannot upload or send is named in one notice rather than dropped silently. Voice, video, and files are still text-only.
+- A turn's durable images are uploaded as WeCom temporary media and pushed as their own messages after the text reply. Failed media delivery is reported in one notice. Incoming voice uses WeCom transcription, and video understanding depends on the selected model and tools.
 - Group management commands accept the callback's leading Bot mention, such as `@dsh /help`; non-command text remains unchanged when sent to the Harness.
 - Unloading the plugin stops its listeners, timers, and reply observation. A turn already admitted through the Host API remains Host-owned and may finish without sending another WeCom frame.
 
@@ -115,5 +114,7 @@ The `bots` array replaces the legacy top-level connection settings. Each entry h
 ## Media
 
 Incoming images and mixed messages preserve both text and image bytes. Voice callbacks use WeCom’s transcription; files and videos are decrypted with the official SDK and staged through DSH’s Session-owned file upload receipts. Downloads enforce the per-message byte limit (default 10 MiB) and stop on unload. The model receives a normal file attachment; video understanding depends on the selected model/tools.
+
+When a callback contains a quote, the bot can use the quoted text or mixed content even when the reply has no text besides the mention. Only the current reply can run a management command. Quoted downloads are limited to the WeCom media origin and share the message byte limit. When a quoted attachment is unavailable, the model still receives the available text and a note to request the attachment again.
 
 Outgoing images, explicit file attachments and successful `present` deliveries are uploaded through the official SDK, then sent to the originating conversation. Files ending in `.mp4`, `.m4v` or `.mov` use video messages. Paths are read through the public workspace filesystem, and prose links do not trigger reads. The default `mediaMaxBytes` is 10 MiB; failed or oversized files produce a count notice with a DSH fallback. No voice synthesis is added.

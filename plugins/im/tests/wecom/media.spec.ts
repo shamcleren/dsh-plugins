@@ -5,6 +5,7 @@ import { normalizeTextFrame } from '../../src/adapters/wecom/inbound.js'
 
 afterEach(() => { vi.unstubAllGlobals() })
 const identity = { msgid: 'one', aibotid: 'bot-one', chattype: 'single', from: { userid: 'one' } }
+const quotedImageUrl = 'https://ww-aibot-img-1258476243.cos.ap-guangzhou.myqcloud.com/synthetic-image'
 
 it('preserves voice transcription and quoted text', async () => {
   const message = normalizeTextFrame({ headers: { req_id: 'one' }, body: {
@@ -14,6 +15,49 @@ it('preserves voice transcription and quoted text', async () => {
   await expect(inboundContent(message, 1024, new AbortController().signal)).resolves.toEqual([
     { type: 'text', text: '语音正文' }, { type: 'text', text: '引用消息：\n前文' },
   ])
+})
+
+it('reads the text and encrypted image from a quoted mixed message with an empty reply', async () => {
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aG3sAAAAASUVORK5CYII=', 'base64')
+  const key = randomBytes(32)
+  const padding = 32 - image.length % 32
+  const cipher = createCipheriv('aes-256-cbc', key, key.subarray(0, 16))
+  cipher.setAutoPadding(false)
+  const encrypted = Buffer.concat([cipher.update(Buffer.concat([image, Buffer.alloc(padding, padding)])), cipher.final()])
+  const fetchMedia = vi.fn(async () => new Response(encrypted))
+  vi.stubGlobal('fetch', fetchMedia)
+  const message = normalizeTextFrame({ headers: { req_id: 'one' }, body: {
+    ...identity, chattype: 'single', msgtype: 'text', text: { content: '' },
+    quote: { msgtype: 'mixed', mixed: { msg_item: [
+      { msgtype: 'image', image: { url: quotedImageUrl, aeskey: key.toString('base64') } },
+      { msgtype: 'text', text: { content: '任务一直停在排队。' } },
+    ] } },
+  } })
+  await expect(inboundContent(message, 1024, new AbortController().signal)).resolves.toEqual([
+    { type: 'text', text: '引用消息：\n任务一直停在排队。' },
+    { type: 'image', mediaType: 'image/png', data: image.toString('base64') },
+  ])
+  expect(fetchMedia).toHaveBeenCalledExactlyOnceWith(new URL(quotedImageUrl), expect.objectContaining({ redirect: 'error' }))
+})
+
+it('retains quoted text when attachment URLs are missing, expired or outside the permitted origins', async () => {
+  const fetchMedia = vi.fn(async () => new Response(null, { status: 403 }))
+  vi.stubGlobal('fetch', fetchMedia)
+  const message = normalizeTextFrame({ headers: { req_id: 'one' }, body: {
+    ...identity, chattype: 'single', msgtype: 'text', text: { content: '@Bot' },
+    quote: { msgtype: 'mixed', mixed: { msg_item: [
+      { msgtype: 'text', text: { content: '截图中的文字说明。' } },
+      { msgtype: 'image' },
+      { msgtype: 'image', image: { url: quotedImageUrl } },
+      { msgtype: 'image', image: { url: 'https://media.example.invalid/quoted-image' } },
+    ] } },
+  } })
+  await expect(inboundContent(message, 1024, new AbortController().signal)).resolves.toEqual([
+    { type: 'text', text: '@Bot' },
+    { type: 'text', text: '引用消息：\n截图中的文字说明。' },
+    { type: 'text', text: '[部分引用附件无法读取，可请发送者补发。]' },
+  ])
+  expect(fetchMedia).toHaveBeenCalledExactlyOnceWith(new URL(quotedImageUrl), expect.objectContaining({ redirect: 'error' }))
 })
 
 it('decrypts inbound files with the SDK and preserves the display filename', async () => {

@@ -393,6 +393,26 @@ describe('WeComConversationRouter', () => {
     await router.stop()
   })
 
+  it.each(['', '@Bot'])('routes a group quote to the Host when the reply body is %j', async (content) => {
+    const test = harness()
+    const router = new WeComConversationRouter(test.api, test.replies, logger(), {
+      allowedUsers: [], adminUsers: ['user-1'], thinkingText: '处理中', turnTimeoutMs: 1_000,
+    }, runtime())
+    router.start()
+    try {
+      const frame = textFrame(content, 'user-1', 'group')
+      // Quoted command text is context. Only the current reply can run a management command.
+      frame.body!.quote = { msgtype: 'mixed', mixed: { msg_item: [{ msgtype: 'text', text: { content: '/new' } }] } }
+      router.accept(frame)
+      await vi.waitFor(() => expect(test.replyCalls.at(-1)).toEqual({ content: '你好，世界', finish: true }))
+      expect(test.prompt).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ payload: expect.objectContaining({
+        content: [...(content ? [{ type: 'text', text: content }] : []), { type: 'text', text: '引用消息：\n/new' }],
+      }) }))
+    } finally {
+      await router.stop()
+    }
+  })
+
   it('observes the session from the moment the turn subscribes, not when the prompt returns', async () => {
     const test = harness()
     let release!: () => void
