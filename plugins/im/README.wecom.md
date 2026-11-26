@@ -28,7 +28,7 @@ The adapter always mounts so it remains configurable. Reception defaults off for
 | `resolveGroupNames` | `false` | Look up exact group IDs in the authorized local `wecom-cli message aibot sessions list` directory. Requires the CLI on the Host PATH. |
 | `finalReplyOnly` | `false` | Acknowledge the request, then send the final assistant answer to the originating conversation as a new message. Intermediate model text is hidden. Questions and approvals still go to the conversation. |
 | `thinkingText` | `正在思考…` | Initial content of the WeCom stream while the Harness turn starts. |
-| `turnTimeoutMs` | `300000` | Maximum observation time for one admitted Harness turn. |
+| `turnTimeoutMs` | `300000` | Maximum observation time per turn. With final-only replies, this is the time without model or tool progress in the admitted turn. Total observation is limited to one hour or the configured timeout, whichever is longer. |
 
 Edit **Role prompt** for the selected Bot to add role and response-style instructions. Saving or clearing it takes effect when the next model step assembles the prompt, including in existing WeCom conversations. The selected Agent preset still defines the mode and tools. A preset that supplies a complete system prompt keeps its full-prompt behavior.
 

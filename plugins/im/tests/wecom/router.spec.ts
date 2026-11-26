@@ -346,7 +346,7 @@ describe('WeComConversationRouter', () => {
     ...test === undefined ? {} : { readImage: test.readImage },
   })
 
-  it.each([false, true])('delivers the final-only group result or a deadline notice (timeout %s)', async expired => {
+  it.each(['completed', 'idle', 'hard limit'])('delivers a final-only group result or deadline notice (%s)', async scenario => {
     vi.useFakeTimers()
     const test = harness()
     test.prompt.mockImplementationOnce(async req => success(req, { accepted: true as const }))
@@ -367,12 +367,20 @@ describe('WeComConversationRouter', () => {
       emit(4, 'assistant/message', { message: { content: [{ type: 'text', text: 'I will check.' }, { type: 'tool-call' }] } })
       await vi.advanceTimersByTimeAsync(360_000)
       expect(test.proactiveTexts).toEqual([])
-      if (expired) await vi.advanceTimersByTimeAsync(840_000)
-      emit(5, 'step/start', {})
-      emit(6, 'assistant/message', { message: { content: [{ type: 'text', text: '已经开始处理。' }] } })
-      emit(7, 'turn/end', { reason: { kind: 'completed' } })
+      let seq = 5
+      if (scenario === 'idle') {
+        test.pushMux(event(id, seq++, 'step/start', { turn: 99 }))
+        await vi.advanceTimersByTimeAsync(840_000)
+      } else {
+        for (let elapsed = 360_000; elapsed < (scenario === 'completed' ? 1_200_000 : 3_600_000); elapsed += 600_000) {
+          emit(seq++, 'step/start', {})
+          await vi.advanceTimersByTimeAsync(600_000)
+        }
+      }
+      emit(seq++, 'assistant/message', { message: { content: [{ type: 'text', text: '已经开始处理。' }] } })
+      emit(seq++, 'turn/end', { reason: { kind: 'completed' } })
       await vi.waitFor(() => expect(test.proactiveTexts).toEqual([{ targetId: 'group-1',
-        content: expired ? '等待结果已超时，可在 DSH 会话中查看后续进度。' : '已经开始处理。' }]))
+        content: scenario === 'completed' ? '已经开始处理。' : '等待结果已超时，可在 DSH 会话中查看后续进度。' }]))
       expect(test.streamCalls.map(call => call.content)).toEqual(['处理中', '收到，处理完会在这里回复。'])
     } finally { await router.stop(); vi.useRealTimers() }
   })

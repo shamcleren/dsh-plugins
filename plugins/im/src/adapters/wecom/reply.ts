@@ -194,6 +194,12 @@ export class TurnProjection {
 
   constructor(private readonly promptRpcId: string, private readonly finalReplyOnly = false) {}
 
+  ownsProgress(event: HostSessionEvent): boolean {
+    if (this.ownedTurn === undefined || eventTurn(event) !== this.ownedTurn) return false
+    return event.type === 'step/start' || event.type === 'assistant/message'
+      || event.type === 'tool/result' || event.type === 'assistant/chunk'
+  }
+
   push(event: HostSessionEvent): TurnProjectionUpdate {
     if (eventAdmitsPrompt(event, this.promptRpcId)) this.admitted = true
     if (event.type === 'turn/start') {

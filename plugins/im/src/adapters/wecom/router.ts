@@ -56,6 +56,7 @@ import type { ConversationBindings } from './bindings.js'
 import type { BotModel, WeComSettingsPatch } from './config.js'
 
 const HISTORY_PAGE_MESSAGES = 100
+const MAX_FINAL_OBSERVATION_MS = 60 * 60 * 1000
 const MAX_MARKDOWN_BYTES = 4096
 const MAX_CARD_BUTTONS = 6
 const QUESTION_CARD_TITLE_WIDTH = 26
@@ -1596,6 +1597,8 @@ export class WeComConversationRouter {
     const abort = new AbortController()
     this.turnAborts.add(abort)
     let settled = false
+    let lastProgress = performance.now()
+    const started = lastProgress
     const projection = new TurnProjection(options.promptRpcId, this.config.finalReplyOnly)
     let resolveOutcome: (value: TurnOutcome) => void = () => undefined
     let rejectOutcome: (error: unknown) => void = () => undefined
@@ -1624,6 +1627,7 @@ export class WeComConversationRouter {
       }
       if (event.seq <= options.baselineSeq) return
       const update = projection.push(event)
+      if (this.config.finalReplyOnly && projection.ownsProgress(event)) lastProgress = performance.now()
       if (update.partial !== undefined && update.partial !== '') {
         options.activeTurn.text = update.partial
         const segment = this.segmentText(options.activeTurn, update.partial)
@@ -1645,9 +1649,15 @@ export class WeComConversationRouter {
       settle(abort.signal.reason instanceof Error ? abort.signal.reason : new Error('aborted'))
     }
     abort.signal.addEventListener('abort', onAbort, { once: true })
-    const timeout = setTimeout(() => {
-      settle(new TurnObservationTimeout(`wecom-aibot: turn timed out after ${this.config.turnTimeoutMs}ms`))
-    }, this.config.turnTimeoutMs)
+    const idleLimit = this.config.turnTimeoutMs
+    const maximum = this.config.finalReplyOnly ? Math.max(idleLimit, MAX_FINAL_OBSERVATION_MS) : idleLimit
+    const checkDeadline = (): void => {
+      const now = performance.now()
+      const remaining = Math.min(maximum - (now - started), idleLimit - (now - lastProgress))
+      if (remaining > 0) timeout = setTimeout(checkDeadline, remaining)
+      else settle(new TurnObservationTimeout('wecom-aibot: turn observation deadline reached'))
+    }
+    let timeout = setTimeout(checkDeadline, idleLimit)
     return {
       outcome,
       dispose: () => settle({ text: '', images: [], files: [], reason: { kind: 'aborted' } }),
