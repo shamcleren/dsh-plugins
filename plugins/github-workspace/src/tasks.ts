@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { repositoryKey, WorkspaceError, type Task, type TaskPhase } from './types.js'
+import { WorkspaceError, type Task, type TaskPhase } from './types.js'
 
 /** Keep long commands outside HTTP response lifetimes, with bounded history. */
 export class Tasks {
@@ -8,7 +8,7 @@ export class Tasks {
   list(): Task[] { return [...this.entries.values()].map(entry => ({ ...entry.task })) }
   start(fullName: string, kind: Task['kind'], work: (signal: AbortSignal, report: (phase: TaskPhase, progress?: number) => void) => Promise<unknown>): Task {
     if (this.stopped) throw new WorkspaceError('stopped')
-    const existing = [...this.entries.values()].find(entry => repositoryKey(entry.task.fullName) === repositoryKey(fullName) && ['running', 'cancelling'].includes(entry.task.status))
+    const existing = [...this.entries.values()].find(entry => entry.task.fullName.toLowerCase() === fullName.toLowerCase() && ['running', 'cancelling'].includes(entry.task.status))
     if (existing) {
       if (existing.task.kind !== kind) throw new WorkspaceError('busy')
       return { ...existing.task }
@@ -46,7 +46,7 @@ export class Tasks {
     await Promise.allSettled([...this.entries.values()].map(entry => entry.done))
   }
   async cancelSync(fullName: string): Promise<void> {
-    const entry = [...this.entries.values()].find(entry => repositoryKey(entry.task.fullName) === repositoryKey(fullName) && entry.task.kind === 'sync' && ['running', 'cancelling'].includes(entry.task.status))
+    const entry = [...this.entries.values()].find(entry => entry.task.fullName.toLowerCase() === fullName.toLowerCase() && entry.task.kind === 'sync' && ['running', 'cancelling'].includes(entry.task.status))
     if (entry) { this.cancel(entry.task.id); await entry.done }
   }
 }

@@ -26,7 +26,6 @@ export function apply(ctx: Context): void {
     encryption: fullName => call('encryption', { fullName }), configureEncryption: (fullName, encryption) => call('configureEncryption', { fullName, encryption }),
     owners: () => call('owners'), repositories: (page, owner) => call('repositories', { page, ...(owner ? { owner } : {}) }), open: fullName => call('open', { fullName }),
     startOpen: fullName => call('startOpen', { fullName }), activity: () => call('activity'), cancelTask: id => call('cancelTask', { id }),
-    startOpenHttps: url => call('startOpenHttps', { url }),
     configureSync: (fullName, enabled, intervalMinutes) => call('configureSync', { fullName, enabled, intervalMinutes }), startSync: fullName => call('startSync', { fullName }),
     status: fullName => call('status', { fullName }), fetch: fullName => call('fetch', { fullName }), pull: fullName => call('pull', { fullName }),
     preview: (fullName, paths) => call('preview', { fullName, paths }), commit: (id, message) => call('commit', { id, message }), push: (fullName, head) => call('push', { fullName, head }),

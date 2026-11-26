@@ -1,14 +1,9 @@
 import { copyFile, lstat, open, readFile, realpath, rename, rm } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
-import type { Change, Preview, Project, ProjectStatus, TaskPhase } from './types.js'
+import type { Account, Change, Preview, Project, ProjectStatus, TaskPhase } from './types.js'
 import { WorkspaceError } from './types.js'
 import type { CommandOptions, Execute, Result } from './process.js'
 import type { EncryptionSupport } from './encryption.js'
-import type { HttpsSettings } from './https-remote.js'
-
-export interface GitIdentity { name: string; email: string }
-
-const cloneUrl = (project: Project): string => project.remoteUrl ?? `https://github.com/${project.fullName}.git`
 
 export function allowedPath(path: string): boolean {
   if (!path || path.length > 4096 || isAbsolute(path) || /[\\\u0000-\u001f]/u.test(path)) return false
@@ -32,16 +27,11 @@ export function changesFromPorcelain(text: string): Change[] {
 }
 
 export class Git {
-  constructor(private readonly run: Execute, private readonly options: () => CommandOptions, private readonly hooks: string,
-    private readonly encryption: EncryptionSupport, private readonly https?: HttpsSettings) {}
+  constructor(private readonly run: Execute, private readonly options: () => CommandOptions, private readonly hooks: string, private readonly encryption?: EncryptionSupport) {}
   async command(cwd: string, args: string[], extra: CommandOptions = {}): Promise<Result> {
-    const credential = this.https
-      ? ['-c', `credential.https://${this.https.host}.helper=${this.https.credentialHelper}`, '-c', 'credential.useHttpPath=false',
-        '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always', '-c', 'http.sslVerify=true']
-      : ['-c', 'credential.helper=!gh auth git-credential', '-c', 'credential.useHttpPath=true']
     return this.run('git', ['--no-pager', '--literal-pathspecs',
       '-c', 'core.hooksPath=' + this.hooks, '-c', 'core.fsmonitor=false',
-      '-c', 'credential.helper=', ...credential,
+      '-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential', '-c', 'credential.useHttpPath=true',
       '-c', 'http.followRedirects=false', '-c', 'protocol.file.allow=never', '-c', 'protocol.ext.allow=never',
       '-c', 'push.followTags=false', '-c', 'submodule.recurse=false', ...this.encryption?.arguments(cwd) ?? [], ...args], { ...this.options(), ...extra, cwd })
   }
@@ -50,10 +40,10 @@ export class Git {
     if (result.code !== 0) throw new WorkspaceError('commandFailed')
     return result.stdout
   }
-  async clone(parent: string, project: Project, target: string, report?: (phase: TaskPhase, progress?: number) => void): Promise<void> {
+  async clone(parent: string, fullName: string, target: string, report?: (phase: TaskPhase, progress?: number) => void): Promise<void> {
     report?.('cloning')
     let pending = ''
-    const result = await this.command(parent, ['-c', 'filter.git-crypt.required=false', '-c', 'filter.git-crypt.clean=', '-c', 'filter.git-crypt.smudge=', 'clone', '--progress', '--no-recurse-submodules', '--', cloneUrl(project), target], {
+    await this.checked(parent, ['-c', 'filter.git-crypt.required=false', '-c', 'filter.git-crypt.clean=', '-c', 'filter.git-crypt.smudge=', 'clone', '--progress', '--no-recurse-submodules', '--', 'https://github.com/' + fullName + '.git', target], {
       timeoutMs: 5 * 60_000, onOutput: text => {
         pending = (pending + text).slice(-4096)
         const updates = [...pending.matchAll(/(Receiving objects|Resolving deltas):\s*(\d+)%/g)]
@@ -61,7 +51,6 @@ export class Git {
         if (latest) report?.(latest[1] === 'Receiving objects' ? 'receiving' : 'resolving', Number(latest[2]))
       },
     })
-    if (result.code !== 0) throw new WorkspaceError(project.remoteUrl ? 'httpsClone' : 'commandFailed')
   }
   async hasStaged(project: Project): Promise<boolean> {
     const result = await this.command(project.path, ['diff', '--cached', '--quiet'])
@@ -75,7 +64,7 @@ export class Git {
     if (top !== project.path) throw new WorkspaceError('unsafeDirectory')
     for (const command of [['remote', 'get-url', '--all', 'origin'], ['remote', 'get-url', '--push', '--all', 'origin']]) {
       const urls = (await this.checked(project.path, command)).trim().split('\n')
-      if (urls.length !== 1 || urls[0] !== cloneUrl(project)) throw new WorkspaceError('wrongRemote')
+      if (urls.length !== 1 || urls[0] !== 'https://github.com/' + project.fullName + '.git') throw new WorkspaceError('wrongRemote')
     }
   }
   async status(project: Project): Promise<ProjectStatus> {
@@ -170,7 +159,7 @@ export class Git {
    * The native index lock blocks concurrent staging; update-ref compares HEAD.
    * No working-tree files or repository hooks are executed by this operation.
    */
-  async commit(project: Project, preview: Preview, message: string, identity: GitIdentity, scratch: string, automatic = false): Promise<ProjectStatus> {
+  async commit(project: Project, preview: Preview, message: string, account: Account, scratch: string, automatic = false): Promise<ProjectStatus> {
     await this.assertWorkflow(project, 'commit')
     const state = await this.status(project)
     if (state.head !== preview.head || state.conflicted) throw new WorkspaceError('stalePreview')
@@ -188,7 +177,8 @@ export class Git {
       const fresh = await this.status(project)
       if (automatic && await this.hasStaged(project)) throw new WorkspaceError('stagedChanges')
       if (fresh.head !== preview.head || fresh.branch !== state.branch || fresh.conflicted) throw new WorkspaceError('stalePreview')
-      const env = { ...this.options().env, GIT_AUTHOR_NAME: identity.name, GIT_COMMITTER_NAME: identity.name, GIT_AUTHOR_EMAIL: identity.email, GIT_COMMITTER_EMAIL: identity.email }
+      const email = `${account.id}+${account.login}@users.noreply.github.com`
+      const env = { ...this.options().env, GIT_AUTHOR_NAME: account.login, GIT_COMMITTER_NAME: account.login, GIT_AUTHOR_EMAIL: email, GIT_COMMITTER_EMAIL: email }
       const commit = (await this.checked(project.path, ['commit-tree', preview.tree, ...(preview.head ? ['-p', preview.head] : []), '-m', message], { env })).trim()
       const nextIndex = join(scratch, 'after.index'), nextEnv = { ...this.options().env, GIT_INDEX_FILE: nextIndex }
       try { await copyFile(indexPath, nextIndex) } catch (error) {

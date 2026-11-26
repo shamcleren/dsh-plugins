@@ -32,5 +32,6 @@ test('the catalog client factory mounts a localized GitHub workspace page using 
   assert.match(html, /<select id="ghw-owner"/)
   assert.match(html, /<select id="ghw-repository"/)
   assert.match(html, /type="search"/)
+  assert.doesNotMatch(html, /id="ghw-https-url"/)
   assert.doesNotMatch(html, /undefined|\[object Object\]/)
 })

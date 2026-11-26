@@ -25,13 +25,10 @@ beforeEach(({ signal }) => { resources = new TestResources(signal) })
 afterEach(async () => { await resources.close() })
 const execute: Execute = (command, args, options) => resources.execute(command, args, options)
 
-const httpsHost = 'git.example.invalid'
-const httpsUrl = `https://${httpsHost}/demo/project.git`
-
-function fixture(empty = false, encrypted: boolean | 'gpg' = false, https = false) {
-  return resources.run(() => createFixture(empty, encrypted, https))
+function fixture(empty = false, encrypted: boolean | 'gpg' = false) {
+  return resources.run(() => createFixture(empty, encrypted))
 }
-async function createFixture(empty: boolean, encrypted: boolean | 'gpg', https: boolean) {
+async function createFixture(empty: boolean, encrypted: boolean | 'gpg') {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'github-workspace-test-')))
   resources.defer(() => rm(base, { recursive: true, force: true }))
   const bare = join(base, 'remote.git'), seed = join(base, 'seed'), home = join(base, 'home')
@@ -45,7 +42,6 @@ async function createFixture(empty: boolean, encrypted: boolean | 'gpg', https: 
   }
   await git(base, 'init', '--bare', '--initial-branch=main', bare)
   await git(seed, 'init', '--initial-branch=main')
-  const httpsBare = join(base, 'https.git')
   const keyFile = join(base, 'fixture.key')
   if (encrypted) {
     if (encrypted === 'gpg') {
@@ -73,11 +69,6 @@ async function createFixture(empty: boolean, encrypted: boolean | 'gpg', https: 
     await writeFile(join(seed, 'a.txt'), 'original a\n'); await writeFile(join(seed, 'b.txt'), 'original b\n')
     await git(seed, 'add', '.'); await git(seed, 'commit', '-m', 'Initial fixture'); await git(seed, 'push', bare, 'HEAD:refs/heads/main')
   }
-  if (https) {
-    await writeFile(join(home, 'github-workspace.https.json'), JSON.stringify({ host: httpsHost, credentialHelper: 'osxkeychain' }), { mode: 0o600 })
-    await git(base, 'init', '--bare', '--initial-branch=main', httpsBare)
-    await git(seed, 'push', httpsBare, 'HEAD:refs/heads/main')
-  }
   const commands: string[][] = []
   const control: { account: string; before?: (args: string[], options: CommandOptions | undefined) => Promise<void> } = { account: 'fixture' }
   const run: Execute = async (command, args, options) => {
@@ -93,9 +84,9 @@ async function createFixture(empty: boolean, encrypted: boolean | 'gpg', https: 
       return { code: 0, stdout: JSON.stringify(value), stderr: '' }
     }
     const transport = args.findIndex(arg => ['clone', 'fetch', 'push', 'ls-remote'].includes(arg))
-    // Rewrite transport only in the fixture, after recording the real Git options.
-    if (transport >= 0) args = [...args.slice(0, transport), '-c', 'protocol.file.allow=always', '-c', 'url.file://' + bare + '.insteadOf=https://github.com/demo/project.git',
-      ...(https ? ['-c', `url.file://${httpsBare}.insteadOf=${httpsUrl}`] : []), ...args.slice(transport)]
+    // Production always uses HTTPS github.com. Only this fixture rewrites the
+    // transport to its private bare repository; no real account is consulted.
+    if (transport >= 0) args = [...args.slice(0, transport), '-c', 'protocol.file.allow=always', '-c', 'url.file://' + bare + '.insteadOf=https://github.com/demo/project.git', ...args.slice(transport)]
     await control.before?.(args, options)
     return execute(command, args, { ...options, env: { ...options?.env, ...isolation } })
   }
@@ -121,71 +112,39 @@ async function createFixture(empty: boolean, encrypted: boolean | 'gpg', https: 
     }, { timeout: 10_000, interval: 100 })
     return task!
   }
-  return { base, bare, httpsBare, seed, home, service, call, git, registry, project, status, preview, commands, remoteChange, control, finished, keyFile }
+  return { base, bare, seed, home, service, call, git, registry, project, status, preview, commands, remoteChange, control, finished, keyFile }
 }
 
-it('imports a configured HTTPS repository and manually commits, pushes and pulls independently of GitHub', async () => {
-  const f = await fixture(false, false, true)
-  const githubHead = (await f.status()).head
-  f.control.account = ''
-  expect(await f.call<State>('state')).toMatchObject({ httpsHost, account: null })
-  f.commands.length = 0
-  const task = await f.call<Task>('startOpenHttps', { url: ' https://GIT.EXAMPLE.INVALID/demo/project/ ' })
-  expect(task.fullName).toBe(httpsUrl)
-  expect(await f.finished(task.id)).toMatchObject({ status: 'complete' })
-  const selector = { fullName: httpsUrl }
-  const { project } = await f.call<ProjectStatus>('status', selector)
-  expect(project).toMatchObject({ fullName: f.project.fullName, remoteUrl: httpsUrl })
-  expect(project.path).not.toBe(f.project.path)
-  expect(project.workspaceId).not.toBe(f.project.workspaceId)
-  expect(await f.call('open', selector)).toEqual(project)
-  expect(await f.call<ProjectStatus>('status', { fullName: f.project.fullName })).toMatchObject({ project: f.project, head: githubHead })
+it('keeps legacy address imports on disk without exposing them or routing actions to them', async () => {
+  const f = await fixture()
+  const directory = join(f.home, 'github-workspace', 'projects')
+  const imported = { fullName: f.project.fullName, path: join(directory, 'old-checkout'), workspaceId: 'old-workspace',
+    account: '', remoteUrl: 'https://git.example.invalid/demo/project.git' }
+  const failed = { fullName: 'demo/Project', path: join(directory, 'failed-checkout'), workspaceId: '',
+    account: '', remoteUrl: 'https://git.example.invalid/demo/Project.git' }
+  await mkdir(imported.path)
+  const localFile = join(imported.path, 'local.txt')
+  await writeFile(localFile, 'keep this workspace\n')
+  const stateFile = join(f.home, 'github-workspace', 'state.json')
+  const state = JSON.parse(await readFile(stateFile, 'utf8'))
+  await writeFile(stateFile, JSON.stringify({ ...state, projects: [imported, ...state.projects, failed] }))
+  const encryptionFile = join(f.home, 'github-workspace.encryption.json')
+  const encryption = { mode: 'git-crypt', keySource: 'gpg' }
+  const retiredEncryption = { [imported.remoteUrl]: encryption, [failed.remoteUrl]: encryption }
+  await writeFile(encryptionFile, JSON.stringify({ version: 1, repositories: retiredEncryption }))
 
-  await writeFile(join(project.path, 'a.txt'), 'HTTPS workspace update\n')
-  const preview = await f.call<Preview>('preview', { ...selector, paths: ['a.txt'] })
-  expect(preview.fullName).toBe(httpsUrl)
-  const commit = { id: preview.id, message: 'HTTPS fixture commit' }
-  await expect(f.call('commit', commit)).rejects.toMatchObject({ code: 'gitIdentity' })
-  await writeFile(join(f.home, '.gitconfig'), '[user]\n\tname = HTTPS Fixture\n\temail = https-fixture@example.invalid\n')
-  const { head } = await f.call<ProjectStatus>('commit', commit)
-  expect((await f.git(project.path, 'show', '-s', '--format=%an <%ae>', 'HEAD')).trim()).toBe('HTTPS Fixture <https-fixture@example.invalid>')
-  await f.call('push', { ...selector, head })
-  expect((await f.git(f.base, '--git-dir=' + f.httpsBare, 'rev-parse', 'main')).trim()).toBe(head)
-  expect((await f.git(f.base, '--git-dir=' + f.bare, 'rev-parse', 'main')).trim()).toBe(githubHead)
+  expect((await f.call<State>('state')).projects).toEqual([f.project])
+  expect((await f.call<Activity>('activity')).projects).toEqual([f.project])
+  const commands = f.commands.length
+  await expect(f.call('startOpenHttps', { url: imported.remoteUrl })).rejects.toMatchObject({ code: 'invalidRequest' })
+  await expect(f.call('open', { fullName: imported.remoteUrl })).rejects.toMatchObject({ code: 'invalidRequest' })
+  expect(f.commands).toHaveLength(commands)
 
-  await f.git(f.seed, 'fetch', f.httpsBare, 'main')
-  await f.git(f.seed, 'merge', '--ff-only', 'FETCH_HEAD')
-  await writeFile(join(f.seed, 'b.txt'), 'HTTPS remote update\n')
-  await f.git(f.seed, 'add', 'b.txt'); await f.git(f.seed, 'commit', '-m', 'Remote update')
-  await f.git(f.seed, 'push', f.httpsBare, 'HEAD:refs/heads/main')
-  expect(await f.call('fetch', selector)).toMatchObject({ behind: 1 })
-  expect(await f.call('pull', selector)).toMatchObject({ ahead: 0, behind: 0 })
-  expect(await readFile(join(project.path, 'b.txt'), 'utf8')).toBe('HTTPS remote update\n')
-  const transport = f.commands.filter(args => args.some(arg => ['clone', 'fetch', 'push'].includes(arg)))
-  expect(transport.map(args => args.find(arg => ['clone', 'fetch', 'push'].includes(arg)))).toEqual(['clone', 'push', 'fetch', 'fetch'])
-  for (const args of transport) {
-    expect(args).toContain(`credential.https://${httpsHost}.helper=osxkeychain`)
-    expect(args).toContain('http.followRedirects=false')
-    expect(args).not.toContain('credential.helper=!gh auth git-credential')
-  }
-  expect(f.commands.some(args => args[0] === 'gh')).toBe(false)
-
-  await f.git(project.path, 'remote', 'set-url', '--push', 'origin', 'https://another.example.invalid/demo/project.git')
-  await expect(f.call('push', { ...selector, head })).rejects.toMatchObject({ code: 'wrongRemote' })
-  await expect(f.call('configureSync', { ...selector, enabled: true, intervalMinutes: 5 })).rejects.toMatchObject({ code: 'invalidRequest' })
-})
-
-it('rejects unsafe URLs and other hosts before starting network commands', async () => {
-  const f = await fixture(false, false, true)
-  f.commands.length = 0
-  for (const url of [`http://${httpsHost}/a/b`, `https://user:secret@${httpsHost}/a/b`, `https://${httpsHost}/a/../b`,
-    `https://${httpsHost}/a/%2e%2e/b`, `https://${httpsHost}/a/b?token=fixture`, `https://${httpsHost}:444/a/b`,
-    `https://${httpsHost}/a/b#fragment`, `https://${httpsHost}/a/b\\extra`]) {
-    await expect(f.call('startOpenHttps', { url })).rejects.toMatchObject({ code: 'httpsUrl' })
-  }
-  await expect(f.call('startOpenHttps', { url: 'https://another.example.invalid/a/b' })).rejects.toMatchObject({ code: 'httpsHost' })
-  expect(f.commands).toEqual([])
-  expect(await f.call('activity')).toMatchObject({ projects: [f.project], tasks: [] })
+  await f.call('configureEncryption', { fullName: f.project.fullName, encryption })
+  expect(JSON.parse(await readFile(stateFile, 'utf8')).projects).toEqual([...state.projects, imported, failed])
+  expect(JSON.parse(await readFile(encryptionFile, 'utf8')).repositories).toEqual({ ...retiredEncryption, [f.project.fullName]: encryption })
+  expect(await readFile(localFile, 'utf8')).toBe('keep this workspace\n')
+  expect(f.registry.create).toHaveBeenCalledTimes(1)
 })
 
 it('unlocks configured git-crypt repositories and keeps manual and automatic remote blobs encrypted', async () => {
