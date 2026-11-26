@@ -80,10 +80,7 @@ export function apply(ctx: Context, config: PlainConfig | Volatile<PlainConfig>)
     prepareContext: async current => ({
       bindings: await bindingStore(),
       sources,
-      ...(current.resolveGroupNames ? { refreshGroupName: async (key: string, chatId: string) => {
-        const name = await directory.name(chatId)
-        if (name) await sources.rememberDirectoryName(key, name)
-      } } : {}),
+      questionNames: message => sources.questionNames(message, current.resolveGroupNames ? directory : undefined),
       defaultWorkspace: await resolveDefaultWorkspace(
         api,
         resolveDshHome(),

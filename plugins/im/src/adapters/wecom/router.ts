@@ -48,7 +48,7 @@ import {
   splitReply,
   TurnProjection,
 } from './reply.js'
-import { inboundContent } from './media.js'
+import { inboundContent, type QuestionNames } from './media.js'
 import { collectFileBytes } from './files.js'
 import type { OutboundFileBytes } from './files.js'
 import type { TurnOutcome } from './reply.js'
@@ -142,7 +142,7 @@ class TurnObservationTimeout extends Error {}
 
 const LOCAL_MODEL_NOTICE = '此选择仅作用于当前企微会话。'
 
-const COMMAND_HELP = managementHelp({ identity: true, sessions: true }) + '\n- /groupname <群名>：设置工作台显示的本群名称'
+const COMMAND_HELP = managementHelp({ identity: true, sessions: true }) + '\n- /groupname <群名>：设置工作台显示的本群名称\n- /myname <姓名>：设置自己提问时的显示名'
 
 export interface WeComReplyClient {
   replyStream(
@@ -194,8 +194,8 @@ export interface RouterConfig {
 
 export interface RouterRuntimeContext {
   bindings: Pick<ConversationBindings, 'current' | 'list' | 'set'>
-  refreshGroupName?: (key: string, chatId: string) => Promise<void>
-  sources?: Pick<WeComSessionSources, 'record' | 'nameGroup'>
+  questionNames?: (message: WeComInboundText) => Promise<QuestionNames>
+  sources?: Pick<WeComSessionSources, 'nameSelf' | 'nameGroup'>
   defaultWorkspace: HostWorkspace
   /** Durable image bytes, absent when the deployment has no attachment store. */
   readImage?: (ref: ImageAttachmentRef) => Promise<Uint8Array>
@@ -767,14 +767,11 @@ export class WeComConversationRouter {
     const streamId = generateReqId('stream')
     let turn: { outcome: Promise<TurnOutcome>; dispose(): void } | undefined
     let handedOff = false
-    let admittedSession: string | undefined
     try {
       const sessionId = requiresHostSession(managementCommandText(message), this.adminUsers.has(message.userId))
         ? await this.ensureSession(conversationKey, requestedSessionId) : requestedSessionId
       const directCommand = await this.runManagementCommand(message, conversationKey, sessionId)
       if (directCommand !== undefined) {
-        const bound = this.runtime.bindings.current(conversationKey, sessionId)
-        if (bound !== sessionId) await this.recordSpeaker(message, conversationKey, bound)
         await this.finish(frame, streamId, directCommand)
         return
       }
@@ -804,15 +801,17 @@ export class WeComConversationRouter {
         activeTurn,
       })
       await this.update(frame, streamId, this.config.thinkingText)
+      const names = managementCommandText(message) === undefined
+        ? await this.runtime.questionNames?.(message).catch(() => { this.logger.warn('wecom-aibot: question display names unavailable') }) ?? {}
+        : undefined
       const accepted = unwrap(await submitChannelPrompt(this.api, {
         rpcId: promptRpcId,
         payload: {
           sessionId,
           mode: this.activeTurns.has(sessionId) ? 'steer' : 'queue',
-          content: await inboundContent(message, this.config.mediaMaxBytes ?? 10 * 1024 * 1024, this.deliveryAbort.signal),
+          content: await inboundContent(message, this.config.mediaMaxBytes ?? 10 * 1024 * 1024, this.deliveryAbort.signal, names),
         },
       }))
-      admittedSession = sessionId
       if (accepted.command !== undefined) {
         sessionState.promptRpcIds.add(promptRpcId)
         turn.dispose()
@@ -840,7 +839,6 @@ export class WeComConversationRouter {
       }
     } finally {
       if (!handedOff) turn?.dispose()
-      if (admittedSession) await this.recordSpeaker(message, conversationKey, admittedSession)
     }
   }
 
@@ -1308,17 +1306,6 @@ export class WeComConversationRouter {
       bindings: this.runtime.bindings, create: (id, workspace) => this.createSession(id, workspace) })
   }
 
-  private async recordSpeaker(message: WeComInboundText, key: string, sessionId: string): Promise<void> {
-    if (message.chatType !== 'group') return
-    if (this.runtime.refreshGroupName) {
-      this.track(this.runtime.refreshGroupName(key, message.conversationId).catch(() => {
-        this.logger.warn('wecom-aibot: could not save group directory name')
-      }))
-    }
-    try { await this.runtime.sources?.record(sessionId, key, message.userId) }
-    catch { this.logger.warn('wecom-aibot: could not record group Session source') }
-  }
-
   private async createSession(sessionId: string, workspaceId: string): Promise<string> {
     return unwrap(await this.api.sessions.create(apiRequest({
       sessionId,
@@ -1339,6 +1326,13 @@ export class WeComConversationRouter {
     // Open to everyone: a user locked out by a mistyped list has no other way to
     // read the identity WeCom actually sends for them.
     if (command === '/whoami' && args.length === 0) return whoamiReply(message.userId)
+    if (command === '/myname') {
+      const name = groupName.safeParse(args.join(' '))
+      if (!name.success || name.data === message.userId) return '用法：/myname <显示姓名>（最多 100 个字符）'
+      if (!this.runtime.sources) return '当前部署无法保存显示名。'
+      await this.runtime.sources.nameSelf(message, name.data)
+      return '已设置你的提问显示名：' + name.data
+    }
     if (command === '/compact' && args.length === 0) {
       if (!this.adminUsers.has(message.userId)) return commandPermissionReply(message.userId)
       return undefined

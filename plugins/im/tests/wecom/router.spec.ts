@@ -350,16 +350,14 @@ describe('WeComConversationRouter', () => {
     vi.useFakeTimers()
     const test = harness()
     test.prompt.mockImplementationOnce(async req => success(req, { accepted: true as const }))
-    const record = vi.fn(async () => undefined)
     const router = new WeComConversationRouter(test.api, test.replies, logger(), {
       allowedUsers: [], adminUsers: [], thinkingText: '处理中', finalReplyOnly: true, turnTimeoutMs: 1_200_000,
-    }, { ...runtime(), sources: { record, nameGroup: vi.fn() } })
+    }, runtime())
     try {
       router.start()
       router.accept(textFrame('帮忙看一下', 'user-1', 'group'))
-      await vi.waitFor(() => expect(record).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(test.prompt).toHaveBeenCalledOnce())
       const request = test.prompt.mock.calls[0]![0], id = request.payload.sessionId
-      expect(record).toHaveBeenCalledWith(id, expect.stringMatching(/^[a-f0-9]{64}$/u), 'user-1')
       const emit = (seq: number, type: string, data: object) => test.pushMux(event(id, seq, type, { turn: 1, ...data }))
       emit(1, 'agent/inbox/spliced', { inserted: [{ source: { rpcId: request.rpcId } }] })
       emit(2, 'turn/start', {})
@@ -453,11 +451,52 @@ describe('WeComConversationRouter', () => {
       router.accept(frame)
       await vi.waitFor(() => expect(test.replyCalls.at(-1)).toEqual({ content: '你好，世界', finish: true }))
       expect(test.prompt).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ payload: expect.objectContaining({
-        content: [...(content ? [{ type: 'text', text: content }] : []), { type: 'text', text: '引用消息：\n/new' }],
+        content: [...(content ? [{ type: 'text', text: content }] : []), { type: 'text', text: '群成员在企微群提问，引用消息：\n/new' }],
       }) }))
     } finally {
       await router.stop()
     }
+  })
+
+  it('keeps separate askers on two quoted messages in the same group session', async () => {
+    const test = harness()
+    const router = new WeComConversationRouter(test.api, test.replies, logger(), {
+      allowedUsers: [], adminUsers: [], thinkingText: '处理中', turnTimeoutMs: 1_000,
+    }, { ...runtime(), questionNames: async message => ({ speaker: message.userId === 'first' ? '小甲' : '小乙', group: '项目群' }) })
+    router.start()
+    try {
+      for (const sender of ['first', 'second']) {
+        const frame = textFrame('@Bot', sender, 'group', sender)
+        frame.body!.quote = { msgtype: 'text', text: { content: '小丙的原文' } }
+        router.accept(frame)
+      }
+      await vi.waitFor(() => expect(test.prompt).toHaveBeenCalledTimes(2))
+      const [first, second] = test.prompt.mock.calls.map(([req]) => req.payload)
+      expect(first!.sessionId).toBe(second!.sessionId)
+      expect([first, second].map(req => req!.content[1]?.text)).toEqual([
+        '小甲在「项目群」提问，引用消息：\n小丙的原文', '小乙在「项目群」提问，引用消息：\n小丙的原文',
+      ])
+    } finally { await router.stop() }
+  })
+
+  it.each(['group', 'single'] as const)('attributes a %s question to the current sender', async chatType => {
+    const test = harness()
+    const frame = textFrame('帮忙看看', 'member-one', chatType)
+    const nameSelf = vi.fn(async () => undefined)
+    const questionNames = vi.fn(async () => ({ speaker: '小李', group: '值班群' }))
+    const router = new WeComConversationRouter(test.api, test.replies, logger(), {
+      allowedUsers: [], adminUsers: [], thinkingText: '处理中', turnTimeoutMs: 1_000,
+    }, { ...runtime(), questionNames, sources: { nameSelf, nameGroup: vi.fn() } })
+    router.start()
+    try {
+      router.accept(textFrame('/myname 小李', 'member-one', chatType))
+      await vi.waitFor(() => expect(nameSelf).toHaveBeenCalledWith(expect.objectContaining({ userId: 'member-one' }), '小李'))
+      expect(test.prompt).not.toHaveBeenCalled()
+      router.accept(frame)
+      await vi.waitFor(() => expect(test.prompt).toHaveBeenCalledOnce())
+      const heading = chatType === 'single' ? '小李私聊提问' : '小李在「值班群」提问'
+      expect(test.prompt.mock.calls[0]![0].payload.content).toEqual([{ type: 'text', text: heading + '：\n帮忙看看' }])
+    } finally { await router.stop() }
   })
 
   it('observes the session from the moment the turn subscribes, not when the prompt returns', async () => {

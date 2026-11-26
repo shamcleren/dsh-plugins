@@ -5,9 +5,18 @@ import type { PromptContentPart } from './host-api.js'
 // Only the WeCom media account from the callback examples may supply quoted bytes.
 const QUOTED_MEDIA_HOST = /^ww-aibot-(?:img|file)-1258476243\.cos\.[a-z0-9-]+\.myqcloud\.com$/u
 
+export interface QuestionNames { speaker?: string | undefined; group?: string | undefined }
+
+function questionLabel(message: WeComInboundText, names: QuestionNames): string {
+  if (message.chatType === 'single') return (names.speaker ?? '企微联系人') + '私聊提问'
+  return (names.speaker ?? '群成员') + (names.group ? '在「' + names.group + '」' : '在企微群') + '提问'
+}
+
 /** Bound untrusted downloads before decryption and preserve the SDK's per-file key behavior. */
-export async function inboundContent(message: WeComInboundText, maxBytes: number, signal: AbortSignal): Promise<PromptContentPart[]> {
-  const result: PromptContentPart[] = message.text ? [{ type: 'text', text: message.text }] : []
+export async function inboundContent(message: WeComInboundText, maxBytes: number, signal: AbortSignal, names?: QuestionNames): Promise<PromptContentPart[]> {
+  const label = names && questionLabel(message, names)
+  const text = label && !message.quote ? label + '：\n' + message.text : message.text
+  const result: PromptContentPart[] = text ? [{ type: 'text', text }] : []
   let remaining = maxBytes
   for (const media of message.media ?? []) {
     const received = await downloadMedia(media, remaining, signal)
@@ -17,7 +26,8 @@ export async function inboundContent(message: WeComInboundText, maxBytes: number
   const quote = message.quote
   if (quote === undefined) return result
 
-  result.push({ type: 'text', text: quote.text ? `引用消息：\n${quote.text}` : '引用消息：' })
+  const heading = label ? label + '，引用消息：' : '引用消息：'
+  result.push({ type: 'text', text: quote.text ? heading + '\n' + quote.text : heading })
   let unavailable = quote.unavailableMedia
   const quoteSignal = quote.media.length ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : signal
   for (const media of quote.media) {

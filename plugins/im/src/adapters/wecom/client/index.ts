@@ -8,8 +8,7 @@ import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
-import type { SessionSource } from '../../../contracts.js'
-import { createElement, useEffect, useState } from 'react'
+import { createElement } from 'react'
 import { WeComCard } from './Card.js'
 import { WeComCardController } from './controller.js'
 import { en, zh, type LocaleKey } from './locales.js'
@@ -83,30 +82,9 @@ interface SessionBadgeHost {
 export function ChannelBadge(props: {
   sessionId: string | undefined
   t: (key: LocaleKey) => string
-  loadSource?: LoadSource
 }): ReturnType<typeof createElement> | null {
   if (!isChannelSession(props.sessionId ?? '')) return null
-  if (props.loadSource && props.sessionId) return createElement(SourceBadge, { key: props.sessionId, id: props.sessionId, load: props.loadSource, t: props.t })
   return badge(props.t('sessionBadge'))
-}
-
-type LoadSource = (id: string, signal: AbortSignal) => Promise<SessionSource>
-
-function SourceBadge({ id, load, t }: { id: string; load: LoadSource; t: (key: LocaleKey) => string }) {
-  const [source, setSource] = useState<SessionSource>(null)
-  useEffect(() => {
-    let active: AbortController
-    const refresh = () => {
-      active?.abort()
-      const current = active = new AbortController()
-      void load(id, current.signal).then(result => { if (!current.signal.aborted) setSource(result) }).catch(() => undefined)
-    }
-    refresh()
-    window.addEventListener('focus', refresh)
-    return () => { active.abort(); window.removeEventListener('focus', refresh) }
-  }, [id, load])
-  if (!source) return badge(t('sessionBadge'))
-  return badge(t('groupBadge') + ' · ' + source.group + ' · ' + t('speakers') + ' ' + source.speakers.join(', '))
 }
 
 function badge(label: string) {

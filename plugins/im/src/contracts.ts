@@ -2,8 +2,6 @@ import { z } from 'zod'
 
 export const wecomSessionId = z.string().regex(/^session-wecom-[a-zA-Z0-9_-]{1,128}$/u)
 export const groupName = z.string().trim().min(1).max(100).regex(/^[^\p{Cc}\p{Cf}]+$/u)
-export const sessionSourceSchema = z.object({ group: groupName, speakers: z.array(z.string().min(1).max(256)) }).nullable()
-export type SessionSource = z.infer<typeof sessionSourceSchema>
 
 export const capabilitySchema = z.enum(['text', 'image', 'file', 'video', 'approval', 'questions', 'groups', 'notifications'])
 export const failureSchema = z.enum(['message-format', 'media', 'host', 'connection'])

@@ -25,7 +25,7 @@ The adapter always mounts so it remains configurable. Reception defaults off for
 | `preventIdleSleep` | `false` | On macOS, run a managed idle-sleep assertion while the Bot is active. |
 | `agentPreset` | omitted | Harness agent preset used when a new WeCom session is created. Omitted inherits the deployment default. |
 | `rolePrompt` | omitted | Optional role instructions shared by this Bot’s WeCom conversations. |
-| `resolveGroupNames` | `false` | Look up exact group IDs in the authorized local `wecom-cli message aibot sessions list` directory. Requires the CLI on the Host PATH. |
+| `resolveGroupNames` | `false` | Look up exact group and direct-chat IDs in the authorized local `wecom-cli message aibot sessions list` directory. Requires the CLI on the Host PATH. |
 | `finalReplyOnly` | `false` | Acknowledge the request, then send the final assistant answer to the originating conversation as a new message. Intermediate model text is hidden. Questions and approvals still go to the conversation. |
 | `thinkingText` | `正在思考…` | Initial content of the WeCom stream while the Harness turn starts. |
 | `turnTimeoutMs` | `300000` | Maximum observation time per turn. With final-only replies, this is the time without model or tool progress in the admitted turn. Total observation is limited to one hour or the configured timeout, whichever is longer. |
@@ -66,7 +66,9 @@ The question answerer claims active WeCom turns before the Host Web answerer, re
 
 ## Channel compatibility
 
-The DSH session header shows the group and the distinct sender accounts that interacted with the Bot in that session. Hover over a truncated label to read it in full. WeCom supplies a group ID and the sender's account. An administrator can send `/groupname <name>` in a group to set its local display name for this Bot, including earlier recorded sessions. A local alias takes precedence over a name found through the optional recent-chat lookup. If neither is available the header shows a short group identifier. Source details are stored under the local DSH home. Earlier sessions without source records keep the channel badge until another group message is admitted.
+Each new question in DSH identifies the sender and where they asked. Quoted questions carry this information on the quote heading. Other questions carry it above their text. A group can reuse one session as the sender changes. Earlier messages keep their original text.
+
+WeCom callbacks can supply only account and chat identifiers. Enable the recent-chat directory to match exact identifiers to display names. A member can use `/myname <name>` to set their own local display name for this Bot across group and direct chats. A Bot administrator in the group can use `/groupname <name>` to set the local group label. Local labels take precedence. Unresolved names appear as a group member, a group, or a direct contact. Display names do not grant permissions.
 
 Observed WeCom channel text callbacks use `chattype: "group"` with `compat_info.source: "channel"`. They follow the existing group conversation route and preserve the callback's conversation identifier. A regression fixture covers this callback shape. Dedicated `topic_at_bot` events, isolation between channel posts, proactive messages, and template-card delivery inside posts still require live verification; accepting compatible text callbacks does not establish those capabilities.
 

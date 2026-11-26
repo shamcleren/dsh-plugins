@@ -4,14 +4,12 @@ import type {} from '@deepseek-ai/dsh-client-connection'
 import { clientRequestSchema } from '@deepseek-ai/dsh-client-connection'
 import { IMHub } from './hub.js'
 import { wecomSessionId } from './contracts.js'
-import { WeComSessionSources } from './adapters/wecom/session-source.js'
 export { IMHub } from './hub.js'
 export type { IMAdapter, IMAdapterState, IMAdapterView, IMCapability } from './hub.js'
 
 export const name = 'im'
 export function apply(ctx: Context): void {
   const hub = new IMHub(ctx)
-  const sources = new WeComSessionSources()
   ctx.inject(['connection', 'webServer'], scope => {
     if (scope.webServer.host !== '127.0.0.1') throw new Error('IM management requires a loopback server')
     scope.effect(() => scope.webServer.register({ kind: 'prefix', path: '/im', async handler(request, response) {
@@ -32,7 +30,8 @@ export function apply(ctx: Context): void {
           if (admission.peer.principal.kind !== 'owner') { send(403, { error: 'forbidden' }); return }
           const id = wecomSessionId.safeParse((decoded.data.payload as { sessionId?: unknown } | null)?.sessionId)
           if (!id.success) { send(400, { error: 'invalidSession' }); return }
-          value = await sources.get(id.data)
+          // Older browser bundles still request a header label. Attribution now belongs to each question.
+          value = null
         } else value = hub.state()
         send(200, { type: 'server-response', rpcId: decoded.data.rpcId, result: { ok: true, value } })
       } catch { send(400, { error: 'invalidRequest' }) }

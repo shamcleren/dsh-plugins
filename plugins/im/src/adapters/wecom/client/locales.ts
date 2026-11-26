@@ -36,7 +36,7 @@ export const en = {
   sectionAccess: 'Access',
   sectionConversation: 'Conversations',
   advanced: 'Advanced settings',
-  resolveGroupNames: 'Read group names from local WeCom CLI recent chats',
+  resolveGroupNames: 'Read chat display names from local WeCom CLI recent chats',
   finalReplyOnly: 'Send only the final answer',
   agentPreset: 'Agent preset',
   agentPresetHint: 'The first option follows the deployment default. An unavailable preset cannot be selected. Admins can also switch it from chat with /preset. /model and /effort change only the current conversation.',
@@ -61,7 +61,6 @@ export const en = {
   saving: 'Saving…',
   failed: 'The deployment did not accept these values; they remain available to correct.',
   rejectedFields: 'Not accepted:',
-  groupBadge: 'WeCom group', speakers: 'Participants',
   sessionBadge: 'WeCom',
 } as const
 
@@ -101,7 +100,7 @@ export const zh: Record<keyof typeof en, string> = {
   sectionAccess: '访问控制',
   sectionConversation: '会话',
   advanced: '高级设置',
-  resolveGroupNames: '从本机企微 CLI 的最近会话读取群名',
+  resolveGroupNames: '从本机企微 CLI 的最近会话读取群名和联系人显示名',
   finalReplyOnly: '只发送最终答复',
   agentPreset: 'Agent 预设',
   agentPresetHint: '第一项表示跟随部署默认预设；不可用的预设不能选择。管理员也可在企微里发 /preset 切换。/model 与 /effort 只修改当前会话的模型。',
@@ -126,7 +125,6 @@ export const zh: Record<keyof typeof en, string> = {
   saving: '保存中…',
   failed: '本部署没有接受这些值，已保留供你修改。',
   rejectedFields: '未被接受：',
-  groupBadge: '企微群', speakers: '对话人',
   sessionBadge: '企业微信',
 }
 
