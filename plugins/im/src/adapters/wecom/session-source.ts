@@ -43,10 +43,17 @@ export class WeComSessionSources {
     await save(this.groupPath(key), groupName.parse(name))
   }
 
+  async rememberDirectoryName(key: string, name: string): Promise<void> {
+    const path = join(this.root, 'directory', keySchema.parse(key) + '.json')
+    const next = groupName.parse(name)
+    if (await readJson(path) !== next) await save(path, next)
+  }
+
   async get(id: string) {
     const source = sourceSchema.optional().parse(await readJson(this.sessionPath(id)))
     if (!source) return null
     const name = groupName.optional().parse(await readJson(this.groupPath(source.group)))
-    return { group: name ?? '#' + source.group.slice(0, 10), speakers: source.speakers }
+    const discovered = name ?? groupName.optional().parse(await readJson(join(this.root, 'directory', source.group + '.json')))
+    return { group: discovered ?? '#' + source.group.slice(0, 10), speakers: source.speakers }
   }
 }

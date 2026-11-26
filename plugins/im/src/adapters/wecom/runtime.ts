@@ -109,6 +109,7 @@ class SingleBotRuntimeController {
       connectionPolicy,
       config.workspaceId,
       config.preventIdleSleep,
+      config.resolveGroupNames === true,
     ])
     const labelKey = JSON.stringify([config.name, config.workspaceName])
     if (this.active?.key === key) {

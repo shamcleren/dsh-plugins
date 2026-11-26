@@ -20,6 +20,7 @@ const FIELD_LABELS: Readonly<Record<string, LocaleKey>> = {
   adminUsers: 'adminUsers',
   workspaceId: 'workspace',
   preventIdleSleep: 'preventIdleSleep',
+  resolveGroupNames: 'resolveGroupNames',
   finalReplyOnly: 'finalReplyOnly',
   agentPreset: 'agentPreset',
   rolePrompt: 'rolePrompt',
@@ -323,6 +324,11 @@ export function WeComCard(props: WeComCardProps) {
           <input type="checkbox" checked={state.finalReplyOnly.text === 'true'} disabled={disabled}
             onChange={event => props.edit('finalReplyOnly', String(event.target.checked))} />
           {t('finalReplyOnly')}
+        </label>
+        <label style={styles.toggle}>
+          <input type="checkbox" checked={state.resolveGroupNames.text === 'true'} disabled={disabled}
+            onChange={event => props.edit('resolveGroupNames', String(event.target.checked))} />
+          {t('resolveGroupNames')}
         </label>
         <PresetField
           state={state.agentPreset}

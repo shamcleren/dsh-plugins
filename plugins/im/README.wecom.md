@@ -25,6 +25,7 @@ The adapter always mounts so it remains configurable. Reception defaults off for
 | `preventIdleSleep` | `false` | On macOS, run a managed idle-sleep assertion while the Bot is active. |
 | `agentPreset` | omitted | Harness agent preset used when a new WeCom session is created. Omitted inherits the deployment default. |
 | `rolePrompt` | omitted | Optional role instructions shared by this Bot’s WeCom conversations. |
+| `resolveGroupNames` | `false` | Look up exact group IDs in the authorized local `wecom-cli message aibot sessions list` directory. Requires the CLI on the Host PATH. |
 | `finalReplyOnly` | `false` | Acknowledge the request, then send the final assistant answer to the originating conversation as a new message. Intermediate model text is hidden. Questions and approvals still go to the conversation. |
 | `thinkingText` | `正在思考…` | Initial content of the WeCom stream while the Harness turn starts. |
 | `turnTimeoutMs` | `300000` | Maximum observation time for one admitted Harness turn. |
@@ -33,7 +34,7 @@ Edit **Role prompt** for the selected Bot to add role and response-style instruc
 
 The reference fields are names, not credential literals. The plugin resolves the Host credentials service first and then the process environment. Installing the plugin without both values keeps it disconnected and emits one warning per unconfigured streak; writing either referenced credential or changing settings reconciles the connection without remounting the plugin.
 
-The settings card shows the Role prompt, Bot ID, Secret, the two userid lists, and the default Workspace directly, and keeps `finalReplyOnly`, `preventIdleSleep`, `agentPreset`, `thinkingText`, and `turnTimeoutMs` in the **Advanced settings** section. `botIdEnv`, `secretEnv`, and `workspaceName` stay configuration-file only.
+The settings card shows the Role prompt, Bot ID, Secret, the two userid lists, and the default Workspace directly, and keeps `resolveGroupNames`, `finalReplyOnly`, `preventIdleSleep`, `agentPreset`, `thinkingText`, and `turnTimeoutMs` in the **Advanced settings** section. `botIdEnv`, `secretEnv`, and `workspaceName` stay configuration-file only.
 
 The UI stores Bot ID and Secret through the Host credentials API, never in the settings document or a browser response. A save that does not land names the fields the deployment refused, and a credential write reports the deployment's own refusal text — or, when the write was accepted while the reference still reads unconfigured, says exactly that. Refusal text is diagnostic only and never carries the value back. Ordinary settings and credentials remain under the Harness home and survive application restarts.
 
@@ -65,7 +66,7 @@ The question answerer claims active WeCom turns before the Host Web answerer, re
 
 ## Channel compatibility
 
-The DSH session header shows the group and the distinct sender accounts that interacted with the Bot in that session. Hover over a truncated label to read it in full. WeCom supplies a group ID and the sender's account. An administrator can send `/groupname <name>` in a group to set its local display name for this Bot, including earlier recorded sessions. Until then the header shows a short group identifier. Source details are stored under the local DSH home. Earlier sessions without source records keep the channel badge until another group message is admitted.
+The DSH session header shows the group and the distinct sender accounts that interacted with the Bot in that session. Hover over a truncated label to read it in full. WeCom supplies a group ID and the sender's account. An administrator can send `/groupname <name>` in a group to set its local display name for this Bot, including earlier recorded sessions. A local alias takes precedence over a name found through the optional recent-chat lookup. If neither is available the header shows a short group identifier. Source details are stored under the local DSH home. Earlier sessions without source records keep the channel badge until another group message is admitted.
 
 Observed WeCom channel text callbacks use `chattype: "group"` with `compat_info.source: "channel"`. They follow the existing group conversation route and preserve the callback's conversation identifier. A regression fixture covers this callback shape. Dedicated `topic_at_bot` events, isolation between channel posts, proactive messages, and template-card delivery inside posts still require live verification; accepting compatible text callbacks does not establish those capabilities.
 

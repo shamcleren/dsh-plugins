@@ -34,6 +34,7 @@ export interface Config {
   agentPreset?: string
   /** Optional role instructions shared by this Bot’s conversations. */
   rolePrompt?: string
+  resolveGroupNames?: boolean
   finalReplyOnly?: boolean
   /** Initial stream content sent while the Harness turn starts. */
   thinkingText?: string
@@ -66,6 +67,7 @@ const fields = {
   preventIdleSleep: z.boolean().default(false),
   agentPreset: z.string().min(1),
   rolePrompt: z.string(),
+  resolveGroupNames: z.boolean().default(false),
   finalReplyOnly: z.boolean().default(false),
   thinkingText: z.string().min(1).default(DEFAULT_THINKING_TEXT),
   turnTimeoutMs: z.number().step(1).min(1_000).default(DEFAULT_TURN_TIMEOUT_MS),

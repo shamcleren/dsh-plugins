@@ -193,6 +193,7 @@ export interface RouterConfig {
 
 export interface RouterRuntimeContext {
   bindings: Pick<ConversationBindings, 'current' | 'list' | 'set'>
+  refreshGroupName?: (key: string, chatId: string) => Promise<void>
   sources?: Pick<WeComSessionSources, 'record' | 'nameGroup'>
   defaultWorkspace: HostWorkspace
   /** Durable image bytes, absent when the deployment has no attachment store. */
@@ -1308,6 +1309,11 @@ export class WeComConversationRouter {
 
   private async recordSpeaker(message: WeComInboundText, key: string, sessionId: string): Promise<void> {
     if (message.chatType !== 'group') return
+    if (this.runtime.refreshGroupName) {
+      this.track(this.runtime.refreshGroupName(key, message.conversationId).catch(() => {
+        this.logger.warn('wecom-aibot: could not save group directory name')
+      }))
+    }
     try { await this.runtime.sources?.record(sessionId, key, message.userId) }
     catch { this.logger.warn('wecom-aibot: could not record group Session source') }
   }
