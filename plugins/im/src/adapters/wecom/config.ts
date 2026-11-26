@@ -34,6 +34,7 @@ export interface Config {
   agentPreset?: string
   /** Optional role instructions shared by this Bot’s conversations. */
   rolePrompt?: string
+  finalReplyOnly?: boolean
   /** Initial stream content sent while the Harness turn starts. */
   thinkingText?: string
   /** Maximum time to observe one admitted Harness turn. */
@@ -65,6 +66,7 @@ const fields = {
   preventIdleSleep: z.boolean().default(false),
   agentPreset: z.string().min(1),
   rolePrompt: z.string(),
+  finalReplyOnly: z.boolean().default(false),
   thinkingText: z.string().min(1).default(DEFAULT_THINKING_TEXT),
   turnTimeoutMs: z.number().step(1).min(1_000).default(DEFAULT_TURN_TIMEOUT_MS),
 }
@@ -112,6 +114,7 @@ export interface WeComRuntimeConfig {
   adminUsers: readonly string[]
   agentPreset?: string
   rolePrompt?: string
+  finalReplyOnly?: boolean
   thinkingText: string
   turnTimeoutMs: number
 }
@@ -126,6 +129,7 @@ export function resolveRuntimeConfig(config: Config): WeComRuntimeConfig {
     allowedUsers: config.allowedUsers ?? [],
     adminUsers: config.adminUsers ?? [],
     ...config.agentPreset === undefined ? {} : { agentPreset: config.agentPreset },
+    ...(config.finalReplyOnly ? { finalReplyOnly: true } : {}),
     ...rolePrompt ? { rolePrompt } : {},
     thinkingText: config.thinkingText ?? DEFAULT_THINKING_TEXT,
     turnTimeoutMs: config.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS,

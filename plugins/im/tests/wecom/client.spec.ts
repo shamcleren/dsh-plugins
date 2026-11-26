@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { Config } from '../../src/adapters/wecom/config.js'
-import { isValidElement, type ReactNode } from 'react'
+import { isValidElement, type ReactElement, type ReactNode } from 'react'
 import { WeComCard } from '../../src/adapters/wecom/client/Card.js'
 import { ChannelBadge } from '../../src/adapters/wecom/client/index.js'
 import { WeComCardController } from '../../src/adapters/wecom/client/controller.js'
@@ -108,7 +108,12 @@ describe('WeCom browser settings card', () => {
     host.publish({ status: 'ready', writable: true, value: {}, base: {}, user: {} })
     await vi.waitFor(() => { expect(credentials.presets).toHaveBeenCalled() })
     const snapshot = face.hooks.weComCard.getSnapshot()
-    const tags = intrinsicTags(WeComCard({ ...face, useWeComCard: (select: (value: typeof snapshot) => unknown) => select(snapshot), t: (key: string) => key } as never))
+    const card = WeComCard({ ...face, useWeComCard: (select: (value: typeof snapshot) => unknown) => select(snapshot), t: (key: string) => key } as never)
+    const elements = intrinsicElements(card)
+    const tags = elements.map(node => node.type)
+    expect(elements.find(node => node.type === 'textarea')?.props).toMatchObject({
+      rows: 8, style: { height: 'auto', minHeight: '10rem', resize: 'vertical' },
+    })
     expect(tags).not.toContain('details')
     expect(tags.filter(tag => tag === 'h3')).toHaveLength(5)
     expect(tags.filter(tag => tag === 'textarea')).toHaveLength(1)
@@ -302,13 +307,13 @@ describe('WeCom session badge', () => {
   })
 })
 
-/** Expand function components (these cards use no React hooks) and list intrinsic tags. */
-function intrinsicTags(node: ReactNode): string[] {
-  if (Array.isArray(node)) return node.flatMap(intrinsicTags)
+/** Expand function components (these cards use no React hooks) and list intrinsic elements. */
+function intrinsicElements(node: ReactNode): ReactElement[] {
+  if (Array.isArray(node)) return node.flatMap(intrinsicElements)
   if (!isValidElement<{ children?: ReactNode }>(node)) return []
-  if (typeof node.type === 'function') return intrinsicTags((node.type as (props: unknown) => ReactNode)(node.props))
-  const own = typeof node.type === 'string' ? [node.type] : []
-  return [...own, ...intrinsicTags(node.props.children)]
+  if (typeof node.type === 'function') return intrinsicElements((node.type as (props: unknown) => ReactNode)(node.props))
+  const own = typeof node.type === 'string' ? [node] : []
+  return [...own, ...intrinsicElements(node.props.children)]
 }
 
 it('writes only the selected Bot and fences roster edits by revision', async () => {

@@ -19,7 +19,6 @@ import { normalizeTextFrame, promptRpcIdFor } from '../../src/adapters/wecom/inb
 import type { WeComTextFrame } from '../../src/adapters/wecom/inbound.js'
 import { WeComConversationRouter } from '../../src/adapters/wecom/router.js'
 import { ConversationBindings } from '../../src/adapters/wecom/bindings.js'
-import { MAX_STREAM_REPLY_BYTES } from '../../src/adapters/wecom/reply.js'
 import { Config, configuredBots, resolveRuntimeConfig } from '../../src/adapters/wecom/config.js'
 import type { WeComReplyClient, WeComTemplateCardEventFrame } from '../../src/adapters/wecom/router.js'
 
@@ -345,6 +344,37 @@ describe('WeComConversationRouter', () => {
       set: vi.fn(async () => undefined),
     },
     ...test === undefined ? {} : { readImage: test.readImage },
+  })
+
+  it.each([false, true])('delivers the final-only group result or a deadline notice (timeout %s)', async expired => {
+    vi.useFakeTimers()
+    const test = harness()
+    test.prompt.mockImplementationOnce(async req => success(req, { accepted: true as const }))
+    const record = vi.fn(async () => undefined)
+    const router = new WeComConversationRouter(test.api, test.replies, logger(), {
+      allowedUsers: [], adminUsers: [], thinkingText: '处理中', finalReplyOnly: true, turnTimeoutMs: 1_200_000,
+    }, { ...runtime(), sources: { record, nameGroup: vi.fn() } })
+    try {
+      router.start()
+      router.accept(textFrame('帮忙看一下', 'user-1', 'group'))
+      await vi.waitFor(() => expect(record).toHaveBeenCalledOnce())
+      const request = test.prompt.mock.calls[0]![0], id = request.payload.sessionId
+      expect(record).toHaveBeenCalledWith(id, expect.stringMatching(/^[a-f0-9]{64}$/u), 'user-1')
+      const emit = (seq: number, type: string, data: object) => test.pushMux(event(id, seq, type, { turn: 1, ...data }))
+      emit(1, 'agent/inbox/spliced', { inserted: [{ source: { rpcId: request.rpcId } }] })
+      emit(2, 'turn/start', {})
+      emit(3, 'assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'I will check.' } })
+      emit(4, 'assistant/message', { message: { content: [{ type: 'text', text: 'I will check.' }, { type: 'tool-call' }] } })
+      await vi.advanceTimersByTimeAsync(360_000)
+      expect(test.proactiveTexts).toEqual([])
+      if (expired) await vi.advanceTimersByTimeAsync(840_000)
+      emit(5, 'step/start', {})
+      emit(6, 'assistant/message', { message: { content: [{ type: 'text', text: '已经开始处理。' }] } })
+      emit(7, 'turn/end', { reason: { kind: 'completed' } })
+      await vi.waitFor(() => expect(test.proactiveTexts).toEqual([{ targetId: 'group-1',
+        content: expired ? '等待结果已超时，可在 DSH 会话中查看后续进度。' : '已经开始处理。' }]))
+      expect(test.streamCalls.map(call => call.content)).toEqual(['处理中', '收到，处理完会在这里回复。'])
+    } finally { await router.stop(); vi.useRealTimers() }
   })
 
   it('applies each schema-resolved Bot’s role prompt to its own turn', async () => {
@@ -1359,8 +1389,8 @@ describe('WeComConversationRouter', () => {
       f.ask([{ id: 'oversized', question: '继续吗？', detail, options: [{ label: '继续' }, { label: '下次处理' }] }])
       await vi.waitFor(() => expect(f.test.proactiveTexts.at(-1)?.content).toContain('- 2）下次处理'))
       const parts = f.test.proactiveTexts.map(message => message.content)
-      expect(parts).toHaveLength(2)
-      expect(parts.every(part => Buffer.byteLength(part) <= MAX_STREAM_REPLY_BYTES)).toBe(true)
+      expect(parts.length).toBe(Math.ceil(Buffer.byteLength(parts.join('')) / 4096))
+      expect(parts.every(part => Buffer.byteLength(part) <= 4096)).toBe(true)
       expect(parts.join('')).toContain(detail)
       expect(parts[0]).toContain('`/answer 1`')
       expect(f.test.replyCalls.at(-1)).toMatchObject({ finish: true, content: expect.stringContaining('接下来的消息') })

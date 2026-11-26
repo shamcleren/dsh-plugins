@@ -17,7 +17,7 @@ import { en as wecomEn, zh as wecomZh } from '../adapters/wecom/client/locales.j
 import type { Config as WeChatConfig } from '../adapters/wechat/config.js'
 import type { Config as WeComConfig } from '../adapters/wecom/config.js'
 import wechatRemote from '../adapters/wechat/remote.js'
-import { adapterViewsSchema } from '../contracts.js'
+import { adapterViewsSchema, sessionSourceSchema } from '../contracts.js'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' { interface LocaleNamespaceMap { 'im.workbench': LocaleKey } }
 export const name = '@shamcleren/dsh-im'
@@ -49,8 +49,13 @@ function mount(ctx: Context): void {
     if (!result.ok) throw new Error('IM state unavailable')
     return adapterViewsSchema.parse(result.value)
   }
+  const loadSource = async (sessionId: string, signal: AbortSignal) => {
+    const result = await connection.rpc.call('/im', 'sessionSource', { sessionId }, signal)
+    if (!result.ok) throw new Error('IM session source unavailable')
+    return sessionSourceSchema.parse(result.value)
+  }
   const wechatT = ctx.locale.bind('settings.wechat'), wecomT = ctx.locale.bind('settings.wecom')
   ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({ name: 'plugins.bundle.config', key: name, locale: 'im.workbench' }, () => createElement(Panel, { t: ctx.locale.bind('im.workbench'), wechatT, wecomT, wechat, wecom, wechatForm, wecomForm, api, state })))
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({ name: 'conversation.session.header.actions', id: 'im-session-badge', order: 20 }, (props: { sessionId: string }) => createElement(Fragment, null,
-    createElement(WeChatBadge, { sessionId: props.sessionId, t: wechatT }), createElement(WeComBadge, { sessionId: props.sessionId, t: wecomT }))))
+    createElement(WeChatBadge, { sessionId: props.sessionId, t: wechatT }), createElement(WeComBadge, { sessionId: props.sessionId, t: wecomT, loadSource }))))
 }

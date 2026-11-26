@@ -50,6 +50,7 @@ export interface WeComCardState extends FormState {
   presetsLoading: boolean
   presetsFailed: boolean
   presetDefaultId?: string
+  finalReplyOnly: FieldState
   preventIdleSleep: FieldState
   agentPreset: FieldState
   rolePrompt: FieldState
@@ -113,6 +114,7 @@ export class WeComCardController {
         stringListField('allowedUsers'),
         stringListField('adminUsers'),
         textField('workspaceId'),
+        booleanField('finalReplyOnly'),
         booleanField('preventIdleSleep'),
         textField('agentPreset'),
         textField('rolePrompt'),
@@ -207,6 +209,7 @@ export class WeComCardController {
       presetsLoading: this.presetsLoading,
       presetsFailed: this.presetsFailed,
       ...this.presetDefaultId === undefined ? {} : { presetDefaultId: this.presetDefaultId },
+      finalReplyOnly: this.form.field('finalReplyOnly'),
       preventIdleSleep: this.form.field('preventIdleSleep'),
       agentPreset: this.form.field('agentPreset'),
       rolePrompt: this.form.field('rolePrompt'),

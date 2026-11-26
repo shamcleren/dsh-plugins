@@ -17,13 +17,13 @@ export function boundReply(text: string, maxBytes = MAX_STREAM_REPLY_BYTES): str
   return result
 }
 
-export function* splitReply(text: string): IterableIterator<string> {
+export function* splitReply(text: string, maxBytes = MAX_STREAM_REPLY_BYTES): IterableIterator<string> {
   let start = 0
   let end = 0
   let bytes = 0
   for (const character of text) {
     const size = Buffer.byteLength(character)
-    if (bytes + size > MAX_STREAM_REPLY_BYTES) {
+    if (bytes + size > maxBytes) {
       yield text.slice(start, end)
       start = end
       bytes = 0
@@ -190,7 +190,9 @@ export class TurnProjection {
   private readonly images: ImageAttachmentRef[] = []
   private readonly files = new Map<string, OutboundFile>()
 
-  constructor(private readonly promptRpcId: string) {}
+  private finalAnswer = ''
+
+  constructor(private readonly promptRpcId: string, private readonly finalReplyOnly = false) {}
 
   push(event: HostSessionEvent): TurnProjectionUpdate {
     if (eventAdmitsPrompt(event, this.promptRpcId)) this.admitted = true
@@ -203,13 +205,18 @@ export class TurnProjection {
     }
     if (this.ownedTurn === undefined || eventTurn(event) !== this.ownedTurn) return {}
     if (event.type === 'step/start') {
+      this.finalAnswer = ''
       this.commitStep()
       this.stepText = new Map()
     }
-    const delta = textDelta(event)
+    const delta = this.finalReplyOnly ? undefined : textDelta(event)
     let partial = delta === undefined ? undefined : this.append(delta.index, delta.text)
     const assembled = assistantText(event)
-    if (assembled !== undefined) {
+    if (this.finalReplyOnly && event.type === 'assistant/message') {
+      const content = record(record(event.data)?.message)?.content
+      const callsTool = Array.isArray(content) && content.some(part => record(part)?.type === 'tool-call')
+      this.finalAnswer = callsTool ? '' : assembled ?? ''
+    } else if (assembled !== undefined) {
       this.stepText = new Map([[0, assembled]])
       partial = this.fullText()
     }
@@ -222,7 +229,7 @@ export class TurnProjection {
     const data = record(event.data) ?? {}
     return {
       ...partial === undefined ? {} : { partial },
-      outcome: { text: this.fullText(), images: [...this.images], files: [...this.files.values()], reason: data.reason },
+      outcome: { text: this.finalReplyOnly ? this.finalAnswer : this.fullText(), images: [...this.images], files: [...this.files.values()], reason: data.reason },
     }
   }
 

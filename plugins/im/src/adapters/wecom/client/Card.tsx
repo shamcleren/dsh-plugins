@@ -20,6 +20,7 @@ const FIELD_LABELS: Readonly<Record<string, LocaleKey>> = {
   adminUsers: 'adminUsers',
   workspaceId: 'workspace',
   preventIdleSleep: 'preventIdleSleep',
+  finalReplyOnly: 'finalReplyOnly',
   agentPreset: 'agentPreset',
   rolePrompt: 'rolePrompt',
   thinkingText: 'thinkingText',
@@ -55,8 +56,8 @@ function ValueField(props: ValueFieldProps) {
       {props.multiline ? (
         <textarea
           id={props.id}
-          rows={4}
-          style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }}
+          rows={8}
+          style={{ ...inputStyle, height: 'auto', minHeight: '10rem', resize: 'vertical', fontFamily: 'inherit' }}
           value={props.state.text}
           disabled={props.disabled}
           aria-invalid={props.state.invalid || undefined}
@@ -318,6 +319,11 @@ export function WeComCard(props: WeComCardProps) {
           </label>
           <p style={styles.hint}>{t('preventIdleSleepHint')}</p>
         </div>
+        <label style={styles.toggle}>
+          <input type="checkbox" checked={state.finalReplyOnly.text === 'true'} disabled={disabled}
+            onChange={event => props.edit('finalReplyOnly', String(event.target.checked))} />
+          {t('finalReplyOnly')}
+        </label>
         <PresetField
           state={state.agentPreset}
           options={state.presetOptions}

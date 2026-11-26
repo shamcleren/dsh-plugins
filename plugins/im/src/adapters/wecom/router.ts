@@ -1,3 +1,5 @@
+import { groupName } from '../../contracts.js'
+import type { WeComSessionSources } from './session-source.js'
 import { ensureConversationSession } from '../../core/sessions.js'
 import { managementHelp, requiresHostSession, managementFailure } from '../../core/commands.js'
 import { runSessionCommand } from '../../core/session-commands.js'
@@ -54,6 +56,7 @@ import type { ConversationBindings } from './bindings.js'
 import type { BotModel, WeComSettingsPatch } from './config.js'
 
 const HISTORY_PAGE_MESSAGES = 100
+const MAX_MARKDOWN_BYTES = 4096
 const MAX_CARD_BUTTONS = 6
 const QUESTION_CARD_TITLE_WIDTH = 26
 const QUESTION_CARD_BODY_WIDTH = 30
@@ -134,9 +137,11 @@ function whoamiReply(userId: string): string {
   return `${identityHint(userId)}\n把它填进插件设置的「允许的用户 ID」或「管理员用户 ID」即可授权。`
 }
 
+class TurnObservationTimeout extends Error {}
+
 const LOCAL_MODEL_NOTICE = '此选择仅作用于当前企微会话。'
 
-const COMMAND_HELP = managementHelp({ identity: true, sessions: true })
+const COMMAND_HELP = managementHelp({ identity: true, sessions: true }) + '\n- /groupname <群名>：设置工作台显示的本群名称'
 
 export interface WeComReplyClient {
   replyStream(
@@ -181,12 +186,14 @@ export interface RouterConfig {
   adminUsers: readonly string[]
   agentPreset?: string
   rolePrompt?: string
+  finalReplyOnly?: boolean
   thinkingText: string
   turnTimeoutMs: number
 }
 
 export interface RouterRuntimeContext {
   bindings: Pick<ConversationBindings, 'current' | 'list' | 'set'>
+  sources?: Pick<WeComSessionSources, 'record' | 'nameGroup'>
   defaultWorkspace: HostWorkspace
   /** Durable image bytes, absent when the deployment has no attachment store. */
   readImage?: (ref: ImageAttachmentRef) => Promise<Uint8Array>
@@ -555,7 +562,7 @@ export class WeComConversationRouter {
         const earlier = boundReply(this.segmentText(activeTurn, activeTurn.text), MAX_STREAM_REPLY_BYTES - Buffer.byteLength(hint) - 2)
         await this.finish(activeTurn.frame, activeTurn.streamId, [earlier, hint].filter(Boolean).join('\n\n'))
       }
-      for (const part of splitReply(outputMode === 'proactive' ? combined : notice)) {
+      for (const part of splitReply(outputMode === 'proactive' ? combined : notice, MAX_MARKDOWN_BYTES)) {
         if (!stillPending()) return
         await this.sendProactiveText(activeTurn, part)
       }
@@ -758,11 +765,14 @@ export class WeComConversationRouter {
     const streamId = generateReqId('stream')
     let turn: { outcome: Promise<TurnOutcome>; dispose(): void } | undefined
     let handedOff = false
+    let admittedSession: string | undefined
     try {
       const sessionId = requiresHostSession(managementCommandText(message), this.adminUsers.has(message.userId))
         ? await this.ensureSession(conversationKey, requestedSessionId) : requestedSessionId
       const directCommand = await this.runManagementCommand(message, conversationKey, sessionId)
       if (directCommand !== undefined) {
+        const bound = this.runtime.bindings.current(conversationKey, sessionId)
+        if (bound !== sessionId) await this.recordSpeaker(message, conversationKey, bound)
         await this.finish(frame, streamId, directCommand)
         return
       }
@@ -784,7 +794,7 @@ export class WeComConversationRouter {
         segmentStartText: '',
         streamText: '',
         awaitingInteraction: false,
-        outputMode: 'stream',
+        outputMode: this.config.finalReplyOnly ? 'proactive' : 'stream',
       }
       turn = this.waitForTurn({
         baselineSeq: sessionState.lastSeq,
@@ -800,6 +810,7 @@ export class WeComConversationRouter {
           content: await inboundContent(message, this.config.mediaMaxBytes ?? 10 * 1024 * 1024, this.deliveryAbort.signal),
         },
       }))
+      admittedSession = sessionId
       if (accepted.command !== undefined) {
         sessionState.promptRpcIds.add(promptRpcId)
         turn.dispose()
@@ -813,6 +824,9 @@ export class WeComConversationRouter {
         return
       }
       this.activeTurns.set(sessionId, activeTurn)
+      if (this.config.finalReplyOnly) {
+        await this.finish(frame, streamId, '收到，处理完会在这里回复。').catch(() => this.logger.warn('wecom-aibot: acknowledgement delivery failed'))
+      }
       handedOff = true
       this.track(this.completeTurn(activeTurn, turn))
     } catch (error: unknown) {
@@ -824,6 +838,7 @@ export class WeComConversationRouter {
       }
     } finally {
       if (!handedOff) turn?.dispose()
+      if (admittedSession) await this.recordSpeaker(message, conversationKey, admittedSession)
     }
   }
 
@@ -835,13 +850,13 @@ export class WeComConversationRouter {
       const outcome = await turn.outcome
       if (this.stopping) return
       const segment = this.segmentText(activeTurn, outcome.text)
-      const body = segment || activeTurn.streamText
+      const body = this.config.finalReplyOnly ? outcome.text : segment || activeTurn.streamText
       // The stream still has to be finished, so an image-only turn needs a lead-in
       // rather than an empty final frame; the images follow as their own messages.
       const textReply = body
         || (outcome.files.length > 0 ? '附件如下：' : outcome.images.length > 0 ? IMAGE_LEAD_IN : fallbackReply(outcome.reason))
       if (activeTurn.outputMode === 'proactive') {
-        await this.sendProactiveText(activeTurn, textReply)
+        for (const part of splitReply(textReply, MAX_MARKDOWN_BYTES)) await this.sendProactiveText(activeTurn, part)
       } else {
         await this.finish(activeTurn.frame, activeTurn.streamId, textReply)
       }
@@ -850,9 +865,11 @@ export class WeComConversationRouter {
     } catch (error: unknown) {
       this.logger.error(error)
       if (!this.stopping) {
+        const notice = error instanceof TurnObservationTimeout
+          ? '等待结果已超时，可在 DSH 会话中查看后续进度。' : INTERNAL_ERROR_REPLY
         const failureReply = activeTurn.outputMode === 'proactive'
-          ? this.sendProactiveText(activeTurn, INTERNAL_ERROR_REPLY)
-          : this.finish(activeTurn.frame, activeTurn.streamId, INTERNAL_ERROR_REPLY)
+          ? this.sendProactiveText(activeTurn, notice)
+          : this.finish(activeTurn.frame, activeTurn.streamId, notice)
         await failureReply.catch((replyError: unknown) => { this.logger.error(replyError) })
       }
     } finally {
@@ -1109,7 +1126,9 @@ export class WeComConversationRouter {
     text: string,
     templateCard: TemplateCard,
   ): Promise<WsFrame> {
-    const textReply = await this.finish(activeTurn.frame, activeTurn.streamId, text)
+    const textReply = activeTurn.outputMode === 'proactive'
+      ? await this.sendProactiveText(activeTurn, text)
+      : await this.finish(activeTurn.frame, activeTurn.streamId, text)
     await this.sendTemplateCard(activeTurn, templateCard)
     return textReply
   }
@@ -1287,6 +1306,12 @@ export class WeComConversationRouter {
       bindings: this.runtime.bindings, create: (id, workspace) => this.createSession(id, workspace) })
   }
 
+  private async recordSpeaker(message: WeComInboundText, key: string, sessionId: string): Promise<void> {
+    if (message.chatType !== 'group') return
+    try { await this.runtime.sources?.record(sessionId, key, message.userId) }
+    catch { this.logger.warn('wecom-aibot: could not record group Session source') }
+  }
+
   private async createSession(sessionId: string, workspaceId: string): Promise<string> {
     return unwrap(await this.api.sessions.create(apiRequest({
       sessionId,
@@ -1313,6 +1338,14 @@ export class WeComConversationRouter {
     }
     if (!this.adminUsers.has(message.userId)) return commandPermissionReply(message.userId)
     switch (command) {
+      case '/groupname': {
+        if (message.chatType !== 'group') return '请在要命名的群聊中使用 /groupname。'
+        const name = groupName.safeParse(args.join(' '))
+        if (!name.success) return '用法：/groupname <群名>（最多 100 个字符）'
+        if (!this.runtime.sources) return '当前部署无法保存群名。'
+        await this.runtime.sources.nameGroup(conversationKey, name.data)
+        return '已更新这个群在 DSH 中显示的名称。'
+      }
       case '/help': return COMMAND_HELP
       case '/status': return await this.status(sessionId)
       case '/new': return args.length === 0
@@ -1557,7 +1590,7 @@ export class WeComConversationRouter {
     const abort = new AbortController()
     this.turnAborts.add(abort)
     let settled = false
-    const projection = new TurnProjection(options.promptRpcId)
+    const projection = new TurnProjection(options.promptRpcId, this.config.finalReplyOnly)
     let resolveOutcome: (value: TurnOutcome) => void = () => undefined
     let rejectOutcome: (error: unknown) => void = () => undefined
     const outcome = new Promise<TurnOutcome>((resolve, reject) => {
@@ -1607,7 +1640,7 @@ export class WeComConversationRouter {
     }
     abort.signal.addEventListener('abort', onAbort, { once: true })
     const timeout = setTimeout(() => {
-      settle(new Error(`wecom-aibot: turn timed out after ${this.config.turnTimeoutMs}ms`))
+      settle(new TurnObservationTimeout(`wecom-aibot: turn timed out after ${this.config.turnTimeoutMs}ms`))
     }, this.config.turnTimeoutMs)
     return {
       outcome,

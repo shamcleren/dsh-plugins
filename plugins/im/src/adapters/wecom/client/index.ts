@@ -8,7 +8,8 @@ import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
-import { createElement } from 'react'
+import type { SessionSource } from '../../../contracts.js'
+import { createElement, useEffect, useState } from 'react'
 import { WeComCard } from './Card.js'
 import { WeComCardController } from './controller.js'
 import { en, zh, type LocaleKey } from './locales.js'
@@ -25,7 +26,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 const LOCALE_NAMESPACE = 'settings.wecom'
 const SETTINGS_NAMESPACE = 'wecom-aibot'
 const BADGE_CSS = `
-.wecom-session-badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 8px;font:13px/1.45 ui-sans-serif,system-ui,sans-serif;color:#2672ff;background:color-mix(in srgb,#2672ff 14%,transparent)}
+.wecom-session-badge{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:min(38vw,34rem);border-radius:999px;padding:2px 8px;font:13px/1.45 ui-sans-serif,system-ui,sans-serif;color:#2672ff;background:color-mix(in srgb,#2672ff 14%,transparent)}
 .wecom-session-mark{width:8px;height:8px;border-radius:999px;background:#2672ff;box-shadow:0 0 0 2px color-mix(in srgb,#2672ff 28%,transparent)}
 `
 
@@ -82,10 +83,35 @@ interface SessionBadgeHost {
 export function ChannelBadge(props: {
   sessionId: string | undefined
   t: (key: LocaleKey) => string
+  loadSource?: LoadSource
 }): ReturnType<typeof createElement> | null {
   if (!isChannelSession(props.sessionId ?? '')) return null
-  return createElement('span', { className: 'wecom-session-badge', title: props.t('sessionBadge') },
+  if (props.loadSource && props.sessionId) return createElement(SourceBadge, { key: props.sessionId, id: props.sessionId, load: props.loadSource, t: props.t })
+  return badge(props.t('sessionBadge'))
+}
+
+type LoadSource = (id: string, signal: AbortSignal) => Promise<SessionSource>
+
+function SourceBadge({ id, load, t }: { id: string; load: LoadSource; t: (key: LocaleKey) => string }) {
+  const [source, setSource] = useState<SessionSource>(null)
+  useEffect(() => {
+    let active: AbortController
+    const refresh = () => {
+      active?.abort()
+      const current = active = new AbortController()
+      void load(id, current.signal).then(result => { if (!current.signal.aborted) setSource(result) }).catch(() => undefined)
+    }
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => { active.abort(); window.removeEventListener('focus', refresh) }
+  }, [id, load])
+  if (!source) return badge(t('sessionBadge'))
+  return badge(t('groupBadge') + ' · ' + source.group + ' · ' + t('speakers') + ' ' + source.speakers.join(', '))
+}
+
+function badge(label: string) {
+  return createElement('span', { className: 'wecom-session-badge', title: label },
     createElement('style', null, BADGE_CSS),
     createElement('span', { className: 'wecom-session-mark', 'aria-hidden': true }),
-    props.t('sessionBadge'))
+    createElement('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, label))
 }

@@ -13,6 +13,7 @@ import { onCredentialsUpdated, resolveCredentials } from './credentials.js'
 import { createHostApi } from './host-api.js'
 import { channelWorkspaceTitle } from '../../core/workspace-title.js'
 import { WeComRuntimeController } from './runtime.js'
+import { WeComSessionSources } from './session-source.js'
 import { ConversationBindings } from './bindings.js'
 import { resolveDefaultWorkspace } from './workspace.js'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
@@ -52,6 +53,7 @@ export function apply(ctx: Context, config: PlainConfig | Volatile<PlainConfig>)
   installChannelTitle(ctx, logger)
   // Cloning detaches the validated readonly snapshot for existing mutable config consumers.
   const settings = (): PlainConfig => ('get' in config) ? structuredClone(config.get()) as PlainConfig : config
+  const sources = new WeComSessionSources()
   let bindings: Promise<ConversationBindings> | undefined
   const bindingStore = (): Promise<ConversationBindings> => {
     bindings ??= ConversationBindings.open(join(
@@ -75,6 +77,7 @@ export function apply(ctx: Context, config: PlainConfig | Volatile<PlainConfig>)
     createClient: credentials => new WSClient(credentials),
     prepareContext: async current => ({
       bindings: await bindingStore(),
+      sources,
       defaultWorkspace: await resolveDefaultWorkspace(
         api,
         resolveDshHome(),

@@ -6,7 +6,7 @@ import { apply } from '../../src/index.js'
 it('admits before reading management RPC and rejects malformed, oversized and foreign requests', async () => {
   const ctx = new Context()
   let serve!: (request: IncomingMessage, response: ServerResponse) => Promise<void>, removed = false
-  ctx.provide('connection', { admit: (request: IncomingMessage) => request.headers.origin === 'https://foreign.invalid' ? { rejection: 403 } : request.headers['x-fixture-auth'] === 'yes' ? { peer: {} } : { rejection: 401 } } as never)
+  ctx.provide('connection', { admit: (request: IncomingMessage) => request.headers.origin === 'https://foreign.invalid' ? { rejection: 403 } : request.headers['x-fixture-auth'] === 'yes' ? { peer: { principal: { kind: request.headers['x-fixture-guest'] ? 'fixture' : 'owner' } } } : { rejection: 401 } } as never)
   ctx.provide('webServer', { host: '127.0.0.1', register(route: { handler: typeof serve }) { serve = route.handler; return () => { removed = true } } } as never)
   await ctx.plugin({ apply })
   ctx.imHub.register({ id: 'fixture', capabilities: ['text'], state: () => ({ enabled: false, status: 'disabled', accounts: 0 }) })
@@ -22,6 +22,10 @@ it('admits before reading management RPC and rejects malformed, oversized and fo
     expect((await fetch(url, { method: 'POST', body: '{', headers })).status).toBe(400)
     expect((await fetch(url, { method: 'POST', body: body.replace('"state"', '"configure"'), headers })).status).toBe(400)
     expect((await fetch(url, { method: 'POST', body: 'x'.repeat(8193), headers })).status).toBe(413)
+    const source = url.replace('/state', '/sessionSource')
+    const query = (id: string) => JSON.stringify({ type: 'client-request', rpcId: 'test', method: 'sessionSource', payload: { sessionId: id } })
+    expect((await fetch(source, { method: 'POST', body: query('../escape'), headers })).status).toBe(400)
+    expect((await fetch(source, { method: 'POST', body: query('session-wecom-test'), headers: { ...headers, 'x-fixture-guest': '1' } })).status).toBe(403)
     expect((await fetch(url + '/unknown', { method: 'POST', body, headers })).status).toBe(404)
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await ctx.fiber.dispose() }
   expect(removed).toBe(true)
