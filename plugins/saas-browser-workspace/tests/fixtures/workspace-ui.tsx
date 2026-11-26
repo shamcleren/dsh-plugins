@@ -40,7 +40,9 @@ const remote: AgentRemote = {
     if (method === 'answer') { patch({ phase: 'queued', question: undefined }); return }
     if (method === 'select') patch({ selected: value.listing!.records.find(row => row.id === input.recordId), selectedId: input.recordId, phase: 'queued' })
     if (method === 'takeover') patch({ phase: 'human', humanReason: 'requested', view: 'details' })
-    if (method === 'resizeBrowser') { width = input.width; height = input.height; epoch++ }
+    if (method === 'resizeBrowser' && (width !== input.width || height !== input.height)) {
+      width = input.width; height = input.height; epoch++
+    }
     if (method === 'resume') patch({ phase: 'ready', humanReason: undefined })
   },
   live: async (_session, signal, receive) => {
