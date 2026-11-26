@@ -225,13 +225,17 @@ export async function sendTyping(request: {
   userId: string
   contextToken?: string
   status: 1 | 2
+  signal?: AbortSignal
 }): Promise<void> {
+  request.signal?.throwIfAborted()
   const config = await postJson<{ typing_ticket?: string }>({
     baseUrl: request.baseUrl,
     endpoint: 'ilink/bot/getconfig',
     token: request.token,
     body: { ilink_user_id: request.userId, context_token: request.contextToken, base_info: BASE_INFO },
+    ...request.signal === undefined ? {} : { signal: request.signal },
   })
+  request.signal?.throwIfAborted()
   if (config.typing_ticket === undefined) return
   await postJson({
     baseUrl: request.baseUrl,
@@ -243,6 +247,7 @@ export async function sendTyping(request: {
       status: request.status,
       base_info: BASE_INFO,
     },
+    ...request.signal === undefined ? {} : { signal: request.signal },
   })
 }
 

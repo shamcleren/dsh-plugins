@@ -181,12 +181,13 @@ export class EncryptionSupport {
         await file.read(header, 0, 10, 0)
         if (header.equals(magic)) {
           const entry = await this.checked(command, ['ls-files', '--stage', '-z', '--', path])
+          const indexed = /^(100(?:644|755)) ([a-f0-9]{40}(?:[a-f0-9]{24})?) 0\t/u.exec(entry)
           const hash = (await this.checked(command, ['hash-object', '--no-filters', '--', path])).trim()
-          if (entry.split(' ')[1] !== hash) throw new WorkspaceError('encryptionUnlock')
+          if (!indexed || indexed[2] !== hash || entry.split('\0').filter(Boolean).length !== 1) throw new WorkspaceError('encryptionUnlock')
           // Finish an interrupted unlock only for ciphertext identical to the index.
           // Plaintext edits and changed ciphertext are never checked out over.
           await file.close(); file = undefined
-          await this.checked(command, ['checkout', '--', path])
+          await this.restoreCiphertext(project, command, path, indexed[1]!, hash)
           file = await open(join(project.path, path), constants.O_RDONLY | constants.O_NOFOLLOW)
           header.fill(0); await file.read(header, 0, 10, 0)
           if (header.equals(magic)) throw new WorkspaceError('encryptionUnlock')
@@ -194,6 +195,22 @@ export class EncryptionSupport {
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
       finally { await file?.close() }
     }
+  }
+  private async restoreCiphertext(project: Project, command: Command, path: string, mode: string, hash: string): Promise<void> {
+    const temporary = await mkdtemp(join(this.scratch, 'crypt-restore-'))
+    const env = { ...this.options().env, GIT_INDEX_FILE: join(temporary, 'index') }
+    try {
+      // A fresh one-entry index has no cached worktree stat. Ordinary checkout
+      // can skip smudge when its old cache still matches pre-unlock ciphertext.
+      await this.checked(command, ['update-index', '--add', '--cacheinfo', mode, hash, path], { env })
+      const parent = relative(project.path, await realpath(dirname(join(project.path, path))))
+      const info = await lstat(join(project.path, path))
+      if (parent === '..' || parent.startsWith('../') || isAbsolute(parent) || !info.isFile() || info.isSymbolicLink()
+        || (await this.checked(command, ['hash-object', '--no-filters', '--', path])).trim() !== hash) {
+        throw new WorkspaceError('encryptionUnlock')
+      }
+      await this.checked(command, ['checkout-index', '--force', '--', path], { env })
+    } finally { await rm(temporary, { recursive: true, force: true }) }
   }
   async verifyTree(project: Project, command: Command, tree: string, paths: string[], env: NodeJS.ProcessEnv, prior = new Set<string>(), budget = { bytes: 0 }): Promise<void> {
     const protectedPaths = new Set([...prior, ...await this.protected(command, paths, env)])

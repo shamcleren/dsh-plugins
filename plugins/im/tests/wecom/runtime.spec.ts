@@ -78,6 +78,7 @@ const prepareContext = async () => ({
   },
   bindings: {
     current: (_key: string, fallback: string) => fallback,
+    list: (_key: string, fallback: string) => [fallback],
     set: async () => undefined,
   },
 })

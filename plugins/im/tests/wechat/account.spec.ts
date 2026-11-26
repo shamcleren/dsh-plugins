@@ -11,6 +11,26 @@ afterEach(() => {
 })
 
 describe('WeChatAccount polling', () => {
+  it('allows the router to cancel typing during shutdown while refusing new typing refreshes', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async input => Response.json(
+      String(input).endsWith('/getconfig') ? { typing_ticket: 'fixture-ticket' } : { ret: 0 },
+    ))
+    vi.stubGlobal('fetch', fetch)
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-im-typing-'))
+    const store = await WeChatAccountStore.open(directory)
+    const account = new WeChatAccount({ accountId: 'fixture-account', token: 'fixture-token', baseUrl: 'https://ilink.example.test' }, store,
+      { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), success: vi.fn() } as never, 1024, async () => undefined)
+    try {
+      await account.stop()
+      fetch.mockClear()
+      await expect(account.typing('fixture-peer', 1)).rejects.toMatchObject({ name: 'AbortError' })
+      expect(fetch).not.toHaveBeenCalled()
+      await account.typing('fixture-peer', 2, 'fixture-context', new AbortController().signal)
+      expect(fetch).toHaveBeenCalledTimes(2)
+      expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toMatchObject({ status: 2, typing_ticket: 'fixture-ticket' })
+    } finally { await store.drain(); await rm(directory, { recursive: true, force: true }) }
+  })
+
   it('admits text commands with an empty client id and a 64-bit server id through the real protocol decoder', async () => {
     let acknowledged!: () => void
     const cursorRead = new Promise<void>(resolve => { acknowledged = resolve })

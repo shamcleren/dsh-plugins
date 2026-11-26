@@ -45,7 +45,7 @@ describe('WeChatRuntimeController', () => {
       logger: logger(),
       store,
       prepareContext: async config => ({
-        bindings: { current: (_key: string, fallback: string) => fallback, set: async () => undefined },
+        bindings: { current: (_key: string, fallback: string) => fallback, list: (_key: string, fallback: string) => [fallback], set: async () => undefined },
         defaultWorkspace: { workspaceId: 'workspace-a', path: '/tmp', title: config.workspaceName ?? '微信', sessionIds: [] },
       }),
       writeSettings: async () => undefined,

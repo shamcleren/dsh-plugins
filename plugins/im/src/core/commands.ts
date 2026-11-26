@@ -6,18 +6,26 @@ export function requiresHostSession(text: string | undefined, administrator: boo
   return administrator && sessionCommands.has(text.trim().split(/\s+/u)[0] ?? '')
 }
 
-export function managementHelp(options: { tasks?: boolean; identity?: boolean } = {}): string {
-  return [
-    '可用命令：', '/help - 查看命令',
-    ...(options.identity ? ['/whoami - 查看当前平台身份'] : []),
-    '/status - 查看当前模型与 effort',
-    ...(options.tasks ? ['/tasks - 查看当前聊天的活动任务', '/cancel [会话 ID] - 请求取消当前聊天的活动任务'] : []),
-    '/new - 新建并切换会话', '/workspace [名称或 ID|reset] - 查看或切换工作区',
-    '/preset [<id>|reset] - 查看或切换渠道预设',
-    '/model [provider model [effort]] - 查看或切换当前会话模型',
-    '/effort [level] - 查看或调整推理强度', '/compact - 压缩当前会话',
-    '/answer <答案> - 回答当前交互问题', '/approve / /reject - 处理当前审批',
-  ].join('\n')
+export function managementHelp(options: { tasks?: boolean; identity?: boolean; sessions?: boolean } = {}): string {
+  const sections = [
+    ['会话与工作区', [
+      ...(options.sessions ? ['/session：查看历史会话', '/session <编号或会话 ID>：切换会话'] : []),
+      '/new：新建并切换会话', '/workspace [名称或 ID|reset]：查看或切换工作区',
+      '/compact：压缩当前会话',
+    ]],
+    ['任务与交互', [
+      ...(options.tasks ? ['/tasks：查看当前聊天的活动任务', '/cancel [会话 ID]：请求取消任务'] : []),
+      '/answer <答案>：回答当前问题', '/approve 或 /reject：允许或拒绝当前审批',
+    ]],
+    ['模型与预设', [
+      '/status：查看模型、推理强度与预设',
+      '/model [provider model [effort]]：查看或切换模型',
+      '/effort [level]：查看或调整推理强度', '/preset [<id>|reset]：查看或切换预设',
+    ]],
+    ['帮助', ['/help：查看命令', ...(options.identity ? ['/whoami：查看当前平台身份'] : [])]],
+  ] as const
+  // Real list markers keep commands separate in clients that fold soft line breaks.
+  return sections.map(([title, commands]) => `【${title}】\n\n${commands.map(command => `- ${command}`).join('\n')}`).join('\n\n')
 }
 
 /** Never echo a Host exception, message body or credential into an IM response. */

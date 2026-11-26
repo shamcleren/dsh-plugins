@@ -14,7 +14,9 @@ export interface Config {
   workspaceId?: string
   preventIdleSleep?: boolean
   agentPreset?: string
+  /** Retained for stored configuration compatibility; WeChat uses typing indicators. */
   thinkingText?: string
+  /** Deadline for the journal to associate a prompt with a turn; running turns follow their lifecycle. */
   turnTimeoutMs?: number
   mediaMaxBytes?: number
   sendTyping?: boolean

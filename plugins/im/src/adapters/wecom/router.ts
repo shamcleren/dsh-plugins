@@ -1,5 +1,6 @@
 import { ensureConversationSession } from '../../core/sessions.js'
 import { managementHelp, requiresHostSession, managementFailure } from '../../core/commands.js'
+import { runSessionCommand } from '../../core/session-commands.js'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Logger } from '@deepseek-ai/cordis'
 import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -41,6 +42,8 @@ import {
   approvalCommand,
   boundReply,
   fallbackReply,
+  MAX_STREAM_REPLY_BYTES,
+  splitReply,
   TurnProjection,
 } from './reply.js'
 import { inboundContent } from './media.js'
@@ -52,6 +55,9 @@ import type { BotModel, WeComSettingsPatch } from './config.js'
 
 const HISTORY_PAGE_MESSAGES = 100
 const MAX_CARD_BUTTONS = 6
+const QUESTION_CARD_TITLE_WIDTH = 26
+const QUESTION_CARD_BODY_WIDTH = 30
+const QUESTION_CARD_BUTTON_WIDTH = 10
 const MAX_SETTLED_CARDS = 100
 const INTERNAL_ERROR_REPLY = '处理请求时发生错误，请稍后重试。'
 const NO_PENDING_APPROVAL_REPLY = '当前没有待处理的审批。'
@@ -62,6 +68,17 @@ const APPROVAL_OWNER_REPLY = '只有发起本轮请求的用户可以处理该�
 const NO_PENDING_QUESTION_REPLY = '当前没有待回答的问题。'
 const QUESTION_OWNER_REPLY = '只有发起本轮请求的用户可以回答该问题。'
 const CONTINUATION_REPLY = '已加入当前任务。'
+
+/** Budget two units for non-ASCII characters to leave room on narrow clients. */
+function fitsQuestionCardLine(text: string, limit: number): boolean {
+  if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(text)) return false
+  let width = 0
+  for (const character of text) {
+    width += character.charCodeAt(0) <= 0x7e ? 1 : 2
+    if (width > limit) return false
+  }
+  return true
+}
 
 function isAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true
@@ -119,7 +136,7 @@ function whoamiReply(userId: string): string {
 
 const LOCAL_MODEL_NOTICE = '此选择仅作用于当前企微会话。'
 
-const COMMAND_HELP = managementHelp({ identity: true })
+const COMMAND_HELP = managementHelp({ identity: true, sessions: true })
 
 export interface WeComReplyClient {
   replyStream(
@@ -168,7 +185,7 @@ export interface RouterConfig {
 }
 
 export interface RouterRuntimeContext {
-  bindings: Pick<ConversationBindings, 'current' | 'set'>
+  bindings: Pick<ConversationBindings, 'current' | 'list' | 'set'>
   defaultWorkspace: HostWorkspace
   /** Durable image bytes, absent when the deployment has no attachment store. */
   readImage?: (ref: ImageAttachmentRef) => Promise<Uint8Array>
@@ -506,17 +523,40 @@ export class WeComConversationRouter {
       answers: new Map(),
     }
     this.pendingQuestions.set(activeTurn.conversationKey, pending)
-    const notice = this.withNotice(activeTurn, this.formatQuestions(frame.questions))
-    const card = this.questionCard(pending)
-    pending.cardPresented = card !== undefined
-    const presentation = card === undefined
-      ? this.finish(activeTurn.frame, activeTurn.streamId, notice)
-      : this.interactiveUpdate(activeTurn, notice, card)
     activeTurn.awaitingInteraction = true
-    void presentation.catch((error: unknown) => {
-      this.logger.error(error)
-      this.removePendingQuestion(pending)
-    })
+    this.track(this.deliverQuestion(pending).catch((error: unknown) => {
+      if (this.removePendingQuestion(pending)) this.api.releaseSession?.(activeTurn.sessionId)
+      throw error
+    }))
+  }
+
+  private async deliverQuestion(pending: PendingQuestion): Promise<void> {
+    const { activeTurn } = pending
+    const { outputMode } = activeTurn
+    const notice = this.formatQuestions(pending)
+    const combined = this.withNotice(activeTurn, notice)
+    const fitsStream = Buffer.byteLength(combined) <= MAX_STREAM_REPLY_BYTES
+    const stillPending = () => !this.stopping && !pending.locallyAnswered
+      && this.pendingQuestions.get(activeTurn.conversationKey) === pending
+    if (outputMode === 'stream' && fitsStream) {
+      await this.finish(activeTurn.frame, activeTurn.streamId, combined)
+    } else {
+      if (outputMode === 'stream') {
+        const hint = '问题较长，接下来的消息会列出题目和回复方式。'
+        const earlier = boundReply(this.segmentText(activeTurn, activeTurn.text), MAX_STREAM_REPLY_BYTES - Buffer.byteLength(hint) - 2)
+        await this.finish(activeTurn.frame, activeTurn.streamId, [earlier, hint].filter(Boolean).join('\n\n'))
+      }
+      for (const part of splitReply(outputMode === 'proactive' ? combined : notice)) {
+        if (!stillPending()) return
+        await this.sendProactiveText(activeTurn, part)
+      }
+    }
+    if (!fitsStream || !stillPending()) return
+    const card = this.questionCard(pending)
+    if (card !== undefined) {
+      pending.cardPresented = true
+      await this.sendTemplateCard(activeTurn, card)
+    }
   }
 
   private resolveQuestion(frame: QuestionResolvedFrame): void {
@@ -660,7 +700,7 @@ export class WeComConversationRouter {
     userId: string,
     frame: WeComTemplateCardEventFrame,
   ): Promise<void> {
-    if (pending.activeTurn.userId !== userId) return
+    if (pending.activeTurn.userId !== userId || !pending.cardPresented || pending.cardHandled || pending.locallyAnswered) return
     const selection = this.cardSelection(eventKey)
     const questionIndex = this.currentQuestionIndex(pending)
     if (selection === undefined || selection.questionIndex !== questionIndex) return
@@ -675,10 +715,12 @@ export class WeComConversationRouter {
       await this.replies.updateTemplateCard(frame, nextCard)
       return
     }
-    if (this.currentQuestion(pending) !== undefined) {
+    const nextQuestion = this.currentQuestionIndex(pending)
+    if (nextQuestion >= 0) {
       await this.replies.updateTemplateCard(frame, this.resolvedCard(
         pending.taskId,
         '已记录选择，请按消息提示继续回答',
+        `回复 /answer ${nextQuestion + 1} <答案>`,
       ))
       return
     }
@@ -847,15 +889,15 @@ export class WeComConversationRouter {
       return
     }
     pending.answers.set(answer.id, answer)
-    const remaining = pending.questions.filter(question => !pending.answers.has(question.id))
-    if (remaining.length === 0) {
+    const nextQuestion = this.currentQuestionIndex(pending)
+    if (nextQuestion < 0) {
       await this.submitQuestionAnswers(pending, frame)
       return
     }
     await this.finish(
       frame,
       generateReqId('stream'),
-      `已记录“${answer.id}”。还需回答：${remaining.map(question => question.id).join('、')}。`,
+      `已记录。下一题可回复 \`/answer ${nextQuestion + 1} <答案>\`。`,
     )
   }
 
@@ -927,6 +969,10 @@ export class WeComConversationRouter {
     pending: PendingQuestion,
   ): AskUserQuestionAnswerItem | string {
     const options = question.options!
+    if (!/^[0-9]+$/u.test(answerText)) {
+      const exact = options.find(option => option.label === answerText)
+      if (exact) return { id: question.id, selected: [exact.label] }
+    }
     const selected: string[] = []
     const custom: string[] = []
     for (const token of answerText.split(/[,，]/u).map(part => part.trim()).filter(Boolean)) {
@@ -949,28 +995,22 @@ export class WeComConversationRouter {
   }
 
   private answerUsage(pending: PendingQuestion): string {
-    return pending.questions.length === 1
-      ? '用法：/answer <选项序号、标签或自定义答案>'
-      : '用法：/answer <问题序号或 ID> <选项序号、标签或自定义答案>'
+    if (pending.questions.length > 1) return '逐题回复 `/answer <题号> <答案>`。有选项时，可以用选项编号，例如 `/answer 1 1`。'
+    if (!pending.questions[0]?.options?.length) return '回复 `/answer <你的答案>`。'
+    return '回复 `/answer 1` 选择第 1 项，也可以输入选项文字或自定义答案。'
   }
 
-  private formatQuestions(questions: readonly AskUserQuestionItem[]): string {
-    const rows = questions.flatMap((question, questionIndex) => {
-      const title = question.header === undefined
-        ? `${questionIndex + 1}. ${question.question}`
-        : `${questionIndex + 1}. 【${question.header}】${question.question}`
-      const detail = question.detail === undefined ? [] : [question.detail]
+  private formatQuestions(pending: PendingQuestion): string {
+    const rows = pending.questions.map((question, questionIndex) => {
+      const headline = `**第 ${questionIndex + 1} 题${question.header ? ` · ${question.header}` : ''}**`
       const options = (question.options ?? []).map((option, optionIndex) => {
         const description = option.description === undefined ? '' : ` — ${option.description}`
-        return `   ${optionIndex + 1}) ${option.label}${description}`
+        return `- ${optionIndex + 1}）${option.label}${description}`
       })
-      const multi = question.multiSelect === true ? ['   可用逗号选择多项。'] : []
-      return [title, ...detail, ...options, ...multi]
+      const multi = question.multiSelect === true ? '可用逗号选择多项，例如 `1,2`。' : ''
+      return [headline, question.question, question.detail, options.join('\n'), multi].filter(Boolean).join('\n\n')
     })
-    const usage = questions.length === 1
-      ? '回复 /answer <选项序号、标签或自定义答案>'
-      : '逐题回复 /answer <问题序号或 ID> <选项序号、标签或自定义答案>'
-    return ['需要你回答问题：', ...rows, usage].join('\n')
+    return ['需要你回答问题', this.answerUsage(pending), ...rows].join('\n\n')
   }
 
   private approvalCard(
@@ -1004,23 +1044,22 @@ export class WeComConversationRouter {
     const options = question?.options ?? []
     if (question === undefined || question.multiSelect === true
       || options.length === 0 || options.length > MAX_CARD_BUTTONS) return undefined
+    const title = question.header?.trim() || '请选择答案'
+    if (!fitsQuestionCardLine(title, QUESTION_CARD_TITLE_WIDTH)
+      || !fitsQuestionCardLine(question.question, QUESTION_CARD_BODY_WIDTH)
+      || !fitsQuestionCardLine(question.detail ?? '', QUESTION_CARD_BODY_WIDTH)
+      || options.some(option => !option.label.trim() || !fitsQuestionCardLine(option.label, QUESTION_CARD_BUTTON_WIDTH)
+        || !fitsQuestionCardLine(option.description ?? '', QUESTION_CARD_BODY_WIDTH))) return undefined
     return {
       card_type: 'button_interaction',
-      main_title: {
-        title: this.limitCardText(question.header ?? '请选择答案', 26),
-        desc: this.limitCardText(question.question, 30),
-      },
+      main_title: { title, desc: question.question },
       button_list: options.map((option, index) => ({
-        text: this.limitCardText(option.label, 10),
+        text: option.label,
         key: `question_${questionIndex}_option_${index}`,
         style: index === 0 ? 1 : 2,
       })),
       task_id: pending.taskId,
     }
-  }
-
-  private currentQuestion(pending: PendingQuestion): AskUserQuestionItem | undefined {
-    return pending.questions.find(question => !pending.answers.has(question.id))
   }
 
   private currentQuestionIndex(pending: PendingQuestion): number {
@@ -1062,6 +1101,11 @@ export class WeComConversationRouter {
     templateCard: TemplateCard,
   ): Promise<WsFrame> {
     const textReply = await this.finish(activeTurn.frame, activeTurn.streamId, text)
+    await this.sendTemplateCard(activeTurn, templateCard)
+    return textReply
+  }
+
+  private async sendTemplateCard(activeTurn: ActiveTurn, templateCard: TemplateCard): Promise<void> {
     try {
       await this.replies.sendMessage(activeTurn.targetId, {
         msgtype: 'template_card',
@@ -1070,7 +1114,6 @@ export class WeComConversationRouter {
     } catch (error: unknown) {
       this.logger.warn(`wecom-aibot: proactive template card failed: ${String(error)}`)
     }
-    return textReply
   }
 
   private removePendingQuestion(pending: PendingQuestion): boolean {
@@ -1266,6 +1309,8 @@ export class WeComConversationRouter {
       case '/new': return args.length === 0
         ? await this.newSession(conversationKey, sessionId)
         : '用法：/new'
+      case '/session': return await runSessionCommand({ sessions: this.api.sessions, bindings: this.runtime.bindings,
+        key: conversationKey, currentSessionId: sessionId, args, titlePrefix: '【企业微信】' })
       case '/workspace': return await this.workspace(conversationKey, sessionId, args)
       case '/preset': return await this.preset(conversationKey, sessionId, args)
       case '/model': return await this.model(sessionId, args)
@@ -1284,11 +1329,11 @@ export class WeComConversationRouter {
   }
 
   private async newSession(conversationKey: string, currentSessionId: string): Promise<string> {
-    const workspaceId = await this.workspaceIdForSession(currentSessionId)
-      ?? this.runtime.defaultWorkspace.workspaceId
+    const previousWorkspace = await this.workspaceIdForSession(currentSessionId)
+    const workspaceId = previousWorkspace ?? this.runtime.defaultWorkspace.workspaceId
     const sessionId = await this.createSession(`session-wecom-${randomUUID().replaceAll('-', '')}`, workspaceId)
-    await this.runtime.bindings.set(conversationKey, sessionId)
-    return '已创建并切换到新会话（当前工作区）。旧会话仍保留。'
+    await this.runtime.bindings.set(conversationKey, sessionId, previousWorkspace === undefined ? undefined : currentSessionId)
+    return '已创建并切换到新会话（当前工作区）。发送 /session 可切回历史会话。'
   }
 
   private async workspace(
@@ -1318,7 +1363,7 @@ export class WeComConversationRouter {
     }
     if (target.workspaceId === current?.workspaceId) return `当前已经在工作区“${target.title}”。`
     const sessionId = await this.createSession(`session-wecom-${randomUUID().replaceAll('-', '')}`, target.workspaceId)
-    await this.runtime.bindings.set(conversationKey, sessionId)
+    await this.runtime.bindings.set(conversationKey, sessionId, current === undefined ? undefined : currentSessionId)
     return `已切换到工作区“${target.title}”并创建新会话。旧会话仍保留。`
   }
 
@@ -1375,10 +1420,10 @@ export class WeComConversationRouter {
     // A running session keeps the preset it was composed from, so the switch only
     // becomes observable on a session created after the write.
     this.agentPreset = next
-    const workspaceId = await this.workspaceIdForSession(currentSessionId)
-      ?? this.runtime.defaultWorkspace.workspaceId
+    const previousWorkspace = await this.workspaceIdForSession(currentSessionId)
+    const workspaceId = previousWorkspace ?? this.runtime.defaultWorkspace.workspaceId
     const sessionId = await this.createSession(`session-wecom-${randomUUID().replaceAll('-', '')}`, workspaceId)
-    await this.runtime.bindings.set(conversationKey, sessionId)
+    await this.runtime.bindings.set(conversationKey, sessionId, previousWorkspace === undefined ? undefined : currentSessionId)
     return next === undefined
       ? '已恢复跟随全局默认预设，并创建新会话。旧会话仍保留。'
       : `已切换到预设“${next}”，并创建新会话。旧会话仍保留。`

@@ -17,6 +17,23 @@ export function boundReply(text: string, maxBytes = MAX_STREAM_REPLY_BYTES): str
   return result
 }
 
+export function* splitReply(text: string): IterableIterator<string> {
+  let start = 0
+  let end = 0
+  let bytes = 0
+  for (const character of text) {
+    const size = Buffer.byteLength(character)
+    if (bytes + size > MAX_STREAM_REPLY_BYTES) {
+      yield text.slice(start, end)
+      start = end
+      bytes = 0
+    }
+    end += character.length
+    bytes += size
+  }
+  if (end > start) yield text.slice(start, end)
+}
+
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object'
     ? value as Record<string, unknown>

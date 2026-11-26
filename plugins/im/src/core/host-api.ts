@@ -105,6 +105,14 @@ export interface HostPreset {
   broken?: string
 }
 
+/** Canonical Host title and status for a channel-owned Session. */
+export interface HostSessionSummary {
+  sessionId: string
+  title: string
+  running: boolean
+  workspaceTitle?: string
+}
+
 export type PromptContentPart = HostPromptContentPart | { type: 'file-bytes'; data: string; name: string }
 
 export interface HostApiProxy {
@@ -130,6 +138,7 @@ export interface HostApiProxy {
     }>>
   }
   sessions: {
+    list(request: RpcRequest<{ sessionIds: string[] }>): Promise<RpcResponse<{ items: HostSessionSummary[] }>>
     create(request: RpcRequest<{
       sessionId: string
       workspaceId?: string
@@ -141,6 +150,9 @@ export interface HostApiProxy {
       beforeSeq?: number
       maxMessages?: number
     }>): Promise<RpcResponse<{ events: HistoryEntry[]; hasMore: boolean }>>
+    /** Replay and follow the journal when the transport exposes the Host follower. */
+    follow?(request: RpcRequest<{ sessionId: string; afterSeq: number }>, signal: AbortSignal):
+    AsyncIterable<HostSessionEvent>
     prompt(request: RpcRequest<{
       sessionId: string
       mode: 'queue' | 'steer'
@@ -276,8 +288,52 @@ export function createHostApi(
       }),
     },
     sessions: {
+      list: request => response(request, async () => {
+        const ids = new Set(request.payload.sessionIds)
+        const roster = await controller.list({}, lifetime.signal)
+        const archived = new Set(registry.archivedSessionIds)
+        const workspaces = new Map(registry.list().flatMap(workspace =>
+          workspace.sessionIds.map(sessionId => [sessionId, workspace.title] as const)))
+        return { items: roster.items.filter(item => ids.has(item.sessionId) && !archived.has(item.sessionId)).map(item => {
+          const title = item.projections?.values.title
+          const workspaceTitle = workspaces.get(item.sessionId)
+          return { sessionId: item.sessionId, title: typeof title === 'string' ? title : '', running: item.running,
+            ...(workspaceTitle === undefined ? {} : { workspaceTitle }) }
+        }) }
+      }),
       create: request => response(request, async () => { const { sessionId, workspaceId, agentPreset } = request.payload; const result = await controller.create({ sessionId: SessionId(sessionId), ...(workspaceId ? { workspaceId: WorkspaceId(workspaceId) } : {}), ...(agentPreset ? { agentPreset } : {}) }); if (request.payload.model !== undefined) { const state = await controller.inspect(SessionId(result.sessionId)); if (!state.events.some(event => event.type === 'model/selection' || event.type === 'request/header')) await models.select(result.sessionId, request.payload.model) }; return result }),
       history: request => response(request, async () => { const history = await controller.inspect(SessionId(request.payload.sessionId), lifetime.signal); const before = request.payload.beforeSeq ?? Infinity; const events = history.events.filter(event => event.seq < before); const count = Math.max(1, Math.min(1000, request.payload.maxMessages ?? 100)); return { events: events.slice(-count).map(event => ({ event })), hasMore: events.length > count } }),
+      async *follow(request, callerSignal) {
+        const signal = AbortSignal.any([lifetime.signal, callerSignal])
+        const address = { kind: 'session' as const, sessionId: SessionId(request.payload.sessionId) }
+        let cursor = request.payload.afterSeq
+        for await (const frame of controller.follow({ address, maxMessages: 100 }, signal)) {
+          signal.throwIfAborted()
+          if (frame.type === 'snapshot') {
+            let records = [...frame.records], hasMore = frame.hasMore
+            // The opening window may start after this prompt's admission. Page
+            // at its fixed cut while the Host buffers subsequent live events.
+            while (hasMore && records.length > 0 && records[0]!.event.seq > cursor + 1) {
+              const beforeSeq = records[0]!.event.seq
+              const page = await controller.page({ address, throughSeq: frame.cursor, beforeSeq, maxMessages: 100 }, signal)
+              signal.throwIfAborted()
+              if (page.records.length === 0 || page.records.at(-1)!.event.seq >= beforeSeq) {
+                throw new Error('im: Session journal page did not advance')
+              }
+              records = [...page.records, ...records]
+              hasMore = page.hasMore
+            }
+            for (const { event } of records) {
+              if (event.seq <= cursor) continue
+              cursor = event.seq
+              yield event
+            }
+          } else if (frame.type === 'event' && frame.event.seq > cursor) {
+            cursor = frame.event.seq
+            yield frame.event
+          }
+        }
+      },
       prompt: request => response(request, async () => { const content = await promoteFiles(ctx, request.payload.sessionId, request.payload.content, lifetime.signal); return controller.prompt({ ...request.payload, content, sessionId: SessionId(request.payload.sessionId), requestId: request.rpcId as SessionRequestId }, lifetime.signal) }),
       cancel: request => response(request, async () => controller.cancel({ sessionId: SessionId(request.payload.sessionId) })),
       models: request => response(request, async () => {

@@ -10,6 +10,7 @@ import { MessageItemType, UploadMediaType } from './protocol.js'
 import { inboundFailure } from '../../core/commands.js'
 import type { WeChatAccountStore } from './storage.js'
 import type { WeChatDelivery } from './delivery.js'
+import { weChatTextChunks } from './format.js'
 
 const DEFAULT_POLL_TIMEOUT_MS = 35_000
 const FAILURE_BACKOFF_MS = 30_000
@@ -23,20 +24,6 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
       resolve()
     }, { once: true })
   })
-}
-
-function textChunks(text: string, limit = 4_000): string[] {
-  const chunks: string[] = []
-  let current = ''
-  for (const character of text) {
-    if (current.length + character.length > limit) {
-      chunks.push(current)
-      current = ''
-    }
-    current += character
-  }
-  if (current !== '') chunks.push(current)
-  return chunks
 }
 
 /** Long-lived iLink account transport and outbound reply operations. */
@@ -71,7 +58,7 @@ export class WeChatAccount {
 
   async sendText(userId: string, text: string, contextToken?: string): Promise<void> {
     const replyToken = contextToken ?? this.store.contextToken(this.credentials.accountId, userId)
-    for (const chunk of textChunks(text)) {
+    for (const chunk of weChatTextChunks(text)) {
       await this.send(userId, { type: 1, text_item: { text: chunk } }, replyToken)
     }
   }
@@ -120,13 +107,17 @@ export class WeChatAccount {
       ...contextToken === undefined ? {} : { contextToken } })
   }
 
-  async typing(userId: string, status: 1 | 2, contextToken?: string): Promise<void> {
+  async typing(userId: string, status: 1 | 2, contextToken?: string, signal?: AbortSignal): Promise<void> {
     const replyToken = contextToken ?? this.store.contextToken(this.credentials.accountId, userId)
+    // Router-owned cancellation must still finish while account shutdown aborts polling.
+    const typingSignal = status === 1
+      ? AbortSignal.any([this.abort.signal, ...(signal === undefined ? [] : [signal])]) : signal
     await sendTyping({
       ...this.credentials,
       userId,
       ...replyToken === undefined ? {} : { contextToken: replyToken },
       status,
+      ...(typingSignal === undefined ? {} : { signal: typingSignal }),
     })
   }
 

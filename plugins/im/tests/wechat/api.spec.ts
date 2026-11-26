@@ -1,9 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { requestQrCode, requestQrStatus, sendMessage } from '../../src/adapters/wechat/api.js'
+import { requestQrCode, requestQrStatus, sendMessage, sendTyping } from '../../src/adapters/wechat/api.js'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe('iLink API', () => {
+  it('does not publish typing after its owner cancels an in-flight ticket request', async () => {
+    const abort = new AbortController()
+    let ticket!: (response: Response) => void
+    const pending = new Promise<Response>(resolve => { ticket = resolve })
+    const fetch = vi.fn<typeof globalThis.fetch>().mockReturnValue(pending)
+    vi.stubGlobal('fetch', fetch)
+    const sent = sendTyping({ baseUrl: 'https://ilink.example.test', token: 'fixture-token', userId: 'fixture-peer', status: 1, signal: abort.signal })
+    const rejected = expect(sent).rejects.toMatchObject({ name: 'AbortError' })
+    abort.abort()
+    ticket(Response.json({ typing_ticket: 'fixture-ticket' }))
+    await rejected
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
+  })
+
   it.each([
     '{"message_id":9223372036854775807}',
     '{"message_id":"9223372036854775807"}',
@@ -32,7 +47,6 @@ describe('iLink API', () => {
     await expect(sendMessage({ baseUrl: 'https://ilink.example.test', token: 'fixture-token',
       userId: 'fixture-peer', item: { type: 1, text_item: { text: 'fixture reply' } } })).rejects.toMatchObject({ kind })
   })
-
 
   it('requests an official bot QR code with local account tokens', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
