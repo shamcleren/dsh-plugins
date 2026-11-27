@@ -2,7 +2,8 @@
 
 /** One immutable artifact published by the configured repository. */
 export interface MarketplaceArtifact {
-  readonly path: string
+  readonly path?: string
+  readonly url?: string
   readonly sha256: string
   readonly size: number
 }

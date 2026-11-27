@@ -32,14 +32,14 @@ try {
   await writeFile(settings, sentinel)
   assert.match(await command('/usr/bin/make', ['init', 'DIR=' + installation]), /Already up to date/)
   const marker = join(installation, 'bootstrap-state.json')
-  assert.equal(JSON.parse(await readFile(marker)).desktop, false)
+  assert.equal(JSON.parse(await readFile(marker, 'utf8')).desktop, false)
   console.log('Repeated make init preserves Web-only configuration and is a no-op.')
 
   await rm(join(installation, 'bin/dsh'))
   await rm(join(installation, 'runtime/node_modules/@deepseek-ai/dsh/lib/bin.js'))
   if (privateNode) await rm(join(installation, 'node/bin/node'))
   await command(join(installation, 'bin/dhp'), ['update'])
-  const expectedVersion = JSON.parse(await readFile(join(repo, 'runtime/package.json'))).dependencies['@deepseek-ai/dsh']
+  const expectedVersion = JSON.parse(await readFile(join(repo, 'runtime/package.json'), 'utf8')).dependencies['@deepseek-ai/dsh']
   assert.equal((await command(join(installation, 'bin/dsh'), ['--version'])).trim(), expectedVersion)
   const repaired = await readFile(marker)
   assert.match(await command(join(installation, 'bin/dhp'), ['update']), /Already up to date/)

@@ -68,7 +68,7 @@ async function serialize(path, busy) {
     })
     server.maxConnections = 16
     try {
-      await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve) })
+      await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', () => resolve(undefined)) })
       server.unref()
       return async () => { for (const socket of sockets) socket.destroy(); await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())) }
     } catch (error) {
@@ -81,6 +81,10 @@ async function serialize(path, busy) {
   throw new Error(busy)
 }
 
+/**
+ * @param {string} path
+ * @param {{ busy?: string, probe?: typeof processState, log?: (line: string) => void }} [options]
+ */
 export async function acquireInstallerLock(path, { busy = 'Another installer holds ' + basename(path), probe = processState, log = () => {} } = {}) {
   const releaseLease = await serialize(path, busy)
   const candidate = path + '.' + randomUUID() + '.pending'

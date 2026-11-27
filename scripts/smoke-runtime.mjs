@@ -75,7 +75,7 @@ try {
     await writeFile(join(retired, 'package.json'), JSON.stringify({
       name: '@shamcleren/dsh-codex-controller', version: '0.0.0', type: 'module', main: 'index.js',
       dsh: { bundle: { patch: './cordis.patch.yml' } },
-      engines: { dsh: JSON.parse(await readFile(join(previousRuntime, 'node_modules/@deepseek-ai/dsh/package.json'))).version },
+      engines: { dsh: JSON.parse(await readFile(join(previousRuntime, 'node_modules/@deepseek-ai/dsh/package.json'), 'utf8')).version },
     }))
     await writeFile(join(retired, 'index.js'), 'export function apply() {}\n')
     await writeFile(join(retired, 'cordis.patch.yml'), "- insert:\n    - id: retired-codex-fixture\n      name: '@shamcleren/dsh-codex-controller'\n")
@@ -171,8 +171,10 @@ try {
   await mkdir(join(home, 'security-scan'), { recursive: true })
   await writeFile(join(home, 'security-scan/.tasks.lock'), dead.pid + '\n', { mode: 0o600 })
   const portProbe = createServer()
-  await new Promise((resolve, reject) => { portProbe.once('error', reject); portProbe.listen(officialDesktop ? 19387 : 0, '127.0.0.1', resolve) })
-  const port = portProbe.address().port
+  await new Promise((resolve, reject) => { portProbe.once('error', reject); portProbe.listen(officialDesktop ? 19387 : 0, '127.0.0.1', () => resolve(undefined)) })
+  const address = portProbe.address()
+  if (!address || typeof address === 'string') throw new Error('Expected TCP address from port probe')
+  const port = address.port
   await new Promise(resolve => portProbe.close(resolve))
   await writeFile(join(home, 'settings.yaml'), 'desktop-pet:\n  petSize: 120\nsecurity-scan:\n  gitleaksPath: /nonexistent/legacy-gitleaks\n')
   const probe = join(scratch, 'probe.mjs')
@@ -283,7 +285,7 @@ ${startupOnly ? '' : `    - id: upgrade-probe
   } else {
   inspectHost = async () => (await fetch(`http://127.0.0.1:${port}/smoke-upgrade/diagnostic`, { method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: 'diagnostic', method: 'diagnostic', payload: {} }), signal: AbortSignal.timeout(3000) })).text()
   await waitFor(async () => {
-    try { await readFile(join(home, 'settings.yaml.imported')); return (await readFile(join(profile, 'cordis.patch.yml'), 'utf8')).includes('/nonexistent/legacy-gitleaks') } catch (error) { if (error.code !== 'ENOENT') throw error }
+    try { await readFile(join(home, 'settings.yaml.imported')); return (await readFile(join(profile, 'cordis.patch.yml'), 'utf8')).includes('/nonexistent/legacy-gitleaks') } catch (error) { if (error.code !== 'ENOENT') throw error; return false }
   }, 'legacy settings import')
   const upgrade = await fetch(`http://127.0.0.1:${port}/smoke-upgrade/check`, { method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: 'upgrade', method: 'check', payload: {} }), signal: AbortSignal.timeout(15000) })
   const upgradeBody = await upgrade.text()

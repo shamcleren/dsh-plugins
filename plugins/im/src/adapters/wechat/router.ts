@@ -1,7 +1,16 @@
-import { isImageBytes, mediaFailure, type MediaStage } from './media-delivery.js'
 import { ensureConversationSession } from '../../core/sessions.js'
 import { managementHelp, requiresHostSession, managementFailure } from '../../core/commands.js'
 import { displayLabel, runSessionCommand } from '../../core/session-commands.js'
+import {
+  effortCommand,
+  listHostWorkspaces,
+  modelCommand,
+  newSessionCommand,
+  presetCommand,
+  selectWorkspace,
+  statusCommand,
+  type ChannelCommandContext,
+} from '../../core/channel-commands.js'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Logger } from '@deepseek-ai/cordis'
 import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -12,30 +21,31 @@ import type {
   AskUserQuestionItem,
   HostApiProxy,
   HostMuxFrame,
-  HostPreset,
   HostSessionEvent,
   HostWorkspace,
   QuestionRequestedFrame,
   QuestionResolvedFrame,
   RpcRequest,
 } from './host-api.js'
-import { HostApiError, unwrap, submitChannelPrompt } from './host-api.js'
+import { unwrap, submitChannelPrompt } from './host-api.js'
 import { conversationKeyFor, promptRpcIdFor, sessionIdFor } from './inbound.js'
 import type { WeChatInboundMessage } from './inbound.js'
-import { admittedPromptRpcIds, fallbackReply, TurnProjection } from './reply.js'
+import { admittedPromptRpcIds, TurnProjection } from './reply.js'
 import type { TurnOutcome } from './reply.js'
-import { collectFileBytes } from './files.js'
 import type { OutboundFileBytes } from './files.js'
 import type { WeChatRuntimeConfig, WeChatSettingsPatch } from './config.js'
 import { WeChatTyping } from './typing.js'
-import { formatWeChatReply } from './format.js'
+import { formatWeChatQuestions, parseWeChatQuestionAnswer } from './questions.js'
+import {
+  finalWeChatReply,
+  sendWeChatFiles,
+  sendWeChatImages,
+  type WeChatMediaDeliveryContext,
+} from './outbound-media.js'
 
 const HISTORY_PAGE_MESSAGES = 100
 const CONTINUATION_REPLY = '已加入当前任务。'
 const COMMAND_PERMISSION_REPLY = '只有机器人管理员可以执行该命令。'
-
-/** Session create refusals that mean the bound Session cannot accept this channel's workspace or preset. */
-
 const LOCAL_MODEL_NOTICE = '此选择仅作用于当前微信会话。'
 const COMMAND_HELP = managementHelp({ tasks: true, sessions: true })
 
@@ -106,20 +116,6 @@ function promptText(message: WeChatInboundMessage): string | undefined {
   if (message.content.length !== 1 || message.content[0]?.type !== 'text') return undefined
   const text = message.content[0].text.trim()
   return text.startsWith('/') ? text : undefined
-}
-
-/** Announce images that follow as their own messages, so no reply arrives empty. */
-const IMAGE_LEAD_IN = '图片如下：'
-
-function undeliveredImageNotice(failed: number, total: number): string {
-  const scope = failed === total ? `本轮生成的 ${failed} 张图片` : `本轮 ${total} 张图片中的 ${failed} 张`
-  return `${scope}未能发送到微信，已保存在 DSH 会话中。`
-}
-
-function finalReply(completed: TurnOutcome): string {
-  if (completed.text.trim() !== '') return formatWeChatReply(completed.text)
-  if (completed.files.length > 0) return '附件如下：'
-  return completed.images.length > 0 ? IMAGE_LEAD_IN : fallbackReply(completed.reason)
 }
 
 /** Route iLink messages through durable Host sessions and return turn output to WeChat. */
@@ -244,6 +240,37 @@ export class WeChatConversationRouter {
     })
   }
 
+  private commandContext(): ChannelCommandContext {
+    return {
+      api: this.api,
+      rpcPrefix: 'wechat-api',
+      sessionPrefix: 'session-wechat',
+      localModelNotice: LOCAL_MODEL_NOTICE,
+      defaultWorkspace: () => this.runtime.defaultWorkspace,
+      getAgentPreset: () => this.agentPreset,
+      setAgentPreset: next => { this.agentPreset = next },
+      writeAgentPreset: next => this.writeSettings({ agentPreset: next }),
+      createSession: (sessionId, workspaceId) => this.createSession(sessionId, workspaceId),
+      bindSession: (key, sessionId, previous) => this.runtime.bindings.set(key, sessionId, previous),
+    }
+  }
+
+  private mediaContext(): WeChatMediaDeliveryContext {
+    return {
+      logger: this.logger,
+      mediaMaxBytes: this.config.mediaMaxBytes,
+      isStopping: () => this.stopping,
+      signal: () => this.deliveryAbort.signal,
+      ...(this.runtime.readImage === undefined ? {} : { readImage: this.runtime.readImage }),
+      ...(this.runtime.readFile === undefined ? {} : { readFile: this.runtime.readFile }),
+      ...(this.runtime.readPresentedFile === undefined ? {} : { readPresentedFile: this.runtime.readPresentedFile }),
+      sendText: (userId, text, token) => this.replies.sendText(userId, text, token),
+      sendImage: (userId, bytes, token) => this.replies.sendImage(userId, bytes, token),
+      sendFile: (userId, bytes, name, token) => this.replies.sendFile(userId, bytes, name, token),
+      sendVideo: (userId, bytes, token) => this.replies.sendVideo(userId, bytes, token),
+    }
+  }
+
   private async consumeMux(signal: AbortSignal): Promise<void> {
     try {
       for await (const message of this.api.events.mux(apiRequest({}), signal)) this.consumeMuxFrame(message)
@@ -275,7 +302,7 @@ export class WeChatConversationRouter {
     this.pendingQuestions.set(frame.sessionId, pending)
     void this.replies.sendText(
       activeTurn.userId,
-      `${this.formatQuestions(frame.questions)}\n回复 /answer <答案>；多题使用 /answer <序号或 id> <答案>。`,
+      `${formatWeChatQuestions(frame.questions)}\n回复 /answer <答案>；多题使用 /answer <序号或 id> <答案>。`,
       activeTurn.contextToken,
     ).catch((error: unknown) => {
       this.logger.error(error)
@@ -338,18 +365,27 @@ export class WeChatConversationRouter {
       return this.adminUsers.has(message.userId) ? undefined : COMMAND_PERMISSION_REPLY
     }
     if (!this.adminUsers.has(message.userId)) return COMMAND_PERMISSION_REPLY
+    const cmdCtx = this.commandContext()
     switch (command) {
       case '/help': return COMMAND_HELP
-      case '/status': return await this.status(sessionId)
+      case '/status': return await statusCommand(cmdCtx, sessionId)
       case '/tasks': return args.length === 0 ? this.taskStatus(conversationKey) : '用法：/tasks'
       case '/cancel': return await this.cancelTask(conversationKey, sessionId, args)
-      case '/new': return args.length === 0 ? await this.newSession(conversationKey, sessionId) : '用法：/new'
-      case '/session': return await runSessionCommand({ sessions: this.api.sessions, bindings: this.runtime.bindings,
-        key: conversationKey, currentSessionId: sessionId, args, titlePrefix: '【微信】' })
+      case '/new': return args.length === 0
+        ? await newSessionCommand(cmdCtx, conversationKey, sessionId, '已创建并切换到新会话（当前工作区）。发送 /session 可按标题切回历史会话。')
+        : '用法：/new'
+      case '/session': return await runSessionCommand({
+        sessions: this.api.sessions,
+        bindings: this.runtime.bindings,
+        key: conversationKey,
+        currentSessionId: sessionId,
+        args,
+        titlePrefix: '【微信】',
+      })
       case '/workspace': return await this.workspace(conversationKey, sessionId, args)
-      case '/preset': return await this.preset(conversationKey, sessionId, args)
-      case '/model': return await this.model(sessionId, args)
-      case '/effort': return await this.effort(sessionId, args)
+      case '/preset': return await presetCommand(cmdCtx, conversationKey, sessionId, args)
+      case '/model': return await modelCommand(cmdCtx, sessionId, args)
+      case '/effort': return await effortCommand(cmdCtx, sessionId, args)
       default: return `未知命令：${command}\n\n${COMMAND_HELP}`
     }
   }
@@ -372,26 +408,8 @@ export class WeChatConversationRouter {
     return '已请求取消任务；最终状态以任务结束消息为准。'
   }
 
-  private async status(sessionId: string): Promise<string> {
-    const models = unwrap(await this.api.sessions.models(apiRequest({ sessionId })))
-    return [
-      `当前模型：${models.current.provider} / ${models.current.model}`,
-      `Effort：${models.current.reasoningEffort ?? '由模型或提供方决定'}`,
-      `预设：${this.agentPreset ?? '跟随全局默认'}`,
-    ].join('\n')
-  }
-
-  private async newSession(key: string, currentSessionId: string): Promise<string> {
-    const previousWorkspace = await this.workspaceIdForSession(currentSessionId)
-    const workspaceId = previousWorkspace
-      ?? this.runtime.defaultWorkspace.workspaceId
-    const sessionId = await this.createSession(`session-wechat-${randomUUID().replaceAll('-', '')}`, workspaceId)
-    await this.runtime.bindings.set(key, sessionId, previousWorkspace === undefined ? undefined : currentSessionId)
-    return '已创建并切换到新会话（当前工作区）。发送 /session 可按标题切回历史会话。'
-  }
-
   private async workspace(key: string, currentSessionId: string, args: readonly string[]): Promise<string> {
-    const workspaces = await this.listWorkspaces()
+    const workspaces = await listHostWorkspaces(this.api, 'wechat-api')
     const current = workspaces.find(entry => entry.sessionIds.includes(currentSessionId))
     if (args.length === 0) {
       const defaultWorkspace = workspaces.find(entry => entry.workspaceId === this.runtime.defaultWorkspace.workspaceId)
@@ -412,7 +430,7 @@ export class WeChatConversationRouter {
     const selector = args.join(' ')
     const target = selector === 'reset'
       ? workspaces.find(entry => entry.workspaceId === this.runtime.defaultWorkspace.workspaceId)
-      : this.selectWorkspace(workspaces, selector)
+      : selectWorkspace(workspaces, selector)
     if (target === undefined) return `没有找到工作区“${selector}”；发送 /workspace 查看可选项。`
     if (target.workspaceId === current?.workspaceId) return `当前已经在工作区“${target.title}”。`
     const sessionId = await this.createSession(`session-wechat-${randomUUID().replaceAll('-', '')}`, target.workspaceId)
@@ -420,123 +438,25 @@ export class WeChatConversationRouter {
     return `已切换到工作区“${target.title}”并创建新会话。旧会话仍保留。`
   }
 
-  /**
-   * Move the channel's agent preset.
-   *
-   * Unlike `/model`, this stays inside WeChat: the preset lives in this plugin's
-   * own settings section, and a session names its preset at creation, so the
-   * switch persists for the channel and takes effect on a rebuilt session
-   * instead of leaking into any deployment-wide default.
-   */
-  private async preset(
-    conversationKey: string,
-    currentSessionId: string,
-    args: readonly string[],
-  ): Promise<string> {
-    let roster: { items: readonly HostPreset[]; defaultId: string } | undefined
-    try {
-      roster = unwrap(await this.api.presets.list(apiRequest({})))
-    } catch (error: unknown) {
-      if (!(error instanceof HostApiError) || error.code !== 'presets-unavailable') throw error
-    }
-    const current = this.agentPreset
-    if (args.length === 0) {
-      const inherited = roster === undefined ? '全局默认' : `全局默认（${roster.defaultId}）`
-      const rows = roster?.items.map(entry => {
-        const label = entry.name === undefined ? entry.id : `${entry.id}（${entry.name}）`
-        return entry.broken === undefined ? label : `${label} [不可用：${entry.broken}]`
-      }) ?? ['（本部署未提供预设列表）']
-      return [
-        `当前预设：${current ?? `未指定，跟随${inherited}`}`,
-        '可选预设：',
-        ...rows,
-        '',
-        '用法：/preset <id> 切换，/preset reset 恢复跟随全局默认。',
-      ].join('\n')
-    }
-    if (args.length !== 1) return '用法：/preset [<id>|reset]'
-    const [selector] = args as [string]
-    const next = selector === 'reset' ? undefined : selector
-    if (next !== undefined && roster !== undefined) {
-      const target = roster.items.find(entry => entry.id === next)
-      if (target === undefined) return `没有找到预设“${next}”；发送 /preset 查看可选项。`
-      if (target.broken !== undefined) return `预设“${next}”当前不可用：${target.broken}`
-    }
-    if (next === current) {
-      return next === undefined ? '当前已经跟随全局默认预设。' : `当前已经在预设“${next}”。`
-    }
-    try {
-      await this.writeSettings({ agentPreset: next })
-    } catch (error: unknown) {
-      return `预设未能保存：${error instanceof Error ? error.message : String(error)}`
-    }
-    // A running session keeps the preset it was composed from, so the switch only
-    // becomes observable on a session created after the write.
-    this.agentPreset = next
-    const previousWorkspace = await this.workspaceIdForSession(currentSessionId)
-    const workspaceId = previousWorkspace
-      ?? this.runtime.defaultWorkspace.workspaceId
-    const sessionId = await this.createSession(`session-wechat-${randomUUID().replaceAll('-', '')}`, workspaceId)
-    await this.runtime.bindings.set(conversationKey, sessionId, previousWorkspace === undefined ? undefined : currentSessionId)
-    return next === undefined
-      ? '已恢复跟随全局默认预设，并创建新会话。旧会话仍保留。'
-      : `已切换到预设“${next}”，并创建新会话。旧会话仍保留。`
-  }
-
-  private selectWorkspace(workspaces: readonly HostWorkspace[], selector: string): HostWorkspace | undefined {
-    const byId = workspaces.find(entry => entry.workspaceId === selector)
-    if (byId !== undefined) return byId
-    const byTitle = workspaces.filter(entry => entry.title === selector)
-    return byTitle.length === 1 ? byTitle[0] : undefined
-  }
-
-  private async workspaceIdForSession(sessionId: string): Promise<string | undefined> {
-    return (await this.listWorkspaces()).find(workspace => workspace.sessionIds.includes(sessionId))?.workspaceId
-  }
-
-  private async listWorkspaces(): Promise<HostWorkspace[]> {
-    return unwrap(await this.api.workspace.list(apiRequest({}))).items
-  }
-
-  private async model(sessionId: string, args: readonly string[]): Promise<string> {
-    const models = unwrap(await this.api.sessions.models(apiRequest({ sessionId })))
-    if (args.length === 0) {
-      const rows = models.groups.flatMap(group => group.models.map(model => `${group.id} ${model.id}${model.reasoning?.efforts === undefined ? '' : ` [${model.reasoning.efforts.map(effort => effort.id).join(', ')}]`}`))
-      return [`当前：${models.current.provider} ${models.current.model}`, ...rows].join('\n')
-    }
-    if (args.length < 2 || args.length > 3) return '用法：/model <provider> <model> [effort]'
-    const [provider, model, reasoningEffort] = args as [string, string, string?]
-    const target = models.groups.find(entry => entry.id === provider)?.models.find(entry => entry.id === model)
-    if (target === undefined) return '没有找到该 provider/model；发送 /model 查看可选项。'
-    if (reasoningEffort !== undefined && !target.reasoning?.efforts.some(entry => entry.id === reasoningEffort)) return '该模型不支持指定的 effort；发送 /model 查看可选项。'
-    const selected = unwrap(await this.api.sessions.selectModel(apiRequest({ sessionId, provider, model,
-      ...reasoningEffort === undefined ? {} : { reasoningEffort } }))).selected
-    return `已切换到 ${selected.provider} / ${selected.model}，Effort：${selected.reasoningEffort ?? '默认'}。\n${LOCAL_MODEL_NOTICE}`
-  }
-
-  private async effort(sessionId: string, args: readonly string[]): Promise<string> {
-    const models = unwrap(await this.api.sessions.models(apiRequest({ sessionId })))
-    const efforts = models.groups.find(entry => entry.id === models.current.provider)?.models
-      .find(entry => entry.id === models.current.model)?.reasoning?.efforts ?? []
-    if (args.length === 0) return `当前 Effort：${models.current.reasoningEffort ?? '默认'}\n可选：${efforts.map(entry => entry.id).join(', ') || '该模型未公开可调 effort'}`
-    const [reasoningEffort] = args
-    if (args.length !== 1 || reasoningEffort === undefined || !efforts.some(entry => entry.id === reasoningEffort)) return '该模型不支持指定的 effort；发送 /effort 查看可选项。'
-    const selected = unwrap(await this.api.sessions.selectModel(apiRequest({ sessionId,
-      provider: models.current.provider, model: models.current.model, reasoningEffort }))).selected
-    return `Effort 已切换为 ${selected.reasoningEffort ?? reasoningEffort}。\n${LOCAL_MODEL_NOTICE}`
-  }
-
   private async ensureSession(key: string, requested: string): Promise<string> {
-    const actual = await ensureConversationSession({ api: this.api, key, requested,
+    const actual = await ensureConversationSession({
+      api: this.api,
+      key,
+      requested,
       defaultWorkspaceId: this.runtime.defaultWorkspace.workspaceId,
-      bindings: this.runtime.bindings, create: (id, workspace) => this.createSession(id, workspace) })
+      bindings: this.runtime.bindings,
+      create: (id, workspace) => this.createSession(id, workspace),
+    })
     await this.runtime.bindings.set(key, actual)
     return actual
   }
 
   private async createSession(sessionId: string, workspaceId: string): Promise<string> {
-    return unwrap(await this.api.sessions.create(apiRequest({ sessionId, workspaceId,
-      ...this.agentPreset === undefined ? {} : { agentPreset: this.agentPreset } }))).sessionId
+    return unwrap(await this.api.sessions.create(apiRequest({
+      sessionId,
+      workspaceId,
+      ...this.agentPreset === undefined ? {} : { agentPreset: this.agentPreset },
+    }))).sessionId
   }
 
   private async submitPrompt(
@@ -547,8 +467,12 @@ export class WeChatConversationRouter {
     const rpcId = promptRpcIdFor(message)
     const baselineSeq = await this.baselineSeqUnlessDuplicate(sessionId, rpcId)
     if (baselineSeq === undefined) return
-    const activeTurn: ActiveTurn = { sessionId, conversationKey: key, userId: message.userId,
-      ...message.contextToken === undefined ? {} : { contextToken: message.contextToken } }
+    const activeTurn: ActiveTurn = {
+      sessionId,
+      conversationKey: key,
+      userId: message.userId,
+      ...message.contextToken === undefined ? {} : { contextToken: message.contextToken },
+    }
     const previousActiveTurn = this.activeTurns.get(sessionId)
     if (previousActiveTurn === undefined) this.activeTurns.set(sessionId, activeTurn)
     const pendingOutcome = this.turnOutcome(sessionId, rpcId, baselineSeq)
@@ -651,76 +575,6 @@ export class WeChatConversationRouter {
     return { promise: settled, abort }
   }
 
-  /**
-   * Upload each image and send it as its own iLink message. A failure names the
-   * images that stayed behind rather than dropping them silently.
-   */
-  private async sendImages(
-    activeTurn: ActiveTurn,
-    images: readonly ImageAttachmentRef[],
-  ): Promise<void> {
-    if (images.length === 0) return
-    const readImage = this.runtime.readImage
-    let failed = 0
-    for (const ref of images) {
-      if (this.stopping) return
-      let stage: MediaStage = 'read'
-      try {
-        if (readImage === undefined) throw new Error('this deployment has no attachment store')
-        const data = await readImage(ref)
-        stage = 'send'
-        await this.replies.sendImage(activeTurn.userId, Buffer.from(data), activeTurn.contextToken)
-      } catch (error: unknown) {
-        failed += 1
-        this.logger.warn(mediaFailure(stage, error).message)
-      }
-    }
-    if (failed === 0 || this.stopping) return
-    await this.replies.sendText(
-      activeTurn.userId, undeliveredImageNotice(failed, images.length), activeTurn.contextToken,
-    ).catch((error: unknown) => { this.logger.error(error) })
-  }
-
-  private async sendFiles(activeTurn: ActiveTurn, files: TurnOutcome['files']): Promise<void> {
-    let failed = 0
-    const signal = this.deliveryAbort.signal
-    for (const file of files) {
-      if (this.stopping) return
-      let stage: MediaStage = 'read'
-      try {
-        let loaded: OutboundFileBytes
-        if (file.kind === 'presented') {
-          if (this.runtime.readPresentedFile === undefined) throw new Error('presented file reader unavailable')
-          loaded = await this.runtime.readPresentedFile(activeTurn.sessionId, file.path, this.config.mediaMaxBytes, signal)
-        } else {
-          if (file.attachment.bytes > this.config.mediaMaxBytes) throw new Error('file exceeds mediaMaxBytes')
-          if (this.runtime.readFile === undefined) throw new Error('file attachment store unavailable')
-          const bytes = await collectFileBytes(this.runtime.readFile(file.attachment, signal), this.config.mediaMaxBytes, signal)
-          if (bytes.length !== file.attachment.bytes) throw new Error('file attachment length mismatch')
-          loaded = { name: file.attachment.name, bytes }
-        }
-        signal.throwIfAborted()
-        if (loaded.bytes.length > this.config.mediaMaxBytes) throw new Error('file exceeds mediaMaxBytes')
-        const name = loaded.name.split(/[\\/]/u).at(-1) || 'attachment'
-        stage = 'send'
-        if (isImageBytes(loaded.bytes)) {
-          await this.replies.sendImage(activeTurn.userId, loaded.bytes, activeTurn.contextToken)
-        } else if (/\.(mp4|m4v|mov)$/iu.test(name)) {
-          await this.replies.sendVideo(activeTurn.userId, loaded.bytes, activeTurn.contextToken)
-        } else {
-          await this.replies.sendFile(activeTurn.userId, loaded.bytes, name, activeTurn.contextToken)
-        }
-      } catch (error: unknown) {
-        failed += 1
-        this.logger.warn(mediaFailure(stage, error).message)
-      }
-    }
-    if (failed === 0 || this.stopping) return
-    await this.replies.sendText(activeTurn.userId,
-      `本轮 ${files.length} 个附件中的 ${failed} 个未能发送到微信，请在 DSH 会话中查看；可能超过媒体大小限制或上传失败。`,
-      activeTurn.contextToken)
-  }
-
   private async observeTurn(
     activeTurn: ActiveTurn,
     outcome: Promise<TurnOutcome>,
@@ -740,11 +594,12 @@ export class WeChatConversationRouter {
       }
       await this.replies.sendText(
         activeTurn.userId,
-        finalReply(completed),
+        finalWeChatReply(completed),
         activeTurn.contextToken,
       )
-      await this.sendImages(activeTurn, completed.images)
-      await this.sendFiles(activeTurn, completed.files)
+      const media = this.mediaContext()
+      await sendWeChatImages(media, activeTurn, completed.images)
+      await sendWeChatFiles(media, activeTurn, completed.files)
     } finally {
       await stopTyping()
       if (this.activeTurns.get(activeTurn.sessionId) === activeTurn) this.activeTurns.delete(activeTurn.sessionId)
@@ -788,7 +643,7 @@ export class WeChatConversationRouter {
       await this.replies.sendText(message.userId, '当前没有待回答的问题。', message.contextToken)
       return true
     }
-    const parsed = this.parseQuestionAnswer(pending, input)
+    const parsed = parseWeChatQuestionAnswer(pending.questions, input)
     if (typeof parsed === 'string') {
       await this.replies.sendText(message.userId, parsed, message.contextToken)
       return true
@@ -802,48 +657,17 @@ export class WeChatConversationRouter {
     const receipt = await this.api.respond({
       type: 'client-response',
       rpcId: pending.rpcId,
-      result: { ok: true, value: { sessionId: pending.activeTurn.sessionId,
-        answer: { answers: pending.questions.map(question => pending.answers.get(question.id)!) } } },
+      result: {
+        ok: true,
+        value: {
+          sessionId: pending.activeTurn.sessionId,
+          answer: { answers: pending.questions.map(question => pending.answers.get(question.id)!) },
+        },
+      },
     })
     if (!receipt.accepted) this.pendingQuestions.delete(pending.activeTurn.sessionId)
     await this.replies.sendText(message.userId, receipt.accepted ? '答案已提交。' : '这个问题已在其他客户端处理。', message.contextToken)
     return true
-  }
-
-  private parseQuestionAnswer(pending: PendingQuestion, input: string): AskUserQuestionAnswerItem | string {
-    if (input === '') return '请提供答案。'
-    const target = pending.questions.length === 1
-      ? { question: pending.questions[0]!, answer: input }
-      : this.numberedAnswer(pending.questions, input)
-    if (target === undefined) return '多题回答格式：/answer <序号或 id> <答案>。'
-    const options = target.question.options ?? []
-    if (options.length === 0) return { id: target.question.id, selected: [], custom: target.answer }
-    const requested = target.answer.split(',').map(entry => entry.trim()).filter(Boolean)
-    const selected = requested.flatMap(entry => {
-      const index = Number(entry)
-      const option = Number.isInteger(index) && index > 0 ? options[index - 1] : options.find(candidate => candidate.label === entry)
-      return option === undefined ? [] : [option.label]
-    })
-    if (selected.length !== requested.length) return `可选答案：${options.map((option, index) => `${index + 1}. ${option.label}`).join('；')}`
-    return { id: target.question.id, selected: target.question.multiSelect === true ? selected : selected.slice(0, 1) }
-  }
-
-  private numberedAnswer(
-    questions: readonly AskUserQuestionItem[],
-    input: string,
-  ): { question: AskUserQuestionItem; answer: string } | undefined {
-    const separator = input.indexOf(' ')
-    if (separator < 1) return undefined
-    const selector = input.slice(0, separator)
-    const question = questions[Number(selector) - 1] ?? questions.find(candidate => candidate.id === selector)
-    return question === undefined ? undefined : { question, answer: input.slice(separator + 1).trim() }
-  }
-
-  private formatQuestions(questions: readonly AskUserQuestionItem[]): string {
-    return questions.map((question, index) => {
-      const options = question.options?.map((option, optionIndex) => `  ${optionIndex + 1}. ${option.label}`).join('\n')
-      return `${index + 1}. ${question.question}${options === undefined ? '' : `\n${options}`}`
-    }).join('\n')
   }
 
   private addListener(sessionId: string, listener: EventListener): void {

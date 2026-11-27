@@ -19,7 +19,7 @@ export function dhpLauncherScript({ node, cli, root }) {
 }
 
 async function optionalStat(path) {
-  try { return await lstat(path) } catch (error) { if (error.code !== 'ENOENT') throw error }
+  try { return await lstat(path) } catch (error) { if (error.code !== 'ENOENT') throw error; return undefined }
 }
 
 export async function writeDhpLauncher({ root, repo, node, outputRoot = root }) {

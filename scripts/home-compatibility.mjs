@@ -12,7 +12,7 @@ const journalName = '.dhp-profile-update.json'
 const owner = 'dhp-profile-update-v1'
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 const json = async path => JSON.parse(await readFile(path, 'utf8'))
-async function stat(path) { try { return await lstat(path) } catch (error) { if (error.code !== 'ENOENT') throw error } }
+async function stat(path) { try { return await lstat(path) } catch (error) { if (error.code !== 'ENOENT') throw error; return undefined } }
 async function safeDirectory(path) {
   // A home can live below /var or another OS alias; reject user-controlled final components.
   const info = await stat(path)
@@ -115,7 +115,7 @@ export async function checkCredentials({ home, runtime, log = console.log }) {
 export async function profilePeerIssues(profile, runtime, ignored = new Set(), targetVersion) {
   const bytes = await regular(join(profile, 'package.json'))
   if (!bytes) return []
-  const manifest = JSON.parse(bytes), semver = createRequire(join(runtime, 'package.json'))('semver')
+  const manifest = JSON.parse(bytes.toString('utf8')), semver = createRequire(join(runtime, 'package.json'))('semver')
   const issues = []
   for (const name of Object.keys(manifest.dependencies ?? {})) {
     if (ignored.has(name)) continue
@@ -128,7 +128,7 @@ export async function profilePeerIssues(profile, runtime, ignored = new Set(), t
         const packageName = peer === 'engines.dsh' ? '@deepseek-ai/dsh' : peer
         const actualBytes = await regular(join(runtime, 'node_modules', packageName, 'package.json'))
         if (!actualBytes && plugin.peerDependenciesMeta?.[peer]?.optional) continue
-        const actual = targetVersion ?? (actualBytes ? JSON.parse(actualBytes).version : 'unavailable')
+        const actual = targetVersion ?? (actualBytes ? JSON.parse(actualBytes.toString('utf8')).version : 'unavailable')
         if (typeof range !== 'string' || !semver.valid(actual) || !semver.satisfies(actual, range)) issues.push(
           'Runtime update is incompatible with installed ' + name + ': ' + peer + ' requires ' + range + ', new runtime has ' + actual +
           '. Update/remove that plugin with the old installation first, or use an isolated DSH_HOME.')
@@ -213,7 +213,7 @@ export async function homeProfileUpdates({ home, repo, release }) {
   const profile = join(home, 'profiles/web')
   const bytes = await regular(join(profile, 'package.json'))
   if (!bytes) return []
-  const manifest = JSON.parse(bytes)
+  const manifest = JSON.parse(bytes.toString('utf8'))
   const entries = await catalogReplacements(profile, manifest, repo, release, false)
   return Promise.all([...entries, ...installedRetirements(manifest)].map(async entry => {
     let current
@@ -262,13 +262,13 @@ export async function prepareHomeProfile({ root, home, repo, runtime, release, n
   const profiles = join(home, 'profiles'), profile = join(profiles, 'web')
   if (await stat(profiles)) await safeDirectory(profiles)
   if (await stat(profile)) await safeDirectory(profile)
-  const bytes = await regular(join(profile, 'package.json')), manifest = bytes ? JSON.parse(bytes) : undefined
+  const bytes = await regular(join(profile, 'package.json')), manifest = bytes ? JSON.parse(bytes.toString('utf8')) : undefined
   if (!manifest && !marketplace) return undefined
   const entries = await catalogReplacements(profile, manifest, repo, release, marketplace)
   const retirements = installedRetirements(manifest)
   const presetPatch = await legacyPresetPatch({ home, profile, runtime })
   const replacements = []
-  for (const entry of entries) replacements.push({ entry, artifact: await releaseArtifact(repo, entry) })
+  for (const entry of entries) replacements.push({ entry, artifact: await releaseArtifact(repo, entry, { cacheDir: join(home, 'plugin-cache') }) })
   await verifyProfilePeers(profile, runtime, new Set([...replacements.map(item => item.entry.package), ...retirements.map(item => item.package)]))
   if (replacements.length === 0 && retirements.length === 0 && presetPatch === undefined) return undefined
   await safeDirectory(profiles)
@@ -361,11 +361,14 @@ export async function publishHomeProfile(transaction) {
   await rename(join(stage, 'next/profiles/web'), profile)
 }
 
-/** Match the committed profile transaction too: runtime versions can remain unchanged. */
+/**
+ * Match the committed profile transaction too: runtime versions can remain unchanged.
+ * @param {{ root: string, home: string, runtimeDigest: string, profileUpdateId?: string, ready: boolean, log?: (line: string) => void }} options
+ */
 export async function recoverHomeProfile({ root, home, runtimeDigest, profileUpdateId, ready, log = () => {} }) {
   const bytes = await regular(join(home, journalName))
   if (!bytes) return
-  const journal = JSON.parse(bytes)
+  const journal = JSON.parse(bytes.toString('utf8'))
   if (journal.owner !== owner || journal.root !== root || !/^\.dhp-web-[a-f0-9-]+$/.test(journal.stageName) || typeof journal.existed !== 'boolean' ||
     (journal.cleanupReady !== undefined && typeof journal.cleanupReady !== 'boolean')) throw new Error('Profile upgrade belongs to another installation or has an invalid journal; finish that installation first')
   const stage = join(home, 'profiles', journal.stageName), profile = join(home, 'profiles/web'), backup = join(stage, 'previous'), next = join(stage, 'next/profiles/web')

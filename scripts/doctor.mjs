@@ -9,15 +9,18 @@ import { readInstallationState } from './update-installation.mjs'
 import { homeProfileUpdates, profilePeerIssues } from './home-compatibility.mjs'
 import { installedRetirements } from './retired-plugins.mjs'
 
-async function optional(path) { try { return await lstat(path) } catch (error) { if (error.code !== 'ENOENT') throw error } }
+async function optional(path) { try { return await lstat(path) } catch (error) { if (error.code !== 'ENOENT') throw error; return undefined } }
 export async function portAvailable(port) {
   const server = createServer()
   return new Promise((resolve, reject) => {
-    server.once('error', error => error.code === 'EADDRINUSE' ? resolve(false) : reject(error))
+    server.once('error', /** @param {NodeJS.ErrnoException} error */ error => error.code === 'EADDRINUSE' ? resolve(false) : reject(error))
     server.listen(port, '127.0.0.1', () => server.close(error => error ? reject(error) : resolve(true)))
   })
 }
 
+/**
+ * @param {{ directory?: string, repo?: string, log?: (line: string) => void, inspect?: (file: string, args: string[], options?: Record<string, unknown>) => Promise<{ stdout: string }>, probe?: (port: number) => Promise<boolean> }} [options]
+ */
 export async function doctor({ directory = defaultDirectory(), repo = repositoryRoot, log = console.log, inspect, probe = portAvailable } = {}) {
   const checks = []
   const add = (name, ok, detail) => { checks.push({ name, ok, detail }); log((ok ? 'OK ' : 'CHECK ') + name + ': ' + detail) }

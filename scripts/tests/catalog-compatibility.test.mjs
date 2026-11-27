@@ -50,3 +50,21 @@ for (const folder of await readdir(join(repo, 'plugins'), { withFileTypes: true 
 test('catalog covers all repository plugins', () => {
   assert.deepEqual(catalog.map(entry => entry.package).sort(), names.sort())
 })
+
+test('artifacts directory has no unreferenced tarballs or lockfiles', async () => {
+  const referencedTarballs = new Set(catalog.map(entry => entry.artifact?.path).filter(Boolean))
+  const entries = await readdir(join(repo, 'artifacts'), { withFileTypes: true })
+  const unreferencedTarballs = entries
+    .filter(item => item.isFile() && item.name.endsWith('.tgz'))
+    .map(item => 'artifacts/' + item.name)
+    .filter(path => !referencedTarballs.has(path))
+  assert.deepEqual(unreferencedTarballs, [], 'Remove unreferenced tarballs from artifacts/')
+
+  const referencedLocks = new Set(catalog.map(entry => entry.sourceLock).filter(Boolean))
+  const lockEntries = await readdir(join(repo, 'artifacts/locks'), { withFileTypes: true })
+  const unreferencedLocks = lockEntries
+    .filter(item => item.isFile() && item.name.endsWith('.yaml'))
+    .map(item => 'artifacts/locks/' + item.name)
+    .filter(path => !referencedLocks.has(path))
+  assert.deepEqual(unreferencedLocks, [], 'Remove unreferenced lock snapshots from artifacts/locks/')
+})

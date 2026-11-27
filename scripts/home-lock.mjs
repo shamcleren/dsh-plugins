@@ -2,6 +2,10 @@
 import { lstat, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { acquireInstallerLock } from './installer-lock.mjs'
+/**
+ * @param {string} home
+ * @param {{ log?: (line: string) => void }} [options]
+ */
 export async function lockDshHome(home, { log } = {}) {
   await mkdir(home, { recursive: true, mode: 0o700 })
   const info = await lstat(home)

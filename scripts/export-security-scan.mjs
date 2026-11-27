@@ -128,6 +128,9 @@ function safeRelative(rel) {
   return path
 }
 
+/**
+ * @param {{ dest?: string, refreshLock?: boolean, source?: string, log?: (line: string) => void }} [options]
+ */
 export async function exportSecurityScan({ dest, refreshLock = false, source = sourceRoot, log = console.log } = {}) {
   const from = resolve(source)
   const to = resolve(dest)

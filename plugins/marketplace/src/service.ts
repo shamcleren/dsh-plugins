@@ -24,7 +24,7 @@ import { runCommand } from './command.ts'
 import { GongfengOAuthController, type GongfengOAuthConfig } from './oauth.ts'
 import { OAuthCallbackListener, OAUTH_REDIRECT_URI } from './oauth-callback.ts'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { githubFile, githubRepository } from './github.ts'
+import { githubFile, githubReleaseAsset, githubRepository } from './github.ts'
 import { parseRepositoryUrl } from './source.ts'
 import { parseRepositoryFilePointer } from './repository-file.ts'
 import type {
@@ -378,7 +378,12 @@ export class MarketplaceService extends Service {
     const destination = join(cache, `${plugin.artifact.sha256}.tgz`)
     const existing = await optionalFile(destination)
     if (existing !== undefined && this.matchesArtifact(existing, plugin)) return destination
-    const bytes = await this.repositoryFile(config, plugin.artifact.path, config.maxArtifactBytes)
+    const source = parseRepositoryUrl(new URL(config.repository, config.baseUrl).href)
+    const bytes = source.host === 'github' && plugin.artifact.url !== undefined
+      ? await githubReleaseAsset(source.repository, plugin.artifact.url, config.maxArtifactBytes)
+      : plugin.artifact.path !== undefined
+        ? await this.repositoryFile(config, plugin.artifact.path, config.maxArtifactBytes)
+        : (() => { throw new Error(`marketplace artifact for "${plugin.id}" is unavailable for this source`) })()
     if (!this.matchesArtifact(bytes, plugin)) throw new Error(`marketplace artifact verification failed for "${plugin.id}"`)
     await this.verifyPackageManifest(bytes, plugin, cache)
     await mkdir(cache, { recursive: true, mode: 0o700 })

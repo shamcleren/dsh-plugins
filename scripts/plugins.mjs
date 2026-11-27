@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { defaultDirectory, readInstallation, repositoryRoot } from './installation.mjs'
 import { run } from './process.mjs'
+import { resolveReleaseArtifact } from './release-artifact.mjs'
 import { retiredPlugins } from './retired-plugins.mjs'
 
 const repository = repositoryRoot
@@ -20,7 +21,7 @@ async function optionalFile(path) {
     const stat = await lstat(path)
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Expected a regular file: ' + path)
     return await readFile(path)
-  } catch (error) { if (error.code !== 'ENOENT') throw error }
+  } catch (error) { if (error.code !== 'ENOENT') throw error; return undefined }
 }
 
 async function atomicWrite(path, bytes) {
@@ -61,22 +62,23 @@ function pluginName(entry) {
 async function installedPackageVersion(profile, packageName) {
   // Resolve pnpm and local-source directory links to the actual version, not a file: specifier.
   const manifest = await optionalFile(join(profile, 'node_modules', packageName, 'package.json'))
-  if (!manifest) return
-  const value = JSON.parse(manifest)
+  if (!manifest) return undefined
+  const value = JSON.parse(manifest.toString('utf8'))
   if (value.name === packageName && typeof value.version === 'string' && value.version) return value.version
+  return undefined
 }
 
 async function declaredCatalogEntries(repo, profile) {
   const plugins = await readCatalog(repo)
   const bytes = await optionalFile(join(profile, 'package.json'))
-  const dependencies = bytes ? JSON.parse(bytes).dependencies ?? {} : {}
+  const dependencies = bytes ? JSON.parse(bytes.toString('utf8')).dependencies ?? {} : {}
   return plugins.filter(entry => Object.hasOwn(dependencies, entry.package))
 }
 
 async function listPlugins(repo, profile, log) {
   const plugins = await readCatalog(repo)
   const bytes = await optionalFile(join(profile, 'package.json'))
-  const dependencies = bytes ? JSON.parse(bytes).dependencies ?? {} : {}
+  const dependencies = bytes ? JSON.parse(bytes.toString('utf8')).dependencies ?? {} : {}
   log('本仓库插件（本地版本以当前仓库的发布目录为准）')
   log('PLUGIN             状态        已安装版本 / 本地版本')
   for (const entry of plugins) {
@@ -90,25 +92,8 @@ async function listPlugins(repo, profile, log) {
   }
 }
 
-export async function releaseArtifact(repo, entry) {
-  const artifact = entry.artifact
-  if (!artifact || !/^artifacts\/[^/\\]+\.tgz$/.test(artifact.path) || !/^[a-f0-9]{64}$/.test(artifact.sha256) ||
-      !Number.isSafeInteger(artifact.size) || artifact.size <= 0 || artifact.size > 50 * 1024 * 1024) throw new Error('Invalid catalog artifact')
-  const path = join(repo, artifact.path)
-  const stat = await lstat(path)
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== artifact.size) throw new Error('Artifact size or file type mismatch')
-  const bytes = await readFile(path)
-  if (digest(bytes) !== artifact.sha256) throw new Error('Artifact SHA-256 mismatch')
-  const { stdout } = await capture('tar', ['-xOf', path, 'package/package.json'], { maxBuffer: 1024 * 1024 })
-  const manifest = JSON.parse(stdout)
-  if (manifest.name !== entry.package || manifest.version !== entry.version || typeof manifest.dsh?.bundle?.patch !== 'string') {
-    throw new Error('Artifact package identity/version/bundle does not match the catalog')
-  }
-  if (entry.sourceDigest !== undefined && (!/^[a-f0-9]{64}$/.test(entry.sourceDigest) ||
-      manifest.dshPluginRelease?.schemaVersion !== 1 || manifest.dshPluginRelease.sourceDigest !== entry.sourceDigest)) {
-    throw new Error('Artifact build provenance does not match the catalog')
-  }
-  return bytes
+export async function releaseArtifact(repo, entry, options) {
+  return resolveReleaseArtifact(repo, entry, options)
 }
 
 async function sourceDirectory(repo, entry) {
@@ -146,6 +131,9 @@ export async function placeBundle(manifestPath, entry) {
   await atomicWrite(manifestPath, JSON.stringify(manifest, null, 2) + '\n')
 }
 
+/**
+ * @param {{ action: string, plugin?: string, source?: boolean, repo?: string, directory?: string, execute?: typeof run, log?: (line: string) => void }} options
+ */
 export async function managePlugin({ action, plugin, source = false, repo = repository, directory = defaultDirectory(repo), execute = run, log = console.log }) {
   if (!['install', 'remove', 'list'].includes(action)) throw new Error('Use dhp plugin install|remove|list')
   if (source && action !== 'install') throw new Error('--source applies only to plugin install')
@@ -163,7 +151,7 @@ export async function managePlugin({ action, plugin, source = false, repo = repo
   const entry = await catalogEntry(repo, plugin, action === 'remove')
   if (action === 'install' && entry.id === 'im') {
     const installed = await optionalFile(manifestPath)
-    const legacy = installedRetirementsForIm(installed ? JSON.parse(installed) : undefined)
+    const legacy = installedRetirementsForIm(installed ? JSON.parse(installed.toString('utf8')) : undefined)
     if (legacy.length) {
       if (source) throw new Error('Use dhp update to consolidate legacy IM plugins with a verified catalog release')
       log('Combining legacy IM plugins through the transactional dhp update; existing channel settings are retained.')
@@ -176,7 +164,7 @@ export async function managePlugin({ action, plugin, source = false, repo = repo
     const runtime = JSON.parse(await readFile(join(root, 'runtime/node_modules/@deepseek-ai/dsh/package.json'), 'utf8'))
     if (typeof entry.dshVersion !== 'string' || entry.dshVersion !== runtime.version) throw new Error('Plugin is incompatible with the installed DSH version')
     if (source) sourcePackage = await sourceDirectory(repo, entry)
-    else bytes = await releaseArtifact(repo, entry)
+    else bytes = await releaseArtifact(repo, entry, { cacheDir: join(dshHome, 'plugin-cache') })
   }
   await mkdir(profile, { recursive: true, mode: 0o700 })
   const lockPath = join(profile, '.local-plugin.lock')
@@ -190,7 +178,7 @@ export async function managePlugin({ action, plugin, source = false, repo = repo
     const snapshots = await Promise.all(['package.json', 'pnpm-lock.yaml'].map(async name => ({ path: join(profile, name), bytes: await optionalFile(join(profile, name)) })))
     try {
       if (action === 'remove') {
-        const manifest = snapshots[0].bytes && JSON.parse(snapshots[0].bytes)
+        const manifest = snapshots[0].bytes && JSON.parse(snapshots[0].bytes.toString('utf8'))
         if (!manifest?.dependencies?.[entry.package]) { log('Plugin is not installed: ' + entry.package); return }
         await invoke(['remove', entry.package])
       } else {
@@ -228,7 +216,7 @@ export async function updateInstalledPlugins({ source = false, repo = repository
   const installation = await readInstallation(directory, repo)
   log('DSH profile: ' + installation.profile)
   const installed = await optionalFile(join(installation.profile, 'package.json'))
-  if (installedRetirementsForIm(installed ? JSON.parse(installed) : undefined).length) {
+  if (installedRetirementsForIm(installed ? JSON.parse(installed.toString('utf8')) : undefined).length) {
     if (source) throw new Error('Use dhp update to consolidate legacy IM plugins with a verified catalog release')
     await execute(process.execPath, [join(repo, 'scripts/dhp.mjs'), '--dir', installation.root, 'update'], { cwd: repo, env: { ...process.env, DSH_HOME: installation.dshHome } })
     return
@@ -262,7 +250,7 @@ export async function executePlugin({ plugin, args = [], repo = repository, dire
   const installation = await readInstallation(directory, repo)
   const entry = await catalogEntry(repo, plugin)
   const profileBytes = await optionalFile(join(installation.profile, 'package.json'))
-  const profileManifest = profileBytes ? JSON.parse(profileBytes) : {}
+  const profileManifest = profileBytes ? JSON.parse(profileBytes.toString('utf8')) : {}
   if (!Object.hasOwn(profileManifest.dependencies ?? {}, entry.package)) {
     throw new Error('Plugin is not installed: ' + entry.package)
   }

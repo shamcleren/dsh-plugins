@@ -4,6 +4,8 @@ import { z } from 'zod'
 
 const API = 'https://api.github.com'
 const ALLOWED_HOSTS = new Set(['api.github.com', 'raw.githubusercontent.com', 'objects.githubusercontent.com'])
+const ALLOWED_RELEASE_HOSTS = new Set(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com'])
+const RELEASE_URL = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/releases\/download\/([^/?#]+)\/([^/?#\\]+\.tgz)$/
 const repositorySchema = z.object({ default_branch: z.string().min(1) })
 const fileSchema = z.object({
   type: z.literal('file'),
@@ -46,8 +48,8 @@ async function boundedBytes(response: Response, maxBytes: number): Promise<Buffe
   return Buffer.concat(chunks, total)
 }
 
-async function githubFetch(url: URL, maxBytes: number, redirects = 0): Promise<Response> {
-  if (url.protocol !== 'https:' || !ALLOWED_HOSTS.has(url.host)) throw new Error('marketplace refused a GitHub address')
+async function githubFetch(url: URL, maxBytes: number, redirects = 0, allowedHosts: ReadonlySet<string> = ALLOWED_HOSTS): Promise<Response> {
+  if (url.protocol !== 'https:' || !allowedHosts.has(url.host)) throw new Error('marketplace refused a GitHub address')
   const response = await fetch(url, {
     method: 'GET',
     redirect: 'manual',
@@ -61,7 +63,7 @@ async function githubFetch(url: URL, maxBytes: number, redirects = 0): Promise<R
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers.get('location')
     if (redirects >= 3 || location === null) throw new Error('marketplace refused a GitHub redirect')
-    return githubFetch(new URL(location, url), maxBytes, redirects + 1)
+    return githubFetch(new URL(location, url), maxBytes, redirects + 1, allowedHosts)
   }
   if (response.status === 404) throw new Error('GitHub repository is not publicly readable')
   if (response.status === 403 || response.status === 429) throw new Error('GitHub API rate limit exceeded; retry later')
@@ -89,4 +91,21 @@ export async function githubFile(repository: string, path: string, ref: string, 
   const bytes = await boundedBytes(body, maxBytes)
   if (bytes.length !== file.size) throw new Error('marketplace GitHub file size does not match its metadata')
   return bytes
+}
+
+/** Download a public GitHub Release .tgz asset scoped to the configured repository. */
+export async function githubReleaseAsset(repository: string, rawUrl: string, maxBytes: number): Promise<Buffer> {
+  const match = RELEASE_URL.exec(rawUrl)
+  if (match === null) throw new Error('marketplace refused a GitHub release asset address')
+  const owner = match[1]
+  const repo = match[2]
+  if (owner === undefined || repo === undefined || `${owner}/${repo}`.toLowerCase() !== repository.toLowerCase()) {
+    throw new Error('marketplace refused a cross-repository GitHub release asset')
+  }
+  const url = new URL(rawUrl)
+  if (url.protocol !== 'https:' || url.host !== 'github.com' || url.username !== '' || url.password !== '' || url.search !== '' || url.hash !== '') {
+    throw new Error('marketplace refused a GitHub release asset address')
+  }
+  const response = await githubFetch(url, maxBytes, 0, ALLOWED_RELEASE_HOSTS)
+  return boundedBytes(response, maxBytes)
 }

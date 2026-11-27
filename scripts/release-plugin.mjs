@@ -6,9 +6,30 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { run } from './process.mjs'
 import { pluginSourceDigest, snapshotReleaseLock } from './release-inputs.mjs'
+import { parseTrustedReleaseUrl } from './release-artifact.mjs'
 import { releaseArtifact } from './plugins.mjs'
 
-export async function releasePlugin(id, repo = fileURLToPath(new URL('..', import.meta.url)), { initial } = {}) {
+/**
+ * Build an immutable GitHub Release asset URL from `<owner>/<repo>@<tag>` and a tarball filename.
+ * @param {string} spec
+ * @param {string} filename
+ */
+function releaseUrlFor(spec, filename) {
+  const at = spec.lastIndexOf('@')
+  if (at <= 0 || at === spec.length - 1) throw new Error('Expected --github-release=<owner>/<repo>@<tag>')
+  const repository = spec.slice(0, at)
+  const tag = spec.slice(at + 1)
+  const url = `https://github.com/${repository}/releases/download/${tag}/${filename}`
+  parseTrustedReleaseUrl(url, repository)
+  return url
+}
+
+/**
+ * @param {string} id
+ * @param {string} [repo]
+ * @param {{ initial?: Record<string, string>, githubRelease?: string }} [options]
+ */
+export async function releasePlugin(id, repo = fileURLToPath(new URL('..', import.meta.url)), { initial, githubRelease } = {}) {
   const catalogPath = join(repo, 'marketplace.json'), catalog = JSON.parse(await readFile(catalogPath, 'utf8'))
   const previous = catalog.plugins.find(p => p.id === id || p.package === id || (id === 'marketplace' && p.id === 'trusted-marketplace'))
   if (initial && (previous || initial.id !== id || !/^[a-z][a-z0-9-]+$/.test(id) || catalog.plugins.some(p => p.package === initial.package)
@@ -45,14 +66,21 @@ export async function releasePlugin(id, repo = fileURLToPath(new URL('..', impor
       cwd: stage, env: { ...process.env, npm_config_cache: join(scratch, 'npm-cache') },
     })
     const bytes = await readFile(join(scratch, filename))
-    const next = { ...entry, version: manifest.version, sourceDigest, sourceLock, artifact: { ...entry.artifact, path: 'artifacts/' + filename, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } }
+    const releaseUrl = githubRelease ? releaseUrlFor(githubRelease, filename) : undefined
+    const artifact = {
+      path: 'artifacts/' + filename,
+      ...(releaseUrl === undefined ? {} : { url: releaseUrl }),
+      size: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    }
+    const next = { ...entry, version: manifest.version, sourceDigest, sourceLock, artifact }
     await writeFile(output, bytes, { flag: 'wx' }); artifactWritten = true
     await releaseArtifact(repo, next)
     if (previous) catalog.plugins[catalog.plugins.indexOf(previous)] = next
     else catalog.plugins.push(next)
     await writeFile(catalogPath, JSON.stringify(catalog, null, 2) + '\n'); catalogWritten = true
     // The superseded path is explicitly owned by the old catalog entry.
-    if (previous?.artifact.path !== next.artifact.path && /^artifacts\/[^/]+\.tgz$/.test(previous?.artifact.path ?? '')) await rm(join(repo, previous.artifact.path))
+    if (previous?.artifact?.path !== next.artifact.path && /^artifacts\/[^/]+\.tgz$/.test(previous?.artifact?.path ?? '')) await rm(join(repo, previous.artifact.path), { force: true })
     return next
   } finally {
     await rm(scratch, { recursive: true, force: true })
@@ -61,8 +89,15 @@ export async function releasePlugin(id, repo = fileURLToPath(new URL('..', impor
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
-    if (process.argv.length !== 3) throw new Error('Usage: node scripts/release-plugin.mjs <catalog-id>')
-    const entry = await releasePlugin(process.argv[2])
+    const args = process.argv.slice(2)
+    let id, githubRelease
+    for (const arg of args) {
+      if (arg.startsWith('--github-release=')) githubRelease = arg.slice('--github-release='.length)
+      else if (!arg.startsWith('--') && !id) id = arg
+      else throw new Error('Usage: node scripts/release-plugin.mjs <catalog-id> [--github-release=<owner>/<repo>@<tag>]')
+    }
+    if (!id) throw new Error('Usage: node scripts/release-plugin.mjs <catalog-id> [--github-release=<owner>/<repo>@<tag>]')
+    const entry = await releasePlugin(id, undefined, { githubRelease })
     console.log('Prepared ' + entry.id + '@' + entry.version + ' (' + entry.artifact.sha256 + ')')
   } catch (error) { console.error(error.message); process.exitCode = 1 }
 }

@@ -51,4 +51,38 @@ describe('parseMarketplaceCatalog', () => {
       repository: 'shamcleren/dsh-plugin', ref: 'main', dshVersion: '0.1.0-rc.8', maxArtifactBytes: 1024,
     })).toThrow(/size limit/)
   })
+
+  it('accepts same-repository GitHub Release artifact URLs and provenance metadata', () => {
+    const view = parseMarketplaceCatalog({
+      text: catalog({
+        artifact: {
+          url: 'https://github.com/shamcleren/dsh-plugin/releases/download/v0.3.0/wecom-0.3.0.tgz',
+          sha256: 'a'.repeat(64),
+          size: 42,
+        },
+        sourceDigest: 'b'.repeat(64),
+        sourceLock: 'artifacts/locks/' + 'c'.repeat(64) + '.yaml',
+      }),
+      repository: 'shamcleren/dsh-plugin', ref: 'main', dshVersion: '0.1.0-rc.8', maxArtifactBytes: 1024,
+    })
+    expect(view.plugins[0]?.artifact.url).toBe('https://github.com/shamcleren/dsh-plugin/releases/download/v0.3.0/wecom-0.3.0.tgz')
+    expect(view.plugins[0]?.artifact.path).toBeUndefined()
+  })
+
+  it('rejects cross-repository or non-release artifact URLs', () => {
+    expect(() => parseMarketplaceCatalog({
+      text: catalog({
+        artifact: {
+          url: 'https://github.com/other/repo/releases/download/v0.3.0/wecom-0.3.0.tgz',
+          sha256: 'a'.repeat(64),
+          size: 42,
+        },
+      }),
+      repository: 'shamcleren/dsh-plugin', ref: 'main', dshVersion: '0.1.0-rc.8', maxArtifactBytes: 1024,
+    })).toThrow(/unsafe/)
+    expect(() => parseMarketplaceCatalog({
+      text: catalog({ artifact: { sha256: 'a'.repeat(64), size: 42 } }),
+      repository: 'shamcleren/dsh-plugin', ref: 'main', dshVersion: '0.1.0-rc.8', maxArtifactBytes: 1024,
+    })).toThrow(/path or url/)
+  })
 })

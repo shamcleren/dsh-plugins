@@ -22,16 +22,16 @@
       "package": "@shamcleren/dsh-plugin-marketplace",
       "name": "Git Repository Marketplace",
       "description": "从 gitlab.example.com 或 GitHub 公开仓库读取插件目录",
-      "version": "0.4.13",
+      "version": "0.4.14",
       "placement": "after-web-app",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-plugin-marketplace-0.4.13.tgz",
-        "sha256": "3bbeabbb1c62c473b6def4cc003fa8953c609307075c12e4d829df470f98204c",
-        "size": 80104
+        "path": "artifacts/shamcleren-dsh-plugin-marketplace-0.4.14.tgz",
+        "size": 81089,
+        "sha256": "a050ae93b49e5a038e9760e56bc43159f3807061cfd02d95e58541266951aebf"
       },
       "dshVersion": "0.2.1-rc.5",
-      "sourceDigest": "a510c5ed577c3a75e08ee40418c16e987098f7112225d05ae20457c8f5830c8e",
-      "sourceLock": "artifacts/locks/d83897f590589aa64d65d1af36be8af4847ac529a2579b678e9451b28521da72.yaml"
+      "sourceDigest": "99408b62f6db9d38df41a343c0e0173645faefcd5d196dfe05eb11e644239860",
+      "sourceLock": "artifacts/locks/7109c74f15cf723ba546eb8c43176f74885bcca64e85365fb4249f99d92498be.yaml"
     },
     {
       "id": "security-scan",
@@ -120,12 +120,12 @@
       "description": "统一管理个人微信与企业微信的账号、工作区、会话和渠道能力",
       "dshVersion": "0.2.1-rc.5",
       "placement": "before-web-app",
-      "version": "0.1.24",
-      "sourceDigest": "ce8616aa83eebe3fd97362d1a6fe57caebc621ff6218110ffcd606f42187b775",
+      "version": "0.1.25",
+      "sourceDigest": "0ee10ad19846a27f00688ff246450ed511512d3684a714a289dffb99d969e03e",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-im-0.1.24.tgz",
-        "size": 352274,
-        "sha256": "31dcd81642a8a279461de0b238af619cc3eb4e004de6818e2a045fe282d30e8c"
+        "path": "artifacts/shamcleren-dsh-im-0.1.25.tgz",
+        "size": 352942,
+        "sha256": "0571a05dfc3de5e1a9e3cf7aedfca646f948354f3e5f203e3f205f2c71bcf686"
       },
       "sourceLock": "artifacts/locks/7109c74f15cf723ba546eb8c43176f74885bcca64e85365fb4249f99d92498be.yaml"
     },

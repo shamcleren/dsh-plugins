@@ -10,6 +10,7 @@ import { publishUserDhp, writeDhpLauncher } from './dhp-command.mjs'
 import { assertInstallationIdle, installationDigests, readInstallationState, recoverInstallation, updateInstallation } from './update-installation.mjs'
 import { installationIntegrity, treeDigest } from './installation-integrity.mjs'
 import { acquireInstallerLock } from './installer-lock.mjs'
+import { validateArtifactDescriptor } from './release-artifact.mjs'
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)))
 const owner = 'shamcleren/dsh-plugin/bootstrap-v1'
@@ -33,7 +34,7 @@ export function parseArgs(args) {
 }
 
 async function exists(path) {
-  try { return await lstat(path) } catch (error) { if (error.code !== 'ENOENT') throw error }
+  try { return await lstat(path) } catch (error) { if (error.code !== 'ENOENT') throw error; return undefined }
 }
 
 export async function releaseInfo(repo, { marketplace = false } = {}) {
@@ -54,13 +55,22 @@ export async function releaseInfo(repo, { marketplace = false } = {}) {
   if (entry.dshVersion !== dshVersion) {
     throw new Error('Marketplace must pin the exact official runtime version')
   }
-  if (entry.package !== '@shamcleren/dsh-plugin-marketplace' ||
-      !/^artifacts\/[^/\\]+\.tgz$/.test(entry.artifact.path)) throw new Error('Invalid Marketplace artifact path or package')
-  const artifact = join(repo, entry.artifact.path)
-  const bytes = await readFile(artifact)
-  const sha256 = createHash('sha256').update(bytes).digest('hex')
-  if (bytes.length !== entry.artifact.size || sha256 !== entry.artifact.sha256) throw new Error('Marketplace artifact size or SHA-256 mismatch')
-  return { ...release, packageName: entry.package, version: entry.version, sha256, artifact }
+  if (entry.package !== '@shamcleren/dsh-plugin-marketplace') throw new Error('Invalid Marketplace artifact path or package')
+  let descriptor
+  try { descriptor = validateArtifactDescriptor(entry.artifact) }
+  catch (error) { throw new Error('Invalid Marketplace artifact: ' + (error instanceof Error ? error.message : String(error))) }
+  if (descriptor.path !== undefined) {
+    const artifact = join(repo, descriptor.path)
+    const stat = await exists(artifact)
+    if (stat) {
+      const bytes = await readFile(artifact)
+      const sha256 = createHash('sha256').update(bytes).digest('hex')
+      if (bytes.length !== descriptor.size || sha256 !== descriptor.sha256) throw new Error('Marketplace artifact size or SHA-256 mismatch')
+      return { ...release, packageName: entry.package, version: entry.version, sha256, artifact }
+    }
+    if (descriptor.url === undefined) throw new Error('Marketplace artifact file is missing: ' + artifact)
+  }
+  return { ...release, packageName: entry.package, version: entry.version, sha256: descriptor.sha256, artifact: descriptor.url }
 }
 
 function validateDirectory(directory, repo) {
@@ -76,7 +86,10 @@ async function writeState(root, state) {
   await rename(temporary, join(root, markerName))
 }
 
-/** The optional Marketplace comes from a verified tarball; plugin compilation is unnecessary. */
+/**
+ * The optional Marketplace comes from a verified tarball; plugin compilation is unnecessary.
+ * @param {{ directory: string, desktop?: boolean, marketplace?: boolean, dshHome?: string, rebuildApp?: boolean, repo?: string, execute?: typeof run, log?: (line: string) => void, assertIdle?: (root: string) => Promise<void>, userHome?: string, pathEnv?: string }} options
+ */
 export async function bootstrap({ directory, desktop, marketplace, dshHome, rebuildApp = false, repo = repository, execute = run, log = console.log, assertIdle, userHome, pathEnv }) {
   if (dshHome !== undefined && (typeof dshHome !== 'string' || !isAbsolute(dshHome))) throw new Error('DSH configuration directory must be absolute')
   const nodeSource = process.env.DSH_BOOTSTRAP_NODE_ROOT
@@ -97,6 +110,7 @@ export async function bootstrap({ directory, desktop, marketplace, dshHome, rebu
   if (typeof selectedHome !== 'string' || !isAbsolute(selectedHome)) throw new Error('Invalid DSH configuration directory')
   if (state && savedHome !== resolve(selectedHome)) throw new Error('Installation data directory differs; existing data will not be migrated')
   if (state?.desktop && !desktop) throw new Error('Existing desktop installation cannot be changed to Web-only during repair')
+  /** @type {Record<string, string>} */
   const buildEnvironment = {}
   for (const key of ['DSH_APP_PORT', 'DSH_SHARE_TEAM_ID', 'CODESIGN_IDENTITY']) {
     const value = process.env[key] ?? (state?.status !== 'ready' ? state?.buildEnvironment?.[key] : undefined)

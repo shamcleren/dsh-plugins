@@ -16,7 +16,7 @@ const journalName = '.update-transaction.json'
 const managed = /^(?:node|runtime|bin\/(?:dsh|dsh\.mjs|process\.mjs|dhp)|native-app\.json|bootstrap-state\.json|(?:apps\/)?[^/\\]+\.app)$/
 
 export async function optionalStat(path) {
-  try { return await lstat(path) } catch (error) { if (error.code !== 'ENOENT') throw error }
+  try { return await lstat(path) } catch (error) { if (error.code !== 'ENOENT') throw error; return undefined }
 }
 
 async function writeJson(path, value) {

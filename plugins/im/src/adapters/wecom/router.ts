@@ -3,6 +3,16 @@ import type { WeComSessionSources } from './session-source.js'
 import { ensureConversationSession } from '../../core/sessions.js'
 import { managementHelp, requiresHostSession, managementFailure } from '../../core/commands.js'
 import { runSessionCommand } from '../../core/session-commands.js'
+import {
+  effortCommand,
+  listHostWorkspaces,
+  modelCommand,
+  newSessionCommand,
+  presetCommand,
+  selectWorkspace,
+  statusCommand,
+  type ChannelCommandContext,
+} from '../../core/channel-commands.js'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Logger } from '@deepseek-ai/cordis'
 import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -20,7 +30,6 @@ import type {
   AskUserQuestionItem,
   HostApiProxy,
   HostMuxFrame,
-  HostPreset,
   HostSessionEvent,
   HostWorkspace,
   QuestionRequestedFrame,
@@ -29,7 +38,6 @@ import type {
   RpcRequest,
   SessionEventFrame,
 } from './host-api.js'
-import { HostApiError } from './host-api.js'
 import { unwrap, submitChannelPrompt } from './host-api.js'
 import {
   conversationKeyFor,
@@ -48,71 +56,45 @@ import {
   splitReply,
   TurnProjection,
 } from './reply.js'
-import { inboundContent, type QuestionNames } from './media.js'
-import { collectFileBytes } from './files.js'
-import type { OutboundFileBytes } from './files.js'
 import type { TurnOutcome } from './reply.js'
+import { inboundContent, type QuestionNames } from './media.js'
+import type { OutboundFileBytes } from './files.js'
 import type { ConversationBindings } from './bindings.js'
 import type { BotModel, WeComSettingsPatch } from './config.js'
+import {
+  buildApprovalCard,
+  buildQuestionCard,
+  buildResolvedCard,
+  parseCardSelection,
+  SettledCardStore,
+} from './cards.js'
+import {
+  currentQuestionIndex,
+  formatWeComQuestions,
+  parseWeComQuestionAnswer,
+} from './questions.js'
+import {
+  IMAGE_LEAD_IN,
+  sendWeComFiles,
+  sendWeComImages,
+  type WeComMediaDeliveryContext,
+} from './outbound-media.js'
 
 const HISTORY_PAGE_MESSAGES = 100
 const MAX_FINAL_OBSERVATION_MS = 60 * 60 * 1000
 const MAX_MARKDOWN_BYTES = 4096
-const MAX_CARD_BUTTONS = 6
-const QUESTION_CARD_TITLE_WIDTH = 26
-const QUESTION_CARD_BODY_WIDTH = 30
-const QUESTION_CARD_BUTTON_WIDTH = 10
-const MAX_SETTLED_CARDS = 100
 const INTERNAL_ERROR_REPLY = '处理请求时发生错误，请稍后重试。'
 const NO_PENDING_APPROVAL_REPLY = '当前没有待处理的审批。'
-
-/** Session create refusals that mean the bound Session cannot accept this channel's workspace or preset. */
-
 const APPROVAL_OWNER_REPLY = '只有发起本轮请求的用户可以处理该审批。'
 const NO_PENDING_QUESTION_REPLY = '当前没有待回答的问题。'
 const QUESTION_OWNER_REPLY = '只有发起本轮请求的用户可以回答该问题。'
 const CONTINUATION_REPLY = '已加入当前任务。'
-
-/** Budget two units for non-ASCII characters to leave room on narrow clients. */
-function fitsQuestionCardLine(text: string, limit: number): boolean {
-  if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(text)) return false
-  let width = 0
-  for (const character of text) {
-    width += character.charCodeAt(0) <= 0x7e ? 1 : 2
-    if (width > limit) return false
-  }
-  return true
-}
+const LOCAL_MODEL_NOTICE = '此选择仅作用于当前企微会话。'
+const COMMAND_HELP = managementHelp({ identity: true, sessions: true })
+  + '\n- /groupname <群名>：设置工作台显示的本群名称\n- /myname <姓名>：设置自己提问时的显示名'
 
 function isAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true
-}
-
-/**
- * Images travel as their own WeCom messages after the text, so a turn that
- * produced only images still needs the text reply suppressed rather than filled
- * with the "no text" fallback.
- */
-const IMAGE_LEAD_IN = '图片如下：'
-
-function undeliveredImageNotice(failed: number, total: number): string {
-  const scope = failed === total ? `本轮生成的 ${total} 张图片` : `其中 ${failed} 张图片`
-  return `${scope}未能发送到企微，已保存在 DSH 会话中。`
-}
-
-const IMAGE_EXTENSIONS: Record<string, string> = {
-  'image/png': 'png',
-  'image/jpeg': 'jpg',
-  'image/webp': 'webp',
-  'image/gif': 'gif',
-}
-
-/** A display name WeCom accepts, keeping the stored extension meaningful. */
-function imageFilename(ref: ImageAttachmentRef, index: number): string {
-  const extension = IMAGE_EXTENSIONS[ref.mediaType] ?? 'png'
-  const base = ref.name?.replaceAll(/[/\\]/gu, '').trim()
-  if (base === undefined || base === '') return `image-${index + 1}.${extension}`
-  return /\.[a-z0-9]+$/iu.test(base) ? base : `${base}.${extension}`
 }
 
 /**
@@ -139,10 +121,6 @@ function whoamiReply(userId: string): string {
 }
 
 class TurnObservationTimeout extends Error {}
-
-const LOCAL_MODEL_NOTICE = '此选择仅作用于当前企微会话。'
-
-const COMMAND_HELP = managementHelp({ identity: true, sessions: true }) + '\n- /groupname <群名>：设置工作台显示的本群名称\n- /myname <姓名>：设置自己提问时的显示名'
 
 export interface WeComReplyClient {
   replyStream(
@@ -265,15 +243,6 @@ interface PendingQuestion {
   locallyAnswered?: boolean
 }
 
-interface ResolvedTemplateCard extends TemplateCard {
-  replace_text: string
-}
-
-interface SettledCard {
-  userId: string
-  title: string
-}
-
 type SessionListener = (event: HostSessionEvent) => void
 
 function apiRequest<T>(payload: T): RpcRequest<T> {
@@ -312,7 +281,7 @@ export class WeComConversationRouter {
   private readonly activeTurns = new Map<string, ActiveTurn>()
   private readonly pendingApprovals = new Map<string, PendingApproval>()
   private readonly pendingQuestions = new Map<string, PendingQuestion>()
-  private readonly settledCards = new Map<string, SettledCard>()
+  private readonly settledCards = new SettledCardStore()
   private readonly turnAborts = new Set<AbortController>()
   private muxAbort: AbortController | undefined
   private muxTask: Promise<void> | undefined
@@ -408,7 +377,6 @@ export class WeComConversationRouter {
     this.muxTask = undefined
   }
 
-  /** Whether this channel owns the exact live session turn. */
   /** Route questions and events only while this channel owns the active turn. */
   routesSession(sessionId: string): boolean { return this.activeTurns.has(sessionId) }
 
@@ -417,8 +385,7 @@ export class WeComConversationRouter {
    * turn subscribes, which is earlier than `routesSession`: the agent emits
    * `turn/start` and the admitting `user/message` while the prompt submission is
    * still in flight, and those are the only events that attribute a turn to this
-   * channel. Dropping them at the source leaves the turn unattributable, so it
-   * never completes and can only end by timing out.
+   * channel.
    */
   observesSession(sessionId: string): boolean {
     return this.listeners.has(sessionId) || this.activeTurns.has(sessionId)
@@ -460,7 +427,7 @@ export class WeComConversationRouter {
       void this.interactiveUpdate(
         activeTurn,
         notice,
-        this.approvalCard(pending, request.toolName, request.reason, command),
+        buildApprovalCard(pending.taskId, request.toolName, request.reason, command),
       ).catch((error: unknown) => {
         this.logger.error(error)
         this.withdrawApproval(pending)
@@ -468,20 +435,50 @@ export class WeComConversationRouter {
       void request.resolved.then((resolution) => {
         if (this.activeTurns.get(activeTurn.sessionId) !== activeTurn) return
         if (activeTurn.awaitingInteraction) this.rotateProactive(activeTurn)
-        const notice = resolution.outcome === 'allowed-once'
+        const settledNotice = resolution.outcome === 'allowed-once'
           ? '审批已通过，任务继续执行。'
           : resolution.outcome === 'rejected'
             ? '审批已拒绝。'
             : '审批已结束。'
         if (pending.cardHandled !== true) {
-          this.rememberSettledCard(pending.taskId, activeTurn.userId, notice)
+          this.settledCards.remember(pending.taskId, activeTurn.userId, settledNotice)
         }
         if (pending.locallyAnswered === true) return undefined
-        activeTurn.streamText = this.withNotice(activeTurn, notice)
+        activeTurn.streamText = this.withNotice(activeTurn, settledNotice)
         if (activeTurn.outputMode === 'proactive') return undefined
         return this.reliableUpdate(activeTurn.frame, activeTurn.streamId, activeTurn.streamText)
       }).catch((error: unknown) => { this.logger.warn(`wecom-aibot: approval resolution reply failed: ${String(error)}`) })
     })
+  }
+
+  private commandContext(): ChannelCommandContext {
+    return {
+      api: this.api,
+      rpcPrefix: 'wecom-api',
+      sessionPrefix: 'session-wecom',
+      localModelNotice: LOCAL_MODEL_NOTICE,
+      defaultWorkspace: () => this.runtime.defaultWorkspace,
+      getAgentPreset: () => this.agentPreset,
+      setAgentPreset: next => { this.agentPreset = next },
+      writeAgentPreset: next => this.writeSettings({ agentPreset: next }),
+      createSession: (sessionId, workspaceId) => this.createSession(sessionId, workspaceId),
+      bindSession: (key, sessionId, previous) => this.runtime.bindings.set(key, sessionId, previous),
+    }
+  }
+
+  private mediaContext(): WeComMediaDeliveryContext {
+    return {
+      logger: this.logger,
+      mediaMaxBytes: this.config.mediaMaxBytes ?? 10 * 1024 * 1024,
+      isStopping: () => this.stopping,
+      signal: () => this.deliveryAbort.signal,
+      ...(this.runtime.readImage === undefined ? {} : { readImage: this.runtime.readImage }),
+      ...(this.runtime.readFile === undefined ? {} : { readFile: this.runtime.readFile }),
+      ...(this.runtime.readPresentedFile === undefined ? {} : { readPresentedFile: this.runtime.readPresentedFile }),
+      uploadMedia: (fileBuffer, options) => this.replies.uploadMedia(fileBuffer, options),
+      sendMediaMessage: (targetId, mediaType, mediaId) => this.replies.sendMediaMessage(targetId, mediaType, mediaId),
+      sendNotice: (targetId, text) => this.replies.sendMessage(targetId, { msgtype: 'markdown', markdown: { content: boundReply(text) } }),
+    }
   }
 
   private async consumeMux(signal: AbortSignal): Promise<void> {
@@ -551,7 +548,7 @@ export class WeComConversationRouter {
   private async deliverQuestion(pending: PendingQuestion): Promise<void> {
     const { activeTurn } = pending
     const { outputMode } = activeTurn
-    const notice = this.formatQuestions(pending)
+    const notice = formatWeComQuestions(pending.questions)
     const combined = this.withNotice(activeTurn, notice)
     const fitsStream = Buffer.byteLength(combined) <= MAX_STREAM_REPLY_BYTES
     const stillPending = () => !this.stopping && !pending.locallyAnswered
@@ -570,7 +567,7 @@ export class WeComConversationRouter {
       }
     }
     if (!fitsStream || !stillPending()) return
-    const card = this.questionCard(pending)
+    const card = buildQuestionCard(pending.taskId, pending.questions, pending.answers)
     if (card !== undefined) {
       pending.cardPresented = true
       await this.sendTemplateCard(activeTurn, card)
@@ -585,7 +582,7 @@ export class WeComConversationRouter {
       ? '问题已回答，任务继续执行。'
       : '问题已取消。'
     if (pending.cardPresented === true && pending.cardHandled !== true) {
-      this.rememberSettledCard(pending.taskId, pending.activeTurn.userId, notice)
+      this.settledCards.remember(pending.taskId, pending.activeTurn.userId, notice)
     }
     this.removePendingQuestion(pending)
     if (pending.locallyAnswered === true) return
@@ -682,10 +679,9 @@ export class WeComConversationRouter {
       await this.answerQuestionCard(question, eventKey, userId, frame)
       return
     }
-    const settled = this.settledCards.get(taskId)
-    if (settled?.userId !== userId) return
-    this.settledCards.delete(taskId)
-    await this.replies.updateTemplateCard(frame, this.resolvedCard(taskId, settled.title))
+    const settled = this.settledCards.take(taskId, userId)
+    if (settled === undefined) return
+    await this.replies.updateTemplateCard(frame, buildResolvedCard(taskId, settled.title))
   }
 
   private async answerApprovalCard(
@@ -700,7 +696,7 @@ export class WeComConversationRouter {
     const allowed = eventKey === 'approval_allow'
     this.rotateProactive(pending.activeTurn)
     try {
-      await this.replies.updateTemplateCard(frame, this.resolvedCard(
+      await this.replies.updateTemplateCard(frame, buildResolvedCard(
         pending.taskId,
         allowed ? '已允许' : '已拒绝',
         allowed ? '任务继续执行' : '操作已取消',
@@ -719,23 +715,23 @@ export class WeComConversationRouter {
     frame: WeComTemplateCardEventFrame,
   ): Promise<void> {
     if (pending.activeTurn.userId !== userId || !pending.cardPresented || pending.cardHandled || pending.locallyAnswered) return
-    const selection = this.cardSelection(eventKey)
-    const questionIndex = this.currentQuestionIndex(pending)
+    const selection = parseCardSelection(eventKey)
+    const questionIndex = currentQuestionIndex(pending.questions, pending.answers)
     if (selection === undefined || selection.questionIndex !== questionIndex) return
     const question = pending.questions[questionIndex]
     const option = question?.options?.[selection.optionIndex]
     if (question === undefined || option === undefined) return
     pending.cardHandled = true
     pending.answers.set(question.id, { id: question.id, selected: [option.label] })
-    const nextCard = this.questionCard(pending)
+    const nextCard = buildQuestionCard(pending.taskId, pending.questions, pending.answers)
     if (nextCard !== undefined) {
       pending.cardHandled = false
       await this.replies.updateTemplateCard(frame, nextCard)
       return
     }
-    const nextQuestion = this.currentQuestionIndex(pending)
+    const nextQuestion = currentQuestionIndex(pending.questions, pending.answers)
     if (nextQuestion >= 0) {
-      await this.replies.updateTemplateCard(frame, this.resolvedCard(
+      await this.replies.updateTemplateCard(frame, buildResolvedCard(
         pending.taskId,
         '已记录选择，请按消息提示继续回答',
         `回复 /answer ${nextQuestion + 1} <答案>`,
@@ -745,16 +741,10 @@ export class WeComConversationRouter {
     pending.locallyAnswered = true
     this.rotateProactive(pending.activeTurn)
     const receipt = await this.respondQuestionAnswers(pending)
-    await this.replies.updateTemplateCard(frame, this.resolvedCard(
+    await this.replies.updateTemplateCard(frame, buildResolvedCard(
       pending.taskId,
       receipt.accepted ? `已选择：${option.label}` : '问题已在其他客户端处理',
     ))
-  }
-
-  private cardSelection(eventKey: string): { questionIndex: number; optionIndex: number } | undefined {
-    const matched = /^question_(\d+)_option_(\d+)$/u.exec(eventKey)
-    if (matched === null) return undefined
-    return { questionIndex: Number(matched[1]!), optionIndex: Number(matched[2]!) }
   }
 
   private async admitFrame(
@@ -860,8 +850,9 @@ export class WeComConversationRouter {
       } else {
         await this.finish(activeTurn.frame, activeTurn.streamId, textReply)
       }
-      await this.sendImages(activeTurn, outcome.images)
-      await this.sendFiles(activeTurn, outcome.files)
+      const media = this.mediaContext()
+      await sendWeComImages(media, activeTurn.targetId, outcome.images)
+      await sendWeComFiles(media, activeTurn.sessionId, activeTurn.targetId, outcome.files)
     } catch (error: unknown) {
       this.logger.error(error)
       if (!this.stopping) {
@@ -909,13 +900,13 @@ export class WeComConversationRouter {
     input: string,
     frame: WeComTextFrame,
   ): Promise<void> {
-    const answer = this.parseQuestionAnswer(pending, input)
+    const answer = parseWeComQuestionAnswer(pending.questions, input)
     if (typeof answer === 'string') {
       await this.finish(frame, generateReqId('stream'), answer)
       return
     }
     pending.answers.set(answer.id, answer)
-    const nextQuestion = this.currentQuestionIndex(pending)
+    const nextQuestion = currentQuestionIndex(pending.questions, pending.answers)
     if (nextQuestion < 0) {
       await this.submitQuestionAnswers(pending, frame)
       return
@@ -955,170 +946,6 @@ export class WeComConversationRouter {
     })
     if (!receipt.accepted) this.removePendingQuestion(pending)
     return receipt
-  }
-
-  private parseQuestionAnswer(
-    pending: PendingQuestion,
-    input: string,
-  ): AskUserQuestionAnswerItem | string {
-    const target = this.questionTarget(pending, input)
-    if (target === undefined) return this.answerUsage(pending)
-    const options = target.question.options ?? []
-    if (options.length === 0) {
-      return { id: target.question.id, selected: [], custom: target.answerText }
-    }
-    return this.matchQuestionOptions(target.question, target.answerText, pending)
-  }
-
-  private questionTarget(
-    pending: PendingQuestion,
-    input: string,
-  ): { question: AskUserQuestionItem; answerText: string } | undefined {
-    if (input === '') return undefined
-    if (pending.questions.length === 1) {
-      return { question: pending.questions[0]!, answerText: input }
-    }
-    const separator = input.search(/\s/u)
-    if (separator < 0) return undefined
-    const selector = input.slice(0, separator)
-    const answerText = input.slice(separator).trim()
-    const number = Number(selector)
-    const question = Number.isInteger(number) && number > 0
-      ? pending.questions[number - 1]
-      : pending.questions.find(candidate => candidate.id === selector)
-    return question === undefined || answerText === '' ? undefined : { question, answerText }
-  }
-
-  private matchQuestionOptions(
-    question: AskUserQuestionItem,
-    answerText: string,
-    pending: PendingQuestion,
-  ): AskUserQuestionAnswerItem | string {
-    const options = question.options!
-    if (!/^[0-9]+$/u.test(answerText)) {
-      const exact = options.find(option => option.label === answerText)
-      if (exact) return { id: question.id, selected: [exact.label] }
-    }
-    const selected: string[] = []
-    const custom: string[] = []
-    for (const token of answerText.split(/[,，]/u).map(part => part.trim()).filter(Boolean)) {
-      const number = Number(token)
-      const option = Number.isInteger(number) && number > 0
-        ? options[number - 1]
-        : options.find(candidate => candidate.label === token)
-      if (option === undefined) custom.push(token)
-      else if (!selected.includes(option.label)) selected.push(option.label)
-    }
-    if (selected.length === 0 && custom.length === 0) return this.answerUsage(pending)
-    if (question.multiSelect !== true && selected.length + (custom.length > 0 ? 1 : 0) > 1) {
-      return `“${question.id}”只能选择一个答案。`
-    }
-    return {
-      id: question.id,
-      selected,
-      ...custom.length === 0 ? {} : { custom: custom.join('，') },
-    }
-  }
-
-  private answerUsage(pending: PendingQuestion): string {
-    if (pending.questions.length > 1) return '逐题回复 `/answer <题号> <答案>`。有选项时，可以用选项编号，例如 `/answer 1 1`。'
-    if (!pending.questions[0]?.options?.length) return '回复 `/answer <你的答案>`。'
-    return '回复 `/answer 1` 选择第 1 项，也可以输入选项文字或自定义答案。'
-  }
-
-  private formatQuestions(pending: PendingQuestion): string {
-    const rows = pending.questions.map((question, questionIndex) => {
-      const headline = `**第 ${questionIndex + 1} 题${question.header ? ` · ${question.header}` : ''}**`
-      const options = (question.options ?? []).map((option, optionIndex) => {
-        const description = option.description === undefined ? '' : ` — ${option.description}`
-        return `- ${optionIndex + 1}）${option.label}${description}`
-      })
-      const multi = question.multiSelect === true ? '可用逗号选择多项，例如 `1,2`。' : ''
-      return [headline, question.question, question.detail, options.join('\n'), multi].filter(Boolean).join('\n\n')
-    })
-    return ['需要你回答问题', this.answerUsage(pending), ...rows].join('\n\n')
-  }
-
-  private approvalCard(
-    pending: PendingApproval,
-    toolName: string,
-    reason?: string,
-    command?: string,
-  ): TemplateCard {
-    return {
-      card_type: 'button_interaction',
-      main_title: { title: '需要审批', desc: this.limitCardText(`工具：${toolName}`, 30) },
-      ...reason === undefined ? {} : { sub_title_text: this.limitCardText(reason, 112) },
-      ...command === undefined ? {} : {
-        quote_area: {
-          type: 0,
-          title: '执行命令',
-          quote_text: command,
-        },
-      },
-      button_list: [
-        { text: '允许', key: 'approval_allow', style: 1 },
-        { text: '拒绝', key: 'approval_reject', style: 2 },
-      ],
-      task_id: pending.taskId,
-    }
-  }
-
-  private questionCard(pending: PendingQuestion): TemplateCard | undefined {
-    const questionIndex = this.currentQuestionIndex(pending)
-    const question = pending.questions[questionIndex]
-    const options = question?.options ?? []
-    if (question === undefined || question.multiSelect === true
-      || options.length === 0 || options.length > MAX_CARD_BUTTONS) return undefined
-    const title = question.header?.trim() || '请选择答案'
-    if (!fitsQuestionCardLine(title, QUESTION_CARD_TITLE_WIDTH)
-      || !fitsQuestionCardLine(question.question, QUESTION_CARD_BODY_WIDTH)
-      || !fitsQuestionCardLine(question.detail ?? '', QUESTION_CARD_BODY_WIDTH)
-      || options.some(option => !option.label.trim() || !fitsQuestionCardLine(option.label, QUESTION_CARD_BUTTON_WIDTH)
-        || !fitsQuestionCardLine(option.description ?? '', QUESTION_CARD_BODY_WIDTH))) return undefined
-    return {
-      card_type: 'button_interaction',
-      main_title: { title, desc: question.question },
-      button_list: options.map((option, index) => ({
-        text: option.label,
-        key: `question_${questionIndex}_option_${index}`,
-        style: index === 0 ? 1 : 2,
-      })),
-      task_id: pending.taskId,
-    }
-  }
-
-  private currentQuestionIndex(pending: PendingQuestion): number {
-    return pending.questions.findIndex(question => !pending.answers.has(question.id))
-  }
-
-  private resolvedCard(taskId: string, title: string, description?: string): ResolvedTemplateCard {
-    return {
-      card_type: 'button_interaction',
-      main_title: {
-        title: this.limitCardText(title, 26),
-        ...description === undefined ? {} : { desc: this.limitCardText(description, 30) },
-      },
-      card_action: { type: 0 },
-      button_list: [{ text: '已处理', key: 'resolved_noop', style: 2 }],
-      replace_text: '操作成功',
-      task_id: taskId,
-    }
-  }
-
-  private limitCardText(text: string, characters: number): string {
-    const content = [...text]
-    return content.length <= characters
-      ? text
-      : `${content.slice(0, characters - 1).join('')}…`
-  }
-
-  private rememberSettledCard(taskId: string, userId: string, title: string): void {
-    if (this.settledCards.size >= MAX_SETTLED_CARDS) {
-      const oldestTaskId = this.settledCards.keys().next().value as string
-      this.settledCards.delete(oldestTaskId)
-    }
-    this.settledCards.set(taskId, { userId, title })
   }
 
   private async interactiveUpdate(
@@ -1232,78 +1059,15 @@ export class WeComConversationRouter {
     })
   }
 
-  /**
-   * Deliver durable images as their own WeCom messages. Each one is uploaded as
-   * temporary media and pushed through the active-send channel, which stays
-   * usable after the stream reply has already finished. Anything that cannot be
-   * delivered is named in a single notice instead of disappearing.
-   */
-  private async sendImages(
-    activeTurn: ActiveTurn,
-    images: readonly ImageAttachmentRef[],
-  ): Promise<void> {
-    if (images.length === 0) return
-    const readImage = this.runtime.readImage
-    let failed = 0
-    for (const [index, ref] of images.entries()) {
-      if (this.stopping) return
-      try {
-        if (readImage === undefined) throw new Error('this deployment has no attachment store')
-        const data = await readImage(ref)
-        const media = await this.replies.uploadMedia(Buffer.from(data), {
-          type: 'image',
-          filename: imageFilename(ref, index),
-        })
-        await this.replies.sendMediaMessage(activeTurn.targetId, 'image', media.media_id)
-      } catch (error: unknown) {
-        failed += 1
-        this.logger.error(error)
-      }
-    }
-    if (failed === 0 || this.stopping) return
-    await this.sendProactiveText(activeTurn, undeliveredImageNotice(failed, images.length))
-      .catch((error: unknown) => { this.logger.error(error) })
-  }
-
-  private async sendFiles(activeTurn: ActiveTurn, files: TurnOutcome['files']): Promise<void> {
-    let failed = 0
-    const signal = this.deliveryAbort.signal
-    for (const file of files) {
-      if (this.stopping) return
-      try {
-        let loaded: OutboundFileBytes
-        if (file.kind === 'presented') {
-          if (this.runtime.readPresentedFile === undefined) throw new Error('presented file reader unavailable')
-          loaded = await this.runtime.readPresentedFile(activeTurn.sessionId, file.path, (this.config.mediaMaxBytes ?? 10 * 1024 * 1024), signal)
-        } else {
-          if (file.attachment.bytes > (this.config.mediaMaxBytes ?? 10 * 1024 * 1024)) throw new Error('file exceeds mediaMaxBytes')
-          if (this.runtime.readFile === undefined) throw new Error('file attachment store unavailable')
-          const bytes = await collectFileBytes(this.runtime.readFile(file.attachment, signal), (this.config.mediaMaxBytes ?? 10 * 1024 * 1024), signal)
-          if (bytes.length !== file.attachment.bytes) throw new Error('file attachment length mismatch')
-          loaded = { name: file.attachment.name, bytes }
-        }
-        signal.throwIfAborted()
-        if (loaded.bytes.length > (this.config.mediaMaxBytes ?? 10 * 1024 * 1024)) throw new Error('file exceeds mediaMaxBytes')
-        const name = loaded.name.split(/[\\/]/u).at(-1) || 'attachment'
-        const type = /\.(mp4|m4v|mov)$/iu.test(name) ? 'video' : 'file'
-        const media = await this.replies.uploadMedia(loaded.bytes, { type, filename: name })
-        signal.throwIfAborted()
-        await this.replies.sendMediaMessage(activeTurn.targetId, type, media.media_id)
-      } catch {
-        failed += 1
-        // Signed CDN parameters and local paths must not enter channel logs.
-        this.logger.warn('wecom-aibot: file/video delivery failed')
-      }
-    }
-    if (failed === 0 || this.stopping) return
-    await this.sendProactiveText(activeTurn,
-      `本轮 ${files.length} 个文件或视频中的 ${failed} 个未能发送到企微，请在 DSH 会话中查看；可能超过媒体大小限制或上传失败。`)
-  }
-
   private async ensureSession(key: string, requested: string): Promise<string> {
-    return ensureConversationSession({ api: this.api, key, requested,
+    return ensureConversationSession({
+      api: this.api,
+      key,
+      requested,
       defaultWorkspaceId: this.runtime.defaultWorkspace.workspaceId,
-      bindings: this.runtime.bindings, create: (id, workspace) => this.createSession(id, workspace) })
+      bindings: this.runtime.bindings,
+      create: (id, workspace) => this.createSession(id, workspace),
+    })
   }
 
   private async createSession(sessionId: string, workspaceId: string): Promise<string> {
@@ -1338,6 +1102,7 @@ export class WeComConversationRouter {
       return undefined
     }
     if (!this.adminUsers.has(message.userId)) return commandPermissionReply(message.userId)
+    const cmdCtx = this.commandContext()
     switch (command) {
       case '/groupname': {
         if (message.chatType !== 'group') return '请在要命名的群聊中使用 /groupname。'
@@ -1348,35 +1113,24 @@ export class WeComConversationRouter {
         return '已更新这个群在 DSH 中显示的名称。'
       }
       case '/help': return COMMAND_HELP
-      case '/status': return await this.status(sessionId)
+      case '/status': return await statusCommand(cmdCtx, sessionId)
       case '/new': return args.length === 0
-        ? await this.newSession(conversationKey, sessionId)
+        ? await newSessionCommand(cmdCtx, conversationKey, sessionId, '已创建并切换到新会话（当前工作区）。发送 /session 可切回历史会话。')
         : '用法：/new'
-      case '/session': return await runSessionCommand({ sessions: this.api.sessions, bindings: this.runtime.bindings,
-        key: conversationKey, currentSessionId: sessionId, args, titlePrefix: '【企业微信】' })
+      case '/session': return await runSessionCommand({
+        sessions: this.api.sessions,
+        bindings: this.runtime.bindings,
+        key: conversationKey,
+        currentSessionId: sessionId,
+        args,
+        titlePrefix: '【企业微信】',
+      })
       case '/workspace': return await this.workspace(conversationKey, sessionId, args)
-      case '/preset': return await this.preset(conversationKey, sessionId, args)
-      case '/model': return await this.model(sessionId, args)
-      case '/effort': return await this.effort(sessionId, args)
+      case '/preset': return await presetCommand(cmdCtx, conversationKey, sessionId, args)
+      case '/model': return await modelCommand(cmdCtx, sessionId, args)
+      case '/effort': return await effortCommand(cmdCtx, sessionId, args)
       default: return `未知命令：${command}\n\n${COMMAND_HELP}`
     }
-  }
-
-  private async status(sessionId: string): Promise<string> {
-    const models = unwrap(await this.api.sessions.models(apiRequest({ sessionId })))
-    return [
-      `当前模型：${models.current.provider} / ${models.current.model}`,
-      `Effort：${models.current.reasoningEffort ?? '由模型或提供方决定'}`,
-      `预设：${this.agentPreset ?? '跟随全局默认'}`,
-    ].join('\n')
-  }
-
-  private async newSession(conversationKey: string, currentSessionId: string): Promise<string> {
-    const previousWorkspace = await this.workspaceIdForSession(currentSessionId)
-    const workspaceId = previousWorkspace ?? this.runtime.defaultWorkspace.workspaceId
-    const sessionId = await this.createSession(`session-wecom-${randomUUID().replaceAll('-', '')}`, workspaceId)
-    await this.runtime.bindings.set(conversationKey, sessionId, previousWorkspace === undefined ? undefined : currentSessionId)
-    return '已创建并切换到新会话（当前工作区）。发送 /session 可切回历史会话。'
   }
 
   private async workspace(
@@ -1384,7 +1138,7 @@ export class WeComConversationRouter {
     currentSessionId: string,
     args: readonly string[],
   ): Promise<string> {
-    const workspaces = await this.listWorkspaces()
+    const workspaces = await listHostWorkspaces(this.api, 'wecom-api')
     const current = workspaces.find(entry => entry.sessionIds.includes(currentSessionId))
     if (args.length === 0) {
       const rows = workspaces.map(entry => `${entry.title} (${entry.workspaceId})`)
@@ -1398,7 +1152,7 @@ export class WeComConversationRouter {
     const selector = args.join(' ')
     const target = selector === 'reset'
       ? workspaces.find(entry => entry.workspaceId === this.runtime.defaultWorkspace.workspaceId)
-      : this.selectWorkspace(workspaces, selector ?? '')
+      : selectWorkspace(workspaces, selector ?? '')
     if (target === undefined) {
       return selector === 'reset'
         ? '默认工作区已不存在，请在插件设置中重新选择。'
@@ -1408,134 +1162,6 @@ export class WeComConversationRouter {
     const sessionId = await this.createSession(`session-wecom-${randomUUID().replaceAll('-', '')}`, target.workspaceId)
     await this.runtime.bindings.set(conversationKey, sessionId, current === undefined ? undefined : currentSessionId)
     return `已切换到工作区“${target.title}”并创建新会话。旧会话仍保留。`
-  }
-
-  /**
-   * Move the channel's agent preset.
-   *
-   * The Bot-local preset lives in this plugin's
-   * own settings section, and a session names its preset at creation, so the
-   * switch persists for the channel and takes effect on a rebuilt session
-   * instead of leaking into any deployment-wide default.
-   */
-  private async preset(
-    conversationKey: string,
-    currentSessionId: string,
-    args: readonly string[],
-  ): Promise<string> {
-    let roster: { items: readonly HostPreset[]; defaultId: string } | undefined
-    try {
-      roster = unwrap(await this.api.presets.list(apiRequest({})))
-    } catch (error: unknown) {
-      if (!(error instanceof HostApiError) || error.code !== 'presets-unavailable') throw error
-    }
-    const current = this.agentPreset
-    if (args.length === 0) {
-      const inherited = roster === undefined ? '全局默认' : `全局默认（${roster.defaultId}）`
-      const rows = roster?.items.map(entry => {
-        const label = entry.name === undefined ? entry.id : `${entry.id}（${entry.name}）`
-        return entry.broken === undefined ? label : `${label} [不可用：${entry.broken}]`
-      }) ?? ['（本部署未提供预设列表）']
-      return [
-        `当前预设：${current ?? `未指定，跟随${inherited}`}`,
-        '可选预设：',
-        ...rows,
-        '',
-        '用法：/preset <id> 切换，/preset reset 恢复跟随全局默认。',
-      ].join('\n')
-    }
-    if (args.length !== 1) return '用法：/preset [<id>|reset]'
-    const [selector] = args as [string]
-    const next = selector === 'reset' ? undefined : selector
-    if (next !== undefined && roster !== undefined) {
-      const target = roster.items.find(entry => entry.id === next)
-      if (target === undefined) return `没有找到预设“${next}”；发送 /preset 查看可选项。`
-      if (target.broken !== undefined) return `预设“${next}”当前不可用：${target.broken}`
-    }
-    if (next === current) {
-      return next === undefined ? '当前已经跟随全局默认预设。' : `当前已经在预设“${next}”。`
-    }
-    try {
-      await this.writeSettings({ agentPreset: next })
-    } catch (error: unknown) {
-      return `预设未能保存：${error instanceof Error ? error.message : String(error)}`
-    }
-    // A running session keeps the preset it was composed from, so the switch only
-    // becomes observable on a session created after the write.
-    this.agentPreset = next
-    const previousWorkspace = await this.workspaceIdForSession(currentSessionId)
-    const workspaceId = previousWorkspace ?? this.runtime.defaultWorkspace.workspaceId
-    const sessionId = await this.createSession(`session-wecom-${randomUUID().replaceAll('-', '')}`, workspaceId)
-    await this.runtime.bindings.set(conversationKey, sessionId, previousWorkspace === undefined ? undefined : currentSessionId)
-    return next === undefined
-      ? '已恢复跟随全局默认预设，并创建新会话。旧会话仍保留。'
-      : `已切换到预设“${next}”，并创建新会话。旧会话仍保留。`
-  }
-
-  private selectWorkspace(
-    workspaces: readonly HostWorkspace[],
-    selector: string,
-  ): HostWorkspace | undefined {
-    const byId = workspaces.find(entry => entry.workspaceId === selector)
-    if (byId !== undefined) return byId
-    const byTitle = workspaces.filter(entry => entry.title === selector)
-    return byTitle.length === 1 ? byTitle[0] : undefined
-  }
-
-  private async workspaceIdForSession(sessionId: string): Promise<string | undefined> {
-    return (await this.listWorkspaces())
-      .find(workspace => workspace.sessionIds.includes(sessionId))?.workspaceId
-  }
-
-  private async listWorkspaces(): Promise<HostWorkspace[]> {
-    return unwrap(await this.api.workspace.list(apiRequest({}))).items
-  }
-
-  private async model(sessionId: string, args: readonly string[]): Promise<string> {
-    const models = unwrap(await this.api.sessions.models(apiRequest({ sessionId })))
-    if (args.length === 0) {
-      const rows = models.groups.flatMap(group => group.models.map(model => {
-        const efforts = model.reasoning?.efforts.map(effort => effort.id).join(', ')
-        return `${group.id} ${model.id}${efforts === undefined ? '' : ` [${efforts}]`}`
-      }))
-      return [`当前：${models.current.provider} ${models.current.model}`, ...rows].join('\n')
-    }
-    if (args.length < 2 || args.length > 3) return '用法：/model <provider> <model> [effort]'
-    const [provider, model, reasoningEffort] = args as [string, string, string?]
-    const group = models.groups.find(entry => entry.id === provider)
-    const target = group?.models.find(entry => entry.id === model)
-    if (target === undefined) return '没有找到该 provider/model；发送 /model 查看可选项。'
-    if (reasoningEffort !== undefined
-      && !target.reasoning?.efforts.some(entry => entry.id === reasoningEffort)) {
-      return '该模型不支持指定的 effort；发送 /model 查看可选项。'
-    }
-    const selected = unwrap(await this.api.sessions.selectModel(apiRequest({
-      sessionId, provider, model,
-      ...reasoningEffort === undefined ? {} : { reasoningEffort },
-    }))).selected
-    return `已切换到 ${selected.provider} / ${selected.model}，Effort：${selected.reasoningEffort ?? '默认'}。\n${LOCAL_MODEL_NOTICE}`
-  }
-
-  private async effort(sessionId: string, args: readonly string[]): Promise<string> {
-    const models = unwrap(await this.api.sessions.models(apiRequest({ sessionId })))
-    const group = models.groups.find(entry => entry.id === models.current.provider)
-    const model = group?.models.find(entry => entry.id === models.current.model)
-    const efforts = model?.reasoning?.efforts ?? []
-    if (args.length === 0) {
-      return `当前 Effort：${models.current.reasoningEffort ?? '默认'}\n可选：${efforts.map(entry => entry.id).join(', ') || '该模型未公开可调 effort'}`
-    }
-    if (args.length !== 1) return '用法：/effort <level>'
-    const [reasoningEffort] = args
-    if (reasoningEffort === undefined || !efforts.some(entry => entry.id === reasoningEffort)) {
-      return '该模型不支持指定的 effort；发送 /effort 查看可选项。'
-    }
-    const selected = unwrap(await this.api.sessions.selectModel(apiRequest({
-      sessionId,
-      provider: models.current.provider,
-      model: models.current.model,
-      reasoningEffort,
-    }))).selected
-    return `Effort 已切换为 ${selected.reasoningEffort ?? reasoningEffort}。\n${LOCAL_MODEL_NOTICE}`
   }
 
   private sessionState(sessionId: string): Promise<SessionState> {
@@ -1600,9 +1226,6 @@ export class WeComConversationRouter {
       resolveOutcome = resolve
       rejectOutcome = reject
     })
-    // Admission can still be uploading a file when shutdown or timeout settles
-    // observation; retain the rejection for its eventual observer without an
-    // unhandled rejection escaping in the meantime.
     void outcome.catch(() => undefined)
     const settle = (result: TurnOutcome | Error): void => {
       if (settled) return

@@ -53,7 +53,7 @@ export async function controlService({
       // The App receives the request before the Host tears down this CLI.
       await execute(legacy ? 'open' : controller, legacy ? [app.path] : [], { cwd: root })
       log('Requested Host restart from the running app: ' + app.path)
-      return
+      return undefined
     }
   }
   if (action === 'stop' || action === 'restart') {
@@ -74,7 +74,7 @@ export async function controlService({
       }
       log('Stopped this installation\'s DSH process.')
     }
-    if (action === 'stop') return
+    if (action === 'stop') return undefined
   }
   await installationBusy(root)
   const running = await owned()
@@ -83,7 +83,7 @@ export async function controlService({
   if (app) {
     await execute('open', [app.path], { cwd: root })
     log('Opened app: open \'' + app.path.replaceAll("'", "'\\''") + '\'')
-    return
+    return undefined
   }
   const port = (desktop ? await readNativeApp(root).catch(() => undefined) : undefined)?.port ?? 3080
   await mkdir(join(root, 'logs'), { recursive: true, mode: 0o700 })
@@ -108,4 +108,5 @@ export async function controlService({
     if (typeof child.unref === 'function') child.unref()
   } finally { await logFile.close() }
   log('Started web: ' + launcher + ' web --host 127.0.0.1 --port ' + port)
+  return undefined
 }

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { githubFile, githubRepository } from '../src/github.ts'
+import { githubFile, githubReleaseAsset, githubRepository } from '../src/github.ts'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -36,4 +36,25 @@ it('refuses a redirect away from GitHub and a private repository', async () => {
   await expect(githubRepository('shamcleren/dsh-plugins')).rejects.toThrow(/refused a GitHub address/)
   vi.stubGlobal('fetch', vi.fn(async () => new Response('missing', { status: 404 })))
   await expect(githubFile('shamcleren/private', 'marketplace.json', 'main', 1024)).rejects.toThrow(/not publicly readable/)
+})
+
+it('downloads same-repository GitHub release assets via allowlisted redirects and rejects foreign targets', async () => {
+  const payload = Buffer.from('tarball-bytes')
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.startsWith('https://github.com/')) {
+      return new Response(null, { status: 302, headers: { location: 'https://release-assets.githubusercontent.com/assets/plugin.tgz' } })
+    }
+    return new Response(payload)
+  }))
+  await expect(githubReleaseAsset(
+    'shamcleren/dsh-plugins',
+    'https://github.com/shamcleren/dsh-plugins/releases/download/v1.0.0/plugin.tgz',
+    1024,
+  )).resolves.toEqual(payload)
+  await expect(githubReleaseAsset(
+    'shamcleren/dsh-plugins',
+    'https://github.com/other/repo/releases/download/v1.0.0/plugin.tgz',
+    1024,
+  )).rejects.toThrow(/cross-repository/)
 })

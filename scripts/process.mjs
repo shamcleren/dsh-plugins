@@ -31,7 +31,7 @@ export function run(command, args, options = {}) {
       cleanup()
       if (code === 0 && !signal && !interrupted) resolve()
       else {
-        const error = new Error(command + ' failed (' + (interrupted ?? signal ?? code) + ')')
+        const error = /** @type {Error & { exitCode?: number }} */ (new Error(command + ' failed (' + (interrupted ?? signal ?? code) + ')'))
         if (!interrupted && !signal && Number.isInteger(code)) error.exitCode = code
         reject(error)
       }

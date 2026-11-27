@@ -21,8 +21,22 @@ pnpm test
 行为变更同步组件文档与回归测试，增加组件版本后构建并打包至 `artifacts/`。同步 `marketplace.json` 的版本、大小、SHA-256 和实际验证的 DSH 兼容版本。只保留目录引用的当前包；不得用不同字节覆盖已发布版本。迁移时已有的 `-public.1` 包保持身份及摘要，后续修订以新版本发布。
 
 ```sh
-node scripts/release-plugin.mjs wechat
+node scripts/release-plugin.mjs im [--github-release=shamcleren/dsh-plugins@plugins-2026-11]
 node --test scripts/tests/catalog-compatibility.test.mjs
+```
+
+如需将发布包迁移至 GitHub Releases 分发（避免二进制 `.tgz` 持续增大 Git 历史，详见 [发布包分发决策](decisions/release-artifact-distribution.md)），可先使用只读演练检查上传计划，再显式执行上传与目录切换：
+
+```sh
+node scripts/publish-github-release.mjs --tag plugins-2026-11
+node scripts/publish-github-release.mjs --tag plugins-2026-11 --execute --update-catalog --remove-local
+```
+
+升级或核对上游 `@deepseek-ai/dsh` 锁定版本时，使用统一同步与校验脚本（默认只读，加 `--write` 执行替换）：
+
+```sh
+node scripts/sync-dsh-version.mjs --check
+node scripts/sync-dsh-version.mjs --to 0.2.2
 ```
 
 发布前先递增组件版本。`release-plugin.mjs` 清理该组件的生成目录、构建并暂存打包，将运行源码、Skill、构建配置和依赖锁的摘要同时写入发布包和 catalog；已有发布身份不可覆盖。新发布同时保存内容寻址的依赖锁快照（`artifacts/locks/`），catalog 的 `sourceLock` 指向本次构建使用的锁；其他插件加入 workspace 后，旧包仍按原构建输入验证，不需要为无关依赖变化重发。旧条目没有该字段时仍使用根锁文件；迁移旧条目前必须用保留的锁与源码实际核对摘要，不得猜测构建输入。校验同时检查源码摘要和完整打包清单，防止删除的代码仍留在发布包中。

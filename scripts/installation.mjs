@@ -15,7 +15,7 @@ export function defaultDirectory(repo = repositoryRoot) {
 }
 
 async function optionalStat(path) {
-  try { return await lstat(path) } catch (error) { if (error.code !== 'ENOENT') throw error }
+  try { return await lstat(path) } catch (error) { if (error.code !== 'ENOENT') throw error; return undefined }
 }
 
 export async function readInstallation(directory, repo = repositoryRoot) {
@@ -45,7 +45,11 @@ function ownsCommand(command, roots) {
   })
 }
 
-export async function listOwnedProcesses(root, { inspect = capture, pid = process.pid, canonicalize = realpath } = {}) {
+/**
+ * @param {string} root
+ * @param {{ inspect?: (file: string, args: string[], options?: Record<string, unknown>) => Promise<{ stdout: string }>, pid?: number, canonicalize?: (path: string) => Promise<string> }} [options]
+ */
+export async function listOwnedProcesses(root, { inspect = /** @type {(file: string, args: string[], options?: Record<string, unknown>) => Promise<{ stdout: string }>} */ (capture), pid = process.pid, canonicalize = realpath } = {}) {
   const roots = [...new Set([root, await canonicalize(root)])]
   const { stdout } = await inspect('/bin/ps', ['-axww', '-o', 'pid=', '-o', 'command='], { maxBuffer: 8 * 1024 * 1024 })
   const matches = []

@@ -1,4 +1,5 @@
 /** Explicit repository-owned retirements; absence from the catalog alone never authorizes removal. */
+/** @type {readonly Readonly<{ id: string, package: string, replacement?: string }>[]} */
 export const retiredPlugins = Object.freeze([
   Object.freeze({ id: 'codex-controller', package: '@shamcleren/dsh-codex-controller' }),
   Object.freeze({ id: 'wechat', package: '@shamcleren/dsh-wechat', replacement: 'im' }),
