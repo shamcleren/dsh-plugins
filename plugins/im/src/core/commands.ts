@@ -19,7 +19,7 @@ export function managementHelp(options: { tasks?: boolean; identity?: boolean; s
     ]],
     ['模型与预设', [
       '/status：查看模型、推理强度与预设',
-      '/model [provider model [effort]]：查看或切换模型',
+      '/model [编号|provider model [effort]]：查看或切换模型',
       '/effort [level]：查看或调整推理强度', '/preset [<id>|reset]：查看或切换预设',
     ]],
     ['帮助', ['/help：查看命令', ...(options.identity ? ['/whoami：查看当前平台身份'] : [])]],

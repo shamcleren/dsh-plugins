@@ -14,7 +14,7 @@ pnpm build
 pnpm test
 ```
 
-从最新 `main` 创建工作分支，建议使用 `codex/` 前缀；通过 PR 审查后合入。官方运行时继续独立锁定在 `runtime/`，不将其锁文件合并进开发 workspace。全量安装器测试需要上述独立运行时依赖；macOS 应用壳另用 `pnpm test:macos` 验证。GitHub Actions 在 Linux 与 macOS 上执行类型、构建和单元测试；macOS 验证应用壳，Linux 额外验证实际发布包的隔离 Host 启动。原生宠物 Helper 仅在 macOS 构建。
+本仓库只维护 `main` 分支，直接基于最新 `main` 开发、验证并推送，不额外创建其他分支。官方运行时继续独立锁定在 `runtime/`，不将其锁文件合并进开发 workspace。全量安装器测试需要上述独立运行时依赖；macOS 应用壳另用 `pnpm test:macos` 验证。GitHub Actions 在 Linux 与 macOS 上执行类型、构建和单元测试；macOS 验证应用壳，Linux 额外验证实际发布包的隔离 Host 启动。原生宠物 Helper 仅在 macOS 构建。
 
 ## 发布目录包
 

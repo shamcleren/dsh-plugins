@@ -123,32 +123,88 @@ export async function presetCommand(
     : `已切换到预设“${next}”，并创建新会话。旧会话仍保留。`
 }
 
+const MODEL_USAGE = '用法：/model <编号> [effort] 或 /model <provider> <model> [effort]'
+
+function selectModelFailureReply(error: unknown): string {
+  if (error instanceof HostApiError) {
+    if (error.code === 'UNSUPPORTED_REASONING_EFFORT') {
+      return '该模型不支持指定的 effort；发送 /model 查看可选项。'
+    }
+    if (error.code === 'session-unavailable') {
+      return '当前会话暂时不可用，请发送 /new 创建新会话后重试。'
+    }
+    return '该模型当前不可用（可能是提供方未完成配置、凭据失效或模型不可调用）；请在工作台「模型设置」检查后重试。'
+  }
+  throw error
+}
+
 export async function modelCommand(
   ctx: ChannelCommandContext,
   sessionId: string,
   args: readonly string[],
 ): Promise<string> {
   const models = unwrap(await ctx.api.sessions.models(makeRequest(ctx.rpcPrefix, { sessionId })))
+  const catalogEntries = models.groups.flatMap(group =>
+    group.models.map(model => ({ provider: group.id, model })),
+  )
   if (args.length === 0) {
-    const rows = models.groups.flatMap(group => group.models.map(model => {
-      const efforts = model.reasoning?.efforts.map(effort => effort.id).join(', ')
-      return `${group.id} ${model.id}${efforts === undefined ? '' : ` [${efforts}]`}`
-    }))
-    return [`当前：${models.current.provider} ${models.current.model}`, ...rows].join('\n')
+    const rows = catalogEntries.map((entry, index) => {
+      const efforts = entry.model.reasoning?.efforts.map(effort => effort.id).join(', ')
+      return `${index + 1}. ${entry.provider} ${entry.model.id}${efforts === undefined ? '' : ` [${efforts}]`}`
+    })
+    return [
+      `当前：${models.current.provider} ${models.current.model}`,
+      ...rows,
+      '',
+      MODEL_USAGE,
+    ].join('\n')
   }
-  if (args.length < 2 || args.length > 3) return '用法：/model <provider> <model> [effort]'
-  const [provider, model, reasoningEffort] = args as [string, string, string?]
-  const group = models.groups.find(entry => entry.id === provider)
-  const target = group?.models.find(entry => entry.id === model)
-  if (target === undefined) return '没有找到该 provider/model；发送 /model 查看可选项。'
+  if (args.length > 3) return MODEL_USAGE
+
+  let target: (typeof catalogEntries)[number] | undefined
+  let reasoningEffort: string | undefined
+
+  const first = args[0]!
+  if (args.length <= 2 && /^[1-9]\d*$/u.test(first)) {
+    target = catalogEntries[Number(first) - 1]
+    if (target === undefined) return '没有找到该编号对应的模型；发送 /model 查看可选项。'
+    reasoningEffort = args[1]
+  } else if (args.length >= 2 && models.groups.some(entry => entry.id === first)) {
+    const [provider, modelId, effort] = args as [string, string, string?]
+    target = catalogEntries.find(entry => entry.provider === provider && entry.model.id === modelId)
+    if (target === undefined) return '没有找到该 provider/model；发送 /model 查看可选项。'
+    reasoningEffort = effort
+  } else if (args.length <= 2) {
+    const matches = catalogEntries.filter(entry => entry.model.id === first)
+    if (matches.length > 1) return '存在多个同名模型，请使用编号或指定 provider；发送 /model 查看可选项。'
+    if (matches.length === 1) {
+      target = matches[0]
+      reasoningEffort = args[1]
+    } else {
+      return args.length === 1
+        ? '没有找到该模型；发送 /model 查看可选项。'
+        : '没有找到该 provider/model；发送 /model 查看可选项。'
+    }
+  } else {
+    return '没有找到该 provider/model；发送 /model 查看可选项。'
+  }
+  if (target === undefined) return '没有找到该模型；发送 /model 查看可选项。'
+
   if (reasoningEffort !== undefined
-    && !target.reasoning?.efforts.some(entry => entry.id === reasoningEffort)) {
+    && !target.model.reasoning?.efforts.some(entry => entry.id === reasoningEffort)) {
     return '该模型不支持指定的 effort；发送 /model 查看可选项。'
   }
-  const selected = unwrap(await ctx.api.sessions.selectModel(makeRequest(ctx.rpcPrefix, {
-    sessionId, provider, model,
-    ...reasoningEffort === undefined ? {} : { reasoningEffort },
-  }))).selected
+  let selected: { provider: string; model: string; reasoningEffort?: string }
+  try {
+    selected = unwrap(await ctx.api.sessions.selectModel(makeRequest(ctx.rpcPrefix, {
+      sessionId,
+      provider: target.provider,
+      model: target.model.id,
+      ...reasoningEffort === undefined ? {} : { reasoningEffort },
+    }))).selected
+  } catch (error: unknown) {
+    return selectModelFailureReply(error)
+  }
   return `已切换到 ${selected.provider} / ${selected.model}，Effort：${selected.reasoningEffort ?? '默认'}。\n${ctx.localModelNotice}`
 }
 
@@ -169,11 +225,16 @@ export async function effortCommand(
   if (reasoningEffort === undefined || !efforts.some(entry => entry.id === reasoningEffort)) {
     return '该模型不支持指定的 effort；发送 /effort 查看可选项。'
   }
-  const selected = unwrap(await ctx.api.sessions.selectModel(makeRequest(ctx.rpcPrefix, {
-    sessionId,
-    provider: models.current.provider,
-    model: models.current.model,
-    reasoningEffort,
-  }))).selected
+  let selected: { provider: string; model: string; reasoningEffort?: string }
+  try {
+    selected = unwrap(await ctx.api.sessions.selectModel(makeRequest(ctx.rpcPrefix, {
+      sessionId,
+      provider: models.current.provider,
+      model: models.current.model,
+      reasoningEffort,
+    }))).selected
+  } catch (error: unknown) {
+    return selectModelFailureReply(error)
+  }
   return `Effort 已切换为 ${selected.reasoningEffort ?? reasoningEffort}。\n${ctx.localModelNotice}`
 }

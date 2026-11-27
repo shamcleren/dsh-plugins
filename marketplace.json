@@ -120,12 +120,12 @@
       "description": "统一管理个人微信与企业微信的账号、工作区、会话和渠道能力",
       "dshVersion": "0.2.1-rc.5",
       "placement": "before-web-app",
-      "version": "0.1.25",
-      "sourceDigest": "0ee10ad19846a27f00688ff246450ed511512d3684a714a289dffb99d969e03e",
+      "version": "0.1.26",
+      "sourceDigest": "4634ec2a802ddad06b0ac8ca6f87b63e37e0ad59ec235aa1e416e6a5a8d176b4",
       "artifact": {
-        "path": "artifacts/shamcleren-dsh-im-0.1.25.tgz",
-        "size": 352942,
-        "sha256": "0571a05dfc3de5e1a9e3cf7aedfca646f948354f3e5f203e3f205f2c71bcf686"
+        "path": "artifacts/shamcleren-dsh-im-0.1.26.tgz",
+        "size": 353432,
+        "sha256": "84262d234ffcf6e4a20747c871a04664a7b7ca5313200f8283113558aae894d8"
       },
       "sourceLock": "artifacts/locks/7109c74f15cf723ba546eb8c43176f74885bcca64e85365fb4249f99d92498be.yaml"
     },
