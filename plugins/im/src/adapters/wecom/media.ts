@@ -26,7 +26,8 @@ export async function inboundContent(message: WeComInboundText, maxBytes: number
   const quote = message.quote
   if (quote === undefined) return result
 
-  const heading = label ? label + '，引用消息：' : '引用消息：'
+  // DSH joins text parts verbatim when rendering the conversation.
+  const heading = (text ? '\n\n' : '') + (label ? label + '，引用消息：' : '引用消息：')
   result.push({ type: 'text', text: quote.text ? heading + '\n' + quote.text : heading })
   let unavailable = quote.unavailableMedia
   const quoteSignal = quote.media.length ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : signal
@@ -42,7 +43,7 @@ export async function inboundContent(message: WeComInboundText, maxBytes: number
       if (quoteSignal.aborted) break
     }
   }
-  if (unavailable) result.push({ type: 'text', text: '[部分引用附件无法读取，可请发送者补发。]' })
+  if (unavailable) result.push({ type: 'text', text: '\n[部分引用附件无法读取，可请发送者补发。]' })
   return result
 }
 

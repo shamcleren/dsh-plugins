@@ -11,6 +11,7 @@ import type {
   AskUserQuestionItem,
   HostApiProxy,
   HostMuxFrame,
+  PromptContentPart,
   RpcRequest,
   RpcResponse,
 } from '../../src/adapters/wecom/host-api.js'
@@ -438,7 +439,7 @@ describe('WeComConversationRouter', () => {
     await router.stop()
   })
 
-  it.each(['', '@Bot'])('routes a group quote to the Host when the reply body is %j', async (content) => {
+  it.each(['', '@Bot', '@Bot，可以'])('separates the group quote from the reply %j in the transcript', async (content) => {
     const test = harness()
     const router = new WeComConversationRouter(test.api, test.replies, logger(), {
       allowedUsers: [], adminUsers: ['user-1'], thinkingText: '处理中', turnTimeoutMs: 1_000,
@@ -450,9 +451,10 @@ describe('WeComConversationRouter', () => {
       frame.body!.quote = { msgtype: 'mixed', mixed: { msg_item: [{ msgtype: 'text', text: { content: '/new' } }] } }
       router.accept(frame)
       await vi.waitFor(() => expect(test.replyCalls.at(-1)).toEqual({ content: '你好，世界', finish: true }))
-      expect(test.prompt).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ payload: expect.objectContaining({
-        content: [...(content ? [{ type: 'text', text: content }] : []), { type: 'text', text: '群成员在企微群提问，引用消息：\n/new' }],
-      }) }))
+      expect(test.prompt).toHaveBeenCalledOnce()
+      const parts: PromptContentPart[] = test.prompt.mock.calls[0]![0].payload.content
+      const transcript = parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('')
+      expect(transcript).toBe([content, '群成员在企微群提问，引用消息：\n/new'].filter(Boolean).join('\n\n'))
     } finally {
       await router.stop()
     }
@@ -474,7 +476,7 @@ describe('WeComConversationRouter', () => {
       const [first, second] = test.prompt.mock.calls.map(([req]) => req.payload)
       expect(first!.sessionId).toBe(second!.sessionId)
       expect([first, second].map(req => req!.content[1]?.text)).toEqual([
-        '小甲在「项目群」提问，引用消息：\n小丙的原文', '小乙在「项目群」提问，引用消息：\n小丙的原文',
+        '\n\n小甲在「项目群」提问，引用消息：\n小丙的原文', '\n\n小乙在「项目群」提问，引用消息：\n小丙的原文',
       ])
     } finally { await router.stop() }
   })

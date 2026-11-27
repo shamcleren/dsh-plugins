@@ -13,7 +13,7 @@ it('preserves voice transcription and quoted text', async () => {
     quote: { msgtype: 'text', text: { content: '前文' } },
   } })
   await expect(inboundContent(message, 1024, new AbortController().signal)).resolves.toEqual([
-    { type: 'text', text: '语音正文' }, { type: 'text', text: '引用消息：\n前文' },
+    { type: 'text', text: '语音正文' }, { type: 'text', text: '\n\n引用消息：\n前文' },
   ])
 })
 
@@ -54,8 +54,8 @@ it('retains quoted text when attachment URLs are missing, expired or outside the
   } })
   await expect(inboundContent(message, 1024, new AbortController().signal)).resolves.toEqual([
     { type: 'text', text: '@Bot' },
-    { type: 'text', text: '引用消息：\n截图中的文字说明。' },
-    { type: 'text', text: '[部分引用附件无法读取，可请发送者补发。]' },
+    { type: 'text', text: '\n\n引用消息：\n截图中的文字说明。' },
+    { type: 'text', text: '\n[部分引用附件无法读取，可请发送者补发。]' },
   ])
   expect(fetchMedia).toHaveBeenCalledExactlyOnceWith(new URL(quotedImageUrl), expect.objectContaining({ redirect: 'error' }))
 })

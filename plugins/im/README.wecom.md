@@ -66,7 +66,7 @@ The question answerer claims active WeCom turns before the Host Web answerer, re
 
 ## Channel compatibility
 
-Each new question in DSH identifies the sender and where they asked. Quoted questions carry this information on the quote heading. Other questions carry it above their text. A group can reuse one session as the sender changes. Earlier messages keep their original text.
+Each new question in DSH identifies the sender and where they asked. When a reply includes a quote, a blank line separates the reply from the attributed quote heading, followed by the quoted text on the next line. Other questions show the attribution above their text. A group can reuse one session as the sender changes. Earlier messages keep their original text.
 
 WeCom callbacks can supply only account and chat identifiers. Enable the recent-chat directory to match exact identifiers to display names. A member can use `/myname <name>` to set their own local display name for this Bot across group and direct chats. A Bot administrator in the group can use `/groupname <name>` to set the local group label. Local labels take precedence. Unresolved names appear as a group member, a group, or a direct contact. Display names do not grant permissions.
 
